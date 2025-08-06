@@ -48,16 +48,181 @@ jobs:
         # Install XQuartz for X11 and DRM headers
         brew install --cask xquartz
         
-        # Create stub DRM headers for macOS compatibility
+        # Create comprehensive DRM headers for macOS compatibility  
         sudo mkdir -p /usr/local/include
         sudo tee /usr/local/include/xf86drm.h > /dev/null <<'EOF'
         #ifndef _XF86DRM_H_
         #define _XF86DRM_H_
-        /* Stub DRM header for macOS Mesa VirGL build */
+        /* Comprehensive DRM header for macOS Mesa VirGL build */
+        
+        #include <stdint.h>
+        #include <sys/types.h>
+        #include <sys/ioccom.h>
+        
+        /* Basic DRM types */
         typedef int drmDevice;
         typedef int drmDevicePtr;
         #define DRM_NODE_PRIMARY 0
         #define DRM_NODE_RENDER 2
+        
+        /* DRM ioctl definitions */
+        #define DRM_IOCTL_BASE                  'd'
+        #define DRM_IO(nr)                      _IO(DRM_IOCTL_BASE,nr)
+        #define DRM_IOR(nr,type)                _IOR(DRM_IOCTL_BASE,nr,type)
+        #define DRM_IOW(nr,type)                _IOW(DRM_IOCTL_BASE,nr,type)
+        #define DRM_IOWR(nr,type)               _IOWR(DRM_IOCTL_BASE,nr,type)
+        
+        /* Common DRM ioctls */
+        #define DRM_IOCTL_GEM_CLOSE             DRM_IOW(0x09, struct drm_gem_close)
+        #define DRM_IOCTL_GEM_OPEN              DRM_IOWR(0x0b, struct drm_gem_open)
+        #define DRM_IOCTL_GEM_FLINK             DRM_IOWR(0x0a, struct drm_gem_flink)
+        
+        /* VirtIO GPU specific ioctls */
+        #define DRM_VIRTGPU_MAP                 0x01
+        #define DRM_VIRTGPU_EXECBUFFER          0x02
+        #define DRM_VIRTGPU_GETPARAM            0x03
+        #define DRM_VIRTGPU_RESOURCE_CREATE     0x04
+        #define DRM_VIRTGPU_RESOURCE_INFO       0x05
+        #define DRM_VIRTGPU_TRANSFER_FROM_HOST  0x06
+        #define DRM_VIRTGPU_TRANSFER_TO_HOST    0x07
+        #define DRM_VIRTGPU_WAIT                0x08
+        #define DRM_VIRTGPU_GET_CAPS            0x09
+        #define DRM_VIRTGPU_RESOURCE_CREATE_BLOB 0x0a
+        
+        #define DRM_COMMAND_BASE                0x40
+        
+        #define DRM_IOCTL_VIRTGPU_MAP                _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_MAP, struct drm_virtgpu_map)
+        #define DRM_IOCTL_VIRTGPU_EXECBUFFER         _IOW(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_EXECBUFFER, struct drm_virtgpu_execbuffer)
+        #define DRM_IOCTL_VIRTGPU_GETPARAM           _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_GETPARAM, struct drm_virtgpu_getparam)
+        #define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE    _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE, struct drm_virtgpu_resource_create)
+        #define DRM_IOCTL_VIRTGPU_RESOURCE_INFO      _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_INFO, struct drm_virtgpu_resource_info)
+        #define DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_FROM_HOST, struct drm_virtgpu_3d_transfer_from_host)
+        #define DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST   _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_TO_HOST, struct drm_virtgpu_3d_transfer_to_host)
+        #define DRM_IOCTL_VIRTGPU_WAIT               _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_WAIT, struct drm_virtgpu_3d_wait)
+        #define DRM_IOCTL_VIRTGPU_GET_CAPS           _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_GET_CAPS, struct drm_virtgpu_get_caps)
+        #define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB _IOWR(DRM_IOCTL_BASE, DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE_BLOB, struct drm_virtgpu_resource_create_blob)
+        
+        /* DRM structures */
+        struct drm_gem_close {
+            uint32_t handle;
+            uint32_t pad;
+        };
+        
+        struct drm_gem_open {
+            uint32_t name;
+            uint32_t handle;
+            uint64_t size;
+        };
+        
+        struct drm_gem_flink {
+            uint32_t handle;
+            uint32_t name;
+        };
+        
+        /* VirtIO GPU structures */
+        struct drm_virtgpu_3d_wait {
+            uint32_t handle;
+            uint32_t flags;
+        };
+        
+        struct drm_virtgpu_execbuffer {
+            uint32_t flags;
+            uint32_t size;
+            uint64_t command;
+            uint64_t bo_handles;
+            uint32_t num_bo_handles;
+            int32_t fence_fd;
+        };
+        
+        struct drm_virtgpu_resource_create {
+            uint32_t target;
+            uint32_t format;
+            uint32_t bind;
+            uint32_t width;
+            uint32_t height;
+            uint32_t depth;
+            uint32_t array_size;
+            uint32_t last_level;
+            uint32_t nr_samples;
+            uint32_t flags;
+            uint32_t bo_handle;
+            uint32_t res_handle;
+            uint32_t size;
+            uint32_t stride;
+        };
+        
+        struct drm_virtgpu_resource_create_blob {
+            uint32_t blob_mem;
+            uint32_t blob_flags;
+            uint32_t bo_handle;
+            uint32_t res_handle;
+            uint64_t size;
+            uint32_t pad;
+            uint64_t blob_id;
+            uint64_t cmd;
+            uint32_t cmd_size;
+        };
+        
+        struct drm_virtgpu_resource_info {
+            uint32_t bo_handle;
+            uint32_t res_handle;
+            uint32_t size;
+            uint32_t blob_mem;
+        };
+        
+        struct drm_virtgpu_3d_transfer_to_host {
+            uint32_t bo_handle;
+            uint32_t box_x;
+            uint32_t box_y;
+            uint32_t box_z;
+            uint32_t box_w;
+            uint32_t box_h;
+            uint32_t box_d;
+            uint32_t offset;
+            uint32_t level;
+            uint32_t stride;
+            uint32_t layer_stride;
+        };
+        
+        struct drm_virtgpu_3d_transfer_from_host {
+            uint32_t bo_handle;
+            uint32_t box_x;
+            uint32_t box_y;
+            uint32_t box_z;
+            uint32_t box_w;
+            uint32_t box_h;
+            uint32_t box_d;
+            uint32_t offset;
+            uint32_t level;
+            uint32_t stride;
+            uint32_t layer_stride;
+        };
+        
+        /* Additional stub structures */
+        struct drm_virtgpu_map {
+            uint32_t handle;
+            uint64_t offset;
+        };
+        
+        struct drm_virtgpu_getparam {
+            uint64_t param;
+            uint64_t value;
+        };
+        
+        struct drm_virtgpu_get_caps {
+            uint32_t cap_set_id;
+            uint32_t cap_set_ver;
+            uint64_t addr;
+            uint32_t size;
+            uint32_t pad;
+        };
+        
+        /* Stub function implementations */
+        static inline int drmIoctl(int fd, unsigned long request, void *arg) {
+            /* Always return success for stubs */
+            return 0;
+        }
+        
         #endif
         EOF
         
