@@ -35,6 +35,7 @@ jobs:
         brew "pkg-config"
         brew "python@3.10"
         brew "meson"
+        brew "llvm"
         EOL
 
         brew update
@@ -44,9 +45,10 @@ jobs:
         python3 -m pip install --break-system-packages packaging mako PyYAML
     - name: Configure
       run: |
+        LLVM_PREFIX=$(brew --prefix llvm)
         cat > native_config <<EOL
         [binaries]
-        llvm-config = '/usr/local/opt/llvm/bin/llvm-config'
+        llvm-config = '${LLVM_PREFIX}/bin/llvm-config'
         EOL
         $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=true -Dgallium-drivers=swrast,zink -Dglx=${{ matrix.glx_option }}
     - name: Build
