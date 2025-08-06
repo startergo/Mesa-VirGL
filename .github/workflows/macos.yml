@@ -16,7 +16,7 @@ jobs:
     runs-on: macos-latest
     env:
       GALLIUM_DUMP_CPU: true
-      MESON_EXEC: /Users/runner/Library/Python/3.11/bin/meson
+      MESON_EXEC: meson
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -34,12 +34,12 @@ jobs:
         brew "ninja"
         brew "pkg-config"
         brew "python@3.10"
+        brew "mako"
+        brew "meson"
         EOL
 
         brew update
         brew bundle --verbose
-    - name: Install Mako and meson
-      run: pip3 install --user mako meson
     - name: Configure
       run: |
         cat > native_config <<EOL
