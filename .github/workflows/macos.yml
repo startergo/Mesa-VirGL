@@ -47,6 +47,19 @@ jobs:
         
         # Install XQuartz for X11 and DRM headers
         brew install --cask xquartz
+        
+        # Create stub DRM header for macOS compatibility
+        sudo mkdir -p /usr/local/include
+        sudo tee /usr/local/include/xf86drm.h > /dev/null <<'EOF'
+        #ifndef _XF86DRM_H_
+        #define _XF86DRM_H_
+        /* Stub DRM header for macOS Mesa VirGL build */
+        typedef int drmDevice;
+        typedef int drmDevicePtr;
+        #define DRM_NODE_PRIMARY 0
+        #define DRM_NODE_RENDER 2
+        #endif
+        EOF
     - name: Install Python dependencies
       run: |
         python3 -m pip install --break-system-packages packaging mako PyYAML
