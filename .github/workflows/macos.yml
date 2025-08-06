@@ -34,6 +34,7 @@ jobs:
         brew "libxxf86vm"
         brew "libxfixes"
         brew "libxshmfence"
+        brew "libdrm"
         brew "molten-vk"
         brew "ninja"
         brew "pkg-config"
@@ -44,6 +45,9 @@ jobs:
 
         brew update
         brew bundle --verbose
+        
+        # Install XQuartz for X11 and DRM headers
+        brew install --cask xquartz
     - name: Install Python dependencies
       run: |
         python3 -m pip install --break-system-packages packaging mako PyYAML
