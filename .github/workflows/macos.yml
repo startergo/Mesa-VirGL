@@ -34,12 +34,14 @@ jobs:
         brew "ninja"
         brew "pkg-config"
         brew "python@3.10"
-        brew "mako"
         brew "meson"
         EOL
 
         brew update
         brew bundle --verbose
+    - name: Install Python dependencies
+      run: |
+        python3 -m pip install --break-system-packages packaging mako
     - name: Configure
       run: |
         cat > native_config <<EOL
