@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         glx_option: ['dri', 'xlib']
-    runs-on: macos-11
+    runs-on: macos-latest
     env:
       GALLIUM_DUMP_CPU: true
       MESON_EXEC: /Users/runner/Library/Python/3.11/bin/meson
