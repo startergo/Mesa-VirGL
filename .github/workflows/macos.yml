@@ -153,7 +153,7 @@ jobs:
         echo "Native config contents:"
         cat native_config
         echo "Running meson setup..."
-        $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=false -Dgallium-drivers=virgl -Dglx=dri -Dc_args='-DdriDestroyConfigs(x)=((void)0)'
+        $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=false -Dgallium-drivers=virgl -Dglx=disabled -Degl=disabled
     - name: Build
       run: $MESON_EXEC compile -C build
     - name: Test
