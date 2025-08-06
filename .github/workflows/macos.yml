@@ -48,7 +48,7 @@ jobs:
         # Install XQuartz for X11 and DRM headers
         brew install --cask xquartz
         
-        # Create stub DRM header for macOS compatibility
+        # Create stub DRM headers for macOS compatibility
         sudo mkdir -p /usr/local/include
         sudo tee /usr/local/include/xf86drm.h > /dev/null <<'EOF'
         #ifndef _XF86DRM_H_
@@ -58,6 +58,39 @@ jobs:
         typedef int drmDevicePtr;
         #define DRM_NODE_PRIMARY 0
         #define DRM_NODE_RENDER 2
+        #endif
+        EOF
+        
+        # Create stub libsync header for macOS compatibility
+        sudo tee /usr/local/include/libsync.h > /dev/null <<'EOF'
+        #ifndef _LIBSYNC_H_
+        #define _LIBSYNC_H_
+        /* Stub libsync header for macOS Mesa VirGL build */
+        
+        /* Android/Linux sync fence functionality stubs */
+        #define SYNC_IOC_WAIT       1
+        #define SYNC_IOC_MERGE      2
+        #define SYNC_IOC_INFO       3
+        #define SYNC_IOC_FILE_INFO  4
+        
+        struct sync_fence_info {
+            char name[32];
+            int status;
+            uint64_t timestamp;
+        };
+        
+        struct sync_file_info {
+            char name[32];
+            int status;
+            uint32_t num_fences;
+            struct sync_fence_info *fences;
+        };
+        
+        /* Stub function declarations */
+        static inline int sync_wait(int fd, int timeout) { return 0; }
+        static inline int sync_merge(const char *name, int fd1, int fd2) { return -1; }
+        static inline int sync_fence_info(int fd, struct sync_file_info *info) { return -1; }
+        
         #endif
         EOF
     - name: Install Python dependencies
