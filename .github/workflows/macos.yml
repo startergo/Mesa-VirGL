@@ -1,8 +1,12 @@
 name: macOS-CI
-on: push
+on:
+  push:
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
+  checks: write
 
 jobs:
   macOS-CI:
