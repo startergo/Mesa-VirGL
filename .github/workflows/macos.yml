@@ -2,9 +2,20 @@ name: macOS-CI
 on:
   push:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a release'
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: 'Release tag (e.g., v24.3.0-virgl-1)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
-  contents: read
+  contents: write
   actions: read
   checks: write
 
@@ -169,3 +180,190 @@ jobs:
           build/meson-logs/
           install/
         retention-days: 5
+
+  create-release:
+    needs: macOS-CI
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_release == 'true' && github.event.inputs.release_tag != ''
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: macos-dri-result
+        path: ./artifacts
+        
+    - name: Create release archive
+      run: |
+        cd artifacts
+        # Create a comprehensive release package
+        mkdir -p mesa-virgl-macos
+        
+        # Copy installation files
+        if [ -d "install" ]; then
+          cp -r install/* mesa-virgl-macos/
+        fi
+        
+        # Create release info
+        cat > mesa-virgl-macos/RELEASE_INFO.txt << 'EOF'
+        Mesa VirGL for macOS - Release Build
+        ====================================
+        
+        This is a custom Mesa build optimized for VirGL on macOS with Apple Silicon.
+        
+        Key Features:
+        - VirGL driver support for GPU virtualization
+        - Metal-to-OpenGL translation compatibility
+        - Optimized for QEMU virtualization on macOS
+        - ARM64 and x86_64 support
+        
+        Installation:
+        1. Extract this package
+        2. Copy contents to /opt/mesa-virgl/ (requires sudo)
+        3. Use with QEMU VirGL for accelerated graphics
+        
+        Build Information:
+        - Mesa Version: 24.3.0-devel
+        - Target: macOS (Darwin)
+        - Architecture: Universal (ARM64 + x86_64)
+        - Gallium Drivers: VirGL
+        - Build Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        - Git Commit: ${{ github.sha }}
+        
+        For more information, see: https://github.com/${{ github.repository }}
+        EOF
+        
+        # Create installation script
+        cat > mesa-virgl-macos/install.sh << 'EOF'
+        #!/bin/bash
+        # Mesa VirGL macOS Installation Script
+        
+        set -e
+        
+        echo "Mesa VirGL for macOS - Installation Script"
+        echo "=========================================="
+        
+        INSTALL_PREFIX="/opt/mesa-virgl"
+        
+        if [ "$EUID" -ne 0 ]; then
+          echo "Error: This script must be run as root (use sudo)"
+          exit 1
+        fi
+        
+        echo "Creating installation directory..."
+        mkdir -p "$INSTALL_PREFIX"
+        
+        echo "Installing Mesa VirGL libraries..."
+        if [ -d "opt" ]; then
+          cp -r opt/* "$INSTALL_PREFIX/"
+        elif [ -d "usr" ]; then
+          cp -r usr/* "$INSTALL_PREFIX/"
+        else
+          echo "Warning: No standard installation structure found"
+          cp -r * "$INSTALL_PREFIX/"
+        fi
+        
+        echo "Setting permissions..."
+        chmod -R 755 "$INSTALL_PREFIX"
+        
+        echo "Installation complete!"
+        echo "Mesa VirGL installed to: $INSTALL_PREFIX"
+        echo ""
+        echo "To use with QEMU:"
+        echo "  export DYLD_LIBRARY_PATH=\"$INSTALL_PREFIX/lib:\$DYLD_LIBRARY_PATH\""
+        echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
+        echo ""
+        echo "For integration with QEMU-3dfx, see the project documentation."
+        EOF
+        
+        chmod +x mesa-virgl-macos/install.sh
+        
+        # Create archive
+        tar -czf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz mesa-virgl-macos
+        
+        # Calculate checksums
+        sha256sum mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz > mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
+        
+        echo "Release package created:"
+        ls -la mesa-virgl-macos-${{ github.event.inputs.release_tag }}.*
+        
+    - name: Create Release
+      uses: actions/create-release@v1
+      id: create_release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.event.inputs.release_tag }}
+        release_name: Mesa VirGL ${{ github.event.inputs.release_tag }}
+        body: |
+          # Mesa VirGL for macOS - ${{ github.event.inputs.release_tag }}
+          
+          This release provides a custom Mesa build optimized for VirGL on macOS with Apple Silicon.
+          
+          ## 🚀 Key Features
+          - **VirGL Driver**: GPU virtualization support for QEMU
+          - **Metal Translation**: Compatible with Apple's Metal-to-OpenGL translation layer
+          - **macOS Optimized**: Built specifically for macOS host systems
+          - **Universal Binary**: Supports both ARM64 and x86_64 architectures
+          
+          ## 📦 What's Included
+          - VirGL Gallium driver libraries
+          - Mesa core libraries and headers
+          - Installation script for easy setup
+          - Compatible with QEMU-3dfx for accelerated virtualization
+          
+          ## 🛠 Installation
+          1. Download `mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz`
+          2. Extract: `tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz`
+          3. Install: `cd mesa-virgl-macos && sudo ./install.sh`
+          
+          ## ✅ Verification
+          Verify the download integrity:
+          ```bash
+          sha256sum -c mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
+          ```
+          
+          ## 🔧 Usage with QEMU
+          After installation, use with QEMU for hardware-accelerated graphics:
+          ```bash
+          export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          # Your QEMU command with -device virtio-gpu-gl-pci
+          ```
+          
+          ## 📊 Build Information
+          - **Mesa Version**: 24.3.0-devel
+          - **Build Target**: macOS (Darwin)
+          - **Gallium Drivers**: VirGL
+          - **Build Date**: ${{ github.run_id }}
+          - **Git Commit**: ${{ github.sha }}
+          
+          ## 🐛 Issues & Support
+          For issues, questions, or contributions, please visit the [project repository](https://github.com/${{ github.repository }}).
+          
+          ---
+          *Built with GitHub Actions on macOS*
+        draft: false
+        prerelease: false
+        
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+        asset_name: mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+        asset_content_type: application/gzip
+        
+    - name: Upload Release Checksum
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
+        asset_name: mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
+        asset_content_type: text/plain
