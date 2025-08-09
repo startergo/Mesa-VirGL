@@ -506,6 +506,11 @@ jobs:
         if [ "$HOMEBREW_INSTALL" = true ]; then
           echo "Installing Mesa VirGL to Homebrew directories: $INSTALL_PREFIX"
           echo "Warning: This will integrate with your existing Homebrew installation"
+          echo "The script will preserve Homebrew ownership and permissions."
+          echo ""
+          echo "If you encounter permission issues, you may need to fix Homebrew ownership:"
+          echo "  sudo chown -R \$(whoami) $INSTALL_PREFIX"
+          echo ""
           read -p "Continue? [y/N]: " -n 1 -r
           echo
           if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -520,15 +525,50 @@ jobs:
         mkdir -p "$INSTALL_PREFIX"
         
         echo "Installing Mesa VirGL libraries..."
-        if [ -d "opt/homebrew" ]; then
-          cp -r opt/homebrew/* "$INSTALL_PREFIX/"
-        elif [ -d "opt" ]; then
-          cp -r opt/* "$INSTALL_PREFIX/"
-        elif [ -d "usr" ]; then
-          cp -r usr/* "$INSTALL_PREFIX/"
+        if [ "$HOMEBREW_INSTALL" = true ]; then
+          # For Homebrew installation, preserve ownership and permissions
+          echo "Installing to Homebrew with proper permissions..."
+          
+          # Get the current Homebrew directory owner
+          HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || echo "$(logname)")
+          HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || echo "admin")
+          
+          # Copy files while preserving structure
+          if [ -d "opt/homebrew" ]; then
+            cp -r opt/homebrew/* "$INSTALL_PREFIX/"
+          elif [ -d "opt" ]; then
+            cp -r opt/* "$INSTALL_PREFIX/"
+          elif [ -d "usr" ]; then
+            cp -r usr/* "$INSTALL_PREFIX/"
+          else
+            echo "Warning: No standard installation structure found"
+            cp -r * "$INSTALL_PREFIX/"
+          fi
+          
+          # Restore proper Homebrew ownership and permissions
+          echo "Restoring Homebrew ownership to $HOMEBREW_OWNER:$HOMEBREW_GROUP"
+          chown -R "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$INSTALL_PREFIX"
+          
+          # Set standard Homebrew permissions
+          find "$INSTALL_PREFIX" -type d -exec chmod 755 {} \;
+          find "$INSTALL_PREFIX" -type f -exec chmod 644 {} \;
+          
+          # Make executables and libraries executable
+          find "$INSTALL_PREFIX" -name "*.dylib" -exec chmod 755 {} \;
+          find "$INSTALL_PREFIX/bin" -type f -exec chmod 755 {} \; 2>/dev/null || true
+          
         else
-          echo "Warning: No standard installation structure found"
-          cp -r * "$INSTALL_PREFIX/"
+          # For isolated installation, use standard copy
+          if [ -d "opt/homebrew" ]; then
+            cp -r opt/homebrew/* "$INSTALL_PREFIX/"
+          elif [ -d "opt" ]; then
+            cp -r opt/* "$INSTALL_PREFIX/"
+          elif [ -d "usr" ]; then
+            cp -r usr/* "$INSTALL_PREFIX/"
+          else
+            echo "Warning: No standard installation structure found"
+            cp -r * "$INSTALL_PREFIX/"
+          fi
         fi
         
         echo "Fixing pkg-config files for installation path..."
@@ -559,7 +599,11 @@ jobs:
         fi
         
         echo "Setting permissions..."
-        chmod -R 755 "$INSTALL_PREFIX"
+        if [ "$HOMEBREW_INSTALL" = true ]; then
+          echo "Homebrew permissions already set correctly"
+        else
+          chmod -R 755 "$INSTALL_PREFIX"
+        fi
         
         echo "Installation complete!"
         echo "Mesa VirGL installed to: $INSTALL_PREFIX"
@@ -568,6 +612,10 @@ jobs:
           echo "Homebrew integration complete. Mesa VirGL libraries are now available"
           echo "through the standard Homebrew paths and should be found automatically"
           echo "by pkg-config and other build systems."
+          echo ""
+          echo "If you experience permission issues with Homebrew after installation:"
+          echo "  sudo chown -R \$(whoami) $INSTALL_PREFIX"
+          echo "  brew doctor  # to check for any permission issues"
         else
           echo "To use with QEMU development:"
           echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
@@ -579,7 +627,138 @@ jobs:
         fi
         EOF
         
-        chmod +x mesa-virgl-macos/install.sh
+        cat > mesa-virgl-macos/install-homebrew-safe.sh << 'EOF'
+        #!/bin/bash
+        # Mesa VirGL macOS Safe Homebrew Installation Script
+        # This script installs without changing Homebrew directory ownership
+        
+        set -e
+        
+        echo "Mesa VirGL for macOS - Safe Homebrew Installation"
+        echo "================================================"
+        echo ""
+        echo "This script installs Mesa VirGL libraries to Homebrew directories"
+        echo "while preserving proper ownership and permissions."
+        echo ""
+        
+        # Check if we're in the right directory
+        if [ ! -f "install.sh" ] || [ ! -d "opt" ] && [ ! -d "usr" ]; then
+          echo "Error: This script must be run from the Mesa VirGL installation directory"
+          echo "Make sure you've extracted the mesa-virgl-macos-*.tar.gz file first"
+          exit 1
+        fi
+        
+        # Check if Homebrew is installed
+        if ! command -v brew &> /dev/null; then
+          echo "Error: Homebrew is not installed or not in PATH"
+          echo "Please install Homebrew first: https://brew.sh"
+          exit 1
+        fi
+        
+        HOMEBREW_PREFIX=$(brew --prefix)
+        echo "Detected Homebrew installation: $HOMEBREW_PREFIX"
+        echo ""
+        
+        # Check current user ownership of Homebrew
+        if [ ! -w "$HOMEBREW_PREFIX/lib" ]; then
+          echo "Warning: You don't have write access to Homebrew directories"
+          echo "This is normal and expected. The script will use sudo only when needed."
+          echo ""
+        fi
+        
+        echo "Installing Mesa VirGL libraries to Homebrew..."
+        
+        # Create temporary staging directory
+        STAGING_DIR="/tmp/mesa-virgl-staging-$$"
+        mkdir -p "$STAGING_DIR"
+        
+        # Copy files to staging area first
+        if [ -d "opt/homebrew" ]; then
+          cp -r opt/homebrew/* "$STAGING_DIR/"
+        elif [ -d "opt" ]; then
+          cp -r opt/* "$STAGING_DIR/"
+        elif [ -d "usr" ]; then
+          cp -r usr/* "$STAGING_DIR/"
+        else
+          echo "Warning: No standard installation structure found"
+          cp -r * "$STAGING_DIR/"
+        fi
+        
+        # Install files to Homebrew with preserved permissions
+        echo "Copying files to Homebrew directories..."
+        
+        # Install libraries
+        if [ -d "$STAGING_DIR/lib" ]; then
+          sudo cp -r "$STAGING_DIR/lib/"* "$HOMEBREW_PREFIX/lib/"
+        fi
+        
+        # Install headers
+        if [ -d "$STAGING_DIR/include" ]; then
+          sudo cp -r "$STAGING_DIR/include/"* "$HOMEBREW_PREFIX/include/"
+        fi
+        
+        # Get the actual Homebrew directory owner (usually the user who installed Homebrew)
+        HOMEBREW_OWNER=$(stat -f "%Su" "$HOMEBREW_PREFIX")
+        HOMEBREW_GROUP=$(stat -f "%Sg" "$HOMEBREW_PREFIX")
+        
+        echo "Restoring Homebrew ownership to $HOMEBREW_OWNER:$HOMEBREW_GROUP..."
+        
+        # Restore ownership of the specific files we installed
+        if [ -d "$HOMEBREW_PREFIX/lib" ]; then
+          sudo find "$HOMEBREW_PREFIX/lib" -name "*mesa*" -o -name "*virgl*" -o -name "*gles*" -o -name "*glapi*" | \
+            sudo xargs chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" 2>/dev/null || true
+        fi
+        
+        if [ -d "$HOMEBREW_PREFIX/include" ]; then
+          sudo find "$HOMEBREW_PREFIX/include" -name "*mesa*" -o -name "*virgl*" -o -name "*gl*" | \
+            sudo xargs chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" 2>/dev/null || true
+        fi
+        
+        # Fix pkg-config files
+        if [ -d "$HOMEBREW_PREFIX/lib/pkgconfig" ]; then
+          MESA_PC_FILES=(
+            "gl.pc"
+            "glesv2.pc" 
+            "glesv1_cm.pc"
+            "egl.pc"
+            "osmesa.pc"
+          )
+          
+          for pc_name in "${MESA_PC_FILES[@]}"; do
+            pc_file="$HOMEBREW_PREFIX/lib/pkgconfig/$pc_name"
+            if [ -f "$pc_file" ]; then
+              echo "Updating Mesa VirGL pkg-config file: $pc_file"
+              sudo sed -i.bak "s|prefix=/opt/homebrew|prefix=$HOMEBREW_PREFIX|g" "$pc_file"
+              sudo rm "$pc_file.bak" 2>/dev/null || true
+              sudo chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$pc_file"
+            fi
+          done
+        fi
+        
+        # Set proper permissions
+        echo "Setting correct permissions..."
+        sudo find "$HOMEBREW_PREFIX/lib" -name "*.dylib" -exec chmod 755 {} \; 2>/dev/null || true
+        sudo find "$HOMEBREW_PREFIX/lib/pkgconfig" -name "*.pc" -exec chmod 644 {} \; 2>/dev/null || true
+        
+        # Clean up staging directory
+        rm -rf "$STAGING_DIR"
+        
+        echo ""
+        echo "✅ Mesa VirGL installation complete!"
+        echo ""
+        echo "Libraries installed to: $HOMEBREW_PREFIX"
+        echo "Mesa VirGL is now available through standard Homebrew paths."
+        echo ""
+        echo "To verify installation:"
+        echo "  pkg-config --exists glesv2 && echo '✓ OpenGL ES 2.0 found'"
+        echo "  pkg-config --cflags --libs glesv2"
+        echo ""
+        echo "For QEMU development, no extra configure flags needed:"
+        echo "  ./configure --enable-virglrenderer --enable-opengl"
+        
+        EOF
+        
+        chmod +x mesa-virgl-macos/install-homebrew-safe.sh
         
         # Create uninstall script
         cat > mesa-virgl-macos/uninstall.sh << 'EOF'
@@ -740,14 +919,26 @@ jobs:
         
         This installs to `/opt/mesa-virgl/` by default.
         
-        ### Option 2: Homebrew Integration
-        Install directly to Homebrew directories for seamless integration:
+        ### Option 2: Homebrew Integration (Safe Method - Recommended)
+        Install directly to Homebrew directories while preserving ownership:
+        
+        ```bash
+        ./install-homebrew-safe.sh
+        ```
+        
+        This method preserves Homebrew ownership and doesn't require changing permissions.
+        
+        ### Option 2b: Homebrew Integration (Direct Method)
+        Install directly to Homebrew directories (may require ownership fixes):
         
         ```bash
         sudo ./install.sh --homebrew
         ```
         
-        This installs to `/opt/homebrew/` and integrates with existing Homebrew.
+        If you encounter permission issues after this, run:
+        ```bash
+        sudo chown -R $(whoami) /opt/homebrew
+        ```
         
         ### Option 3: Custom Location
         Install to a custom path:
@@ -811,8 +1002,12 @@ jobs:
         Libraries are automatically available through standard Homebrew paths - no environment setup needed:
         
         ```bash
-        # Install to Homebrew
+        # Safe Homebrew installation (recommended)
+        ./install-homebrew-safe.sh
+        
+        # OR standard installation with potential ownership fix
         sudo ./install.sh --homebrew
+        # If needed: sudo chown -R $(whoami) /opt/homebrew
         
         # QEMU configure works directly without extra flags:
         cd qemu
@@ -840,6 +1035,7 @@ jobs:
         ## Files Included
         
         - `install.sh` - Installation script with multiple options
+        - `install-homebrew-safe.sh` - Safe Homebrew installation (preserves ownership)
         - `uninstall.sh` - Automatic uninstall script
         - `RELEASE_INFO.txt` - Detailed build and usage information
         - Mesa VirGL libraries and headers
