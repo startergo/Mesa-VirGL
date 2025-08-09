@@ -267,6 +267,18 @@ jobs:
           cp -r * "$INSTALL_PREFIX/"
         fi
         
+        echo "Fixing pkg-config files for custom installation path..."
+        if [ -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
+          # Update pkg-config files to use the actual installation prefix
+          for pc_file in "$INSTALL_PREFIX/lib/pkgconfig"/*.pc; do
+            if [ -f "$pc_file" ]; then
+              echo "Updating $pc_file..."
+              sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+              rm "$pc_file.bak" 2>/dev/null || true
+            fi
+          done
+        fi
+        
         echo "Setting permissions..."
         chmod -R 755 "$INSTALL_PREFIX"
         
@@ -277,6 +289,7 @@ jobs:
         echo "  export DYLD_LIBRARY_PATH=\"$INSTALL_PREFIX/lib:\$DYLD_LIBRARY_PATH\""
         echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
         echo ""
+        echo "Pkg-config files have been updated for the installation path."
         echo "For integration with QEMU-3dfx, see the project documentation."
         EOF
         
@@ -318,6 +331,8 @@ jobs:
           
           ## 🛠 Installation
           
+          **Important Note**: The pkg-config files are initially configured for `/opt/homebrew/`. Methods 2 and 3 automatically fix these paths for custom installations.
+          
           ### Method 1: Direct to Homebrew (Recommended)
           Extract directly to `/opt/homebrew/` (integrates with existing Homebrew):
           ```bash
@@ -325,7 +340,7 @@ jobs:
           ```
           
           ### Method 2: Custom Location via Script
-          Install to `/opt/mesa-virgl/` using the installation script:
+          Install to `/opt/mesa-virgl/` using the installation script (automatically fixes pkg-config):
           ```bash
           tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
           cd mesa-virgl-macos
@@ -337,7 +352,13 @@ jobs:
           ```bash
           tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
           cd mesa-virgl-macos
+          
+          # Copy files to custom location
           sudo cp -r opt/homebrew/* /usr/local/
+          
+          # Fix pkg-config files for custom installation path
+          sudo sed -i.bak 's|prefix=/opt/homebrew|prefix=/usr/local|g' /usr/local/lib/pkgconfig/*.pc
+          sudo rm /usr/local/lib/pkgconfig/*.pc.bak 2>/dev/null || true
           ```
           
           ## ✅ Verification
@@ -371,6 +392,96 @@ jobs:
           export MESA_LOADER_DRIVER_OVERRIDE=virpipe
           # Your QEMU command with -device virtio-gpu-gl-pci
           ```
+          
+          ## 🛠 Building QEMU with Mesa VirGL Libraries
+          
+          ### Option 1: Use with Existing QEMU (Runtime)
+          Simply set environment variables before running QEMU (shown above).
+          
+          ### Option 2: Compile QEMU with Mesa VirGL Support
+          To build QEMU that uses these Mesa libraries directly:
+          
+          #### Prerequisites:
+          ```bash
+          # Install QEMU build dependencies
+          brew install ninja meson glib pixman
+          
+          # Ensure Mesa VirGL libraries are installed (any method above)
+          # Example: Method 1 (Homebrew integration)
+          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C / 2>/dev/null
+          ```
+          
+          #### Configure QEMU Build:
+          ```bash
+          # Clone QEMU source
+          git clone https://github.com/qemu/qemu.git
+          cd qemu
+          
+          # Configure with Mesa VirGL support
+          ./configure \\
+            --enable-opengl \\
+            --enable-virglrenderer \\
+            --enable-sdl \\
+            --disable-cocoa \\
+            --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \\
+            --extra-cflags="-I/opt/homebrew/include" \\
+            --extra-ldflags="-L/opt/homebrew/lib" \\
+            --pkg-config-path="/opt/homebrew/lib/pkgconfig"
+          
+          # Alternative for custom Mesa installation (/opt/mesa-virgl):
+          ./configure \\
+            --enable-opengl \\
+            --enable-virglrenderer \\
+            --enable-sdl \\
+            --disable-cocoa \\
+            --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \\
+            --extra-cflags="-I/opt/mesa-virgl/include" \\
+            --extra-ldflags="-L/opt/mesa-virgl/lib" \\
+            --pkg-config-path="/opt/mesa-virgl/lib/pkgconfig"
+          ```
+          
+          #### Build QEMU:
+          ```bash
+          make -j$(sysctl -n hw.ncpu)
+          
+          # Optional: Install system-wide
+          sudo make install
+          ```
+          
+          #### Verify VirGL Integration:
+          ```bash
+          # Check if QEMU was built with VirGL support
+          ./qemu-system-aarch64 --help | grep virgl
+          
+          # Should show: -device virtio-gpu-gl-pci
+          # Should show: -display sdl,gl=on
+          ```
+          
+          ### Option 3: Use with QEMU-3dfx Fork
+          If using the QEMU-3dfx fork (recommended for enhanced 3D acceleration):
+          
+          ```bash
+          # Install via Homebrew
+          brew tap akihikodaki/qemu
+          brew install qemu-3dfx
+          
+          # Set Mesa VirGL environment before running
+          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          
+          # Run QEMU-3dfx with VirGL
+          qemu-system-aarch64 \\
+            -device virtio-gpu-gl-pci,blob=true \\
+            -display sdl,gl=on \\
+            [other options...]
+          ```
+          
+          ### Compilation Tips:
+          - **For Apple Silicon**: Ensure you're building with ARM64 support
+          - **For Intel Macs**: May need `--target-list` adjustments
+          - **Dependencies**: VirGL renderer library should be automatically detected
+          - **Troubleshooting**: Check `config.log` if configure fails to find Mesa libraries
           
           ## 📊 Build Information
           - **Mesa Version**: 24.3.0-devel
