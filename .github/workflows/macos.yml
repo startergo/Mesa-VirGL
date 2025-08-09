@@ -256,7 +256,9 @@ jobs:
         mkdir -p "$INSTALL_PREFIX"
         
         echo "Installing Mesa VirGL libraries..."
-        if [ -d "opt" ]; then
+        if [ -d "opt/homebrew" ]; then
+          cp -r opt/homebrew/* "$INSTALL_PREFIX/"
+        elif [ -d "opt" ]; then
           cp -r opt/* "$INSTALL_PREFIX/"
         elif [ -d "usr" ]; then
           cp -r usr/* "$INSTALL_PREFIX/"
@@ -315,9 +317,28 @@ jobs:
           - Compatible with QEMU-3dfx for accelerated virtualization
           
           ## 🛠 Installation
-          1. Download `mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz`
-          2. Extract: `tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz`
-          3. Install: `cd mesa-virgl-macos && sudo ./install.sh`
+          
+          ### Method 1: Direct to Homebrew (Recommended)
+          Extract directly to `/opt/homebrew/` (integrates with existing Homebrew):
+          ```bash
+          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C / 2>/dev/null
+          ```
+          
+          ### Method 2: Custom Location via Script
+          Install to `/opt/mesa-virgl/` using the installation script:
+          ```bash
+          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+          cd mesa-virgl-macos
+          sudo ./install.sh
+          ```
+          
+          ### Method 3: Manual Custom Location
+          Extract and manually copy to any location (example: `/usr/local/`):
+          ```bash
+          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+          cd mesa-virgl-macos
+          sudo cp -r opt/homebrew/* /usr/local/
+          ```
           
           ## ✅ Verification
           Verify the download integrity:
@@ -326,9 +347,27 @@ jobs:
           ```
           
           ## 🔧 Usage with QEMU
-          After installation, use with QEMU for hardware-accelerated graphics:
+          
+          ### If installed to `/opt/homebrew/` (Method 1):
+          ```bash
+          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          # Your QEMU command with -device virtio-gpu-gl-pci
+          ```
+          
+          ### If installed to `/opt/mesa-virgl/` (Method 2):
           ```bash
           export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          # Your QEMU command with -device virtio-gpu-gl-pci
+          ```
+          
+          ### If installed to `/usr/local/` (Method 3):
+          ```bash
+          export DYLD_LIBRARY_PATH="/usr/local/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
           export MESA_LOADER_DRIVER_OVERRIDE=virpipe
           # Your QEMU command with -device virtio-gpu-gl-pci
           ```
