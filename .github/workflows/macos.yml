@@ -166,7 +166,7 @@ jobs:
         echo "Native config contents:"
         cat native_config
         echo "Running meson setup..."
-        $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=true -Dgallium-drivers=virgl -Dglx=disabled -Degl=enabled -Dgles1=enabled -Dgles2=enabled -Dopengl=true -Dshared-glapi=true
+        $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=false -Dgallium-drivers=virgl -Dglx=disabled -Degl=disabled -Dopengl=true -Dshared-glapi=enabled
     - name: Build
       run: $MESON_EXEC compile -C build
     - name: Test
@@ -217,19 +217,19 @@ jobs:
         
         Key Features:
         - VirGL driver support for GPU virtualization  
-        - Full OpenGL and OpenGL ES library support
-        - EGL implementation for macOS
-        - Off-screen Mesa (OSMesa) support
+        - Full OpenGL library support
+        - Shared OpenGL API implementation
         - Metal-to-OpenGL translation compatibility
         - Optimized for QEMU virtualization on macOS
         - ARM64 and x86_64 support
         
         Library Differences from Linux Build:
         - macOS uses .dylib files instead of .so files
-        - Includes libGL.dylib (equivalent to libGL.so.1)
+        - Includes libGL.dylib (full OpenGL, equivalent to libGL.so.1)
         - Includes libglapi.dylib (equivalent to libglapi.so.0)
-        - Additional EGL and OpenGL ES libraries for broader compatibility
-        - Libraries may be smaller due to macOS-specific optimizations
+        - No OSMesa libraries (not needed for QEMU virtualization)
+        - No EGL/OpenGL ES libraries (not supported on macOS Mesa)
+        - Should be closer in size to Linux build with focused QEMU support
         
         Installation:
         1. Extract this package
@@ -331,9 +331,8 @@ jobs:
           
           ## 🚀 Key Features
           - **VirGL Driver**: GPU virtualization support for QEMU
-          - **Full OpenGL Support**: Complete OpenGL and OpenGL ES libraries
-          - **EGL Implementation**: EGL support for macOS compatibility
-          - **OSMesa Support**: Off-screen rendering capabilities
+          - **Full OpenGL Support**: Complete OpenGL desktop library
+          - **Shared OpenGL API**: Optimized shared API implementation
           - **Metal Translation**: Compatible with Apple's Metal-to-OpenGL translation layer
           - **macOS Optimized**: Built specifically for macOS host systems
           - **Universal Binary**: Supports both ARM64 and x86_64 architectures
@@ -344,14 +343,20 @@ jobs:
           - `libGL.so.1` → `libGL.1.dylib` (OpenGL library)
           - `libglapi.so.0` → `libglapi.0.dylib` (OpenGL API dispatch)
           
-          **Additional macOS Libraries**:
-          - `libEGL.1.dylib` - EGL interface for OpenGL ES
-          - `libGLESv1_CM.1.dylib` - OpenGL ES 1.x Common profile
-          - `libGLESv2.2.dylib` - OpenGL ES 2.x/3.x
-          - VirGL gallium driver modules
+          **macOS-Specific Libraries**:
+          - VirGL gallium driver modules (full OpenGL configuration)
           
-          **Size Differences**: macOS libraries may be smaller due to:
-          - macOS-specific optimizations
+          **Not Included** (not needed for QEMU):
+          - OSMesa libraries (off-screen rendering not needed for QEMU)
+          - EGL libraries (not supported on macOS Mesa)
+          - OpenGL ES libraries (not supported on macOS Mesa)
+          
+          **Size Differences**: macOS libraries should be comparable to Linux due to:
+          - Full OpenGL support enabled for VirGL
+          - Shared OpenGL API implementation
+          - VirGL driver with complete OpenGL backend
+          - Focused on QEMU use case (no unnecessary components)
+          - May still be smaller due to macOS-specific optimizations
           - Different linking strategies (.dylib vs .so)
           - Exclusion of X11-specific code paths
           
