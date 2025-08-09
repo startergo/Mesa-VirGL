@@ -166,13 +166,40 @@ jobs:
         echo "Native config contents:"
         cat native_config
         echo "Running meson setup..."
-        $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=false -Dgallium-drivers=virgl -Dglx=disabled -Degl=disabled -Dopengl=true -Dshared-glapi=enabled
+        $MESON_EXEC setup . build --native-file=native_config -Dmoltenvk-dir=$(brew --prefix molten-vk) -Dbuild-tests=true -Dosmesa=false -Dgallium-drivers=virgl -Degl=disabled -Dglx=disabled -Dopengl=true -Dshared-glapi=enabled
     - name: Build
       run: $MESON_EXEC compile -C build
     - name: Test
       run: $MESON_EXEC test -C build --print-errorlogs
     - name: Install
       run: $MESON_EXEC install -C build --destdir $PWD/install
+    - name: Create libGL.dylib for QEMU VirGL compatibility
+      run: |
+        # Navigate to the installed lib directory
+        cd install/opt/homebrew/lib
+        
+        # QEMU VirGL expects libGL.dylib but Mesa on macOS only creates OpenGL ES libraries
+        # Create a compatibility symlink that points to the OpenGL ES 2.0 library
+        # This allows QEMU VirGL to find and use the OpenGL functionality
+        if [ -f "libGLESv2.2.dylib" ] && [ ! -f "libGL.1.dylib" ]; then
+          echo "Creating libGL.dylib compatibility symlink for QEMU VirGL..."
+          ln -sf libGLESv2.2.dylib libGL.1.dylib
+          ln -sf libGL.1.dylib libGL.dylib
+          echo "✓ Created libGL.dylib -> libGLESv2.2.dylib symlink"
+        fi
+        
+        # Also create a gl.pc pkg-config file for desktop OpenGL
+        cd pkgconfig
+        if [ ! -f "gl.pc" ] && [ -f "glesv2.pc" ]; then
+          echo "Creating gl.pc pkg-config file for desktop OpenGL compatibility..."
+          sed 's/glesv2/gl/g; s/GLESv2/GL/g; s/OpenGL ES/OpenGL/g' glesv2.pc > gl.pc
+          echo "✓ Created gl.pc based on glesv2.pc"
+        fi
+        
+        echo "Mesa VirGL macOS libraries prepared:"
+        ls -la ../lib*.dylib
+        echo "Pkg-config files:"
+        ls -la *.pc
     - name: 'Upload Artifact'
       if: always()
       uses: actions/upload-artifact@v4
