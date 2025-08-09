@@ -252,11 +252,12 @@ jobs:
         
         Library Differences from Linux Build:
         - macOS uses .dylib files instead of .so files
-        - Includes libGL.dylib (full OpenGL, equivalent to libGL.so.1)
-        - Includes libglapi.dylib (equivalent to libglapi.so.0)
+        - Includes libGL.dylib (compatibility symlink to OpenGL ES)
+        - Includes libGLESv2.dylib and libGLESv1_CM.dylib (OpenGL ES libraries)
+        - Includes libglapi.dylib (OpenGL API dispatch layer)
         - No OSMesa libraries (not needed for QEMU virtualization)
-        - No EGL/OpenGL ES libraries (not supported on macOS Mesa)
-        - Should be closer in size to Linux build with focused QEMU support
+        - OpenGL ES libraries provide the actual OpenGL implementation
+        - libGL.dylib symlink ensures QEMU compatibility
         
         Installation:
         1. Extract this package
@@ -367,29 +368,39 @@ jobs:
           ## 📋 Library Comparison
           
           **Linux Original** → **macOS Equivalent**:
-          - `libGL.so.1` → `libGL.1.dylib` (OpenGL library)
+          - `libGL.so.1` → `libGL.1.dylib` (compatibility symlink)
           - `libglapi.so.0` → `libglapi.0.dylib` (OpenGL API dispatch)
           
           **macOS-Specific Libraries**:
-          - VirGL gallium driver modules (full OpenGL configuration)
+          - `libGLESv2.2.dylib` (OpenGL ES 2.0 - actual OpenGL implementation)
+          - `libGLESv1_CM.2.dylib` (OpenGL ES 1.x Common profile)
+          - VirGL gallium driver modules
           
           **Not Included** (not needed for QEMU):
           - OSMesa libraries (off-screen rendering not needed for QEMU)
           - EGL libraries (not supported on macOS Mesa)
-          - OpenGL ES libraries (not supported on macOS Mesa)
+          
+          **Architecture Notes**:
+          - Mesa on macOS uses OpenGL ES libraries as the actual OpenGL implementation
+          - libGL.dylib is a compatibility symlink pointing to libGLESv2.2.dylib
+          - This approach provides full OpenGL functionality through OpenGL ES backend
           
           **Size Differences**: macOS libraries should be comparable to Linux due to:
-          - Full OpenGL support enabled for VirGL
-          - Shared OpenGL API implementation
-          - VirGL driver with complete OpenGL backend
+          - Full OpenGL support enabled through OpenGL ES backend
+          - Shared OpenGL API implementation via libglapi.dylib
+          - VirGL driver with complete OpenGL functionality
+          - OpenGL ES libraries provide the actual OpenGL implementation
           - Focused on QEMU use case (no unnecessary components)
-          - May still be smaller due to macOS-specific optimizations
+          - May be smaller due to macOS-specific optimizations
           - Different linking strategies (.dylib vs .so)
           - Exclusion of X11-specific code paths
           
           ## 📦 What's Included
           - VirGL Gallium driver libraries
           - Mesa core libraries and headers
+          - OpenGL ES libraries (libGLESv2, libGLESv1_CM) - actual OpenGL implementation
+          - OpenGL API dispatch layer (libglapi.dylib)
+          - Compatibility symlink (libGL.dylib → libGLESv2.2.dylib)
           - Installation script for easy setup
           - Compatible with QEMU-3dfx for accelerated virtualization
           
