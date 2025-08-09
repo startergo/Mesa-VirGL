@@ -249,15 +249,23 @@ jobs:
         
         1. **Install virglrenderer library** (required for QEMU VirGL):
            ```bash
-           # Install virglrenderer via Homebrew
-           brew install virglrenderer
+           # Install dependencies for virglrenderer build
+           brew install meson ninja pkg-config libepoxy
            
-           # Or build from source:
+           # Build virglrenderer from source (not available in Homebrew)
            git clone https://gitlab.freedesktop.org/virgl/virglrenderer.git
            cd virglrenderer
            meson setup build
            meson compile -C build
            sudo meson install -C build
+           
+           # Alternative: Install to custom prefix to avoid system conflicts
+           meson setup build --prefix=/opt/virglrenderer
+           meson compile -C build
+           sudo meson install -C build
+           
+           # If using custom prefix, add to PKG_CONFIG_PATH
+           export PKG_CONFIG_PATH="/opt/virglrenderer/lib/pkgconfig:$PKG_CONFIG_PATH"
            ```
         
         2. **Install Mesa VirGL libraries** (this package):
@@ -301,6 +309,7 @@ jobs:
         
         ```bash
         # With Homebrew installation, libraries are in standard paths
+        # No environment variables or extra flags needed
         git clone https://github.com/qemu/qemu.git
         cd qemu
         
@@ -328,20 +337,42 @@ jobs:
         pkg-config --exists virglrenderer && echo "✓ VirGL renderer found"
         ```
         
+        ## VirGL vs Venus Protocol Clarification
+        
+        **VirGL OpenGL (Standard)**:
+        - Basic 3D acceleration using OpenGL ES over virtio-gpu
+        - Device: `virtio-gpu-gl-pci` (no additional parameters needed)
+        - Supports OpenGL applications in guest
+        - Works with most Linux distributions
+        
+        **Venus Vulkan Protocol** (since virglrenderer v1.0.0):
+        - Vulkan API translation over virtio-gpu
+        - Device: `virtio-gpu-gl-pci,hostmem=8G,blob=true,venus=true`
+        - Requires host blob support and Venus-capable guest drivers
+        - hostmem specifies virtio-gpu host memory window (256M-8G typical)
+        - blob=true enables host memory blob resources for Venus
+        - venus=true enables Venus Vulkan capability set
+        
         ## QEMU VirGL Runtime Configuration
         
         After successful compilation, QEMU can use VirGL devices:
         
         ```bash
-        # Basic VirGL GPU device
+        # Basic VirGL OpenGL device (standard VirGL)
         qemu-system-x86_64 \
-          -device virtio-gpu-gl-pci,blob=true \
+          -device virtio-gpu-gl-pci \
           -display sdl,gl=on \
           [other QEMU options...]
         
-        # Advanced VirGL with specific OpenGL context
+        # VirGL with Venus Vulkan support (requires virglrenderer v1.0.0+)
         qemu-system-x86_64 \
-          -device virtio-gpu-gl-pci,blob=true,max_outputs=1 \
+          -device virtio-gpu-gl-pci,hostmem=8G,blob=true,venus=true \
+          -display sdl,gl=on \
+          [other QEMU options...]
+        
+        # Advanced VirGL with multiple outputs
+        qemu-system-x86_64 \
+          -device virtio-gpu-gl-pci,max_outputs=2 \
           -display gtk,gl=on,show-cursor=on \
           -object memory-backend-memfd,id=mem,size=4G,share=on \
           -machine memory-backend=mem \
@@ -717,8 +748,15 @@ jobs:
         
         **Step 1: Install Prerequisites**
         ```bash
-        # Install VirGL renderer (required for QEMU)
-        brew install virglrenderer
+        # Install build dependencies
+        brew install meson ninja pkg-config libepoxy
+        
+        # Build VirGL renderer from source (not available in Homebrew)
+        git clone https://gitlab.freedesktop.org/virgl/virglrenderer.git
+        cd virglrenderer
+        meson setup build
+        meson compile -C build
+        sudo meson install -C build
         ```
         
         **Step 2: Configure Environment (Isolated Installation)**
@@ -742,21 +780,28 @@ jobs:
         # Check VirGL device support
         ./qemu-system-x86_64 -device help | grep virtio-gpu
         
-        # Test VirGL VM
+        # Test basic VirGL OpenGL VM
         ./qemu-system-x86_64 \\
-          -device virtio-gpu-gl-pci,blob=true \\
+          -device virtio-gpu-gl-pci \\
+          -display sdl,gl=on \\
+          [your VM options...]
+        
+        # Test VirGL with Venus Vulkan (requires virglrenderer v1.0.0+)
+        ./qemu-system-x86_64 \\
+          -device virtio-gpu-gl-pci,hostmem=8G,blob=true,venus=true \\
           -display sdl,gl=on \\
           [your VM options...]
         ```
         
         ### For Homebrew Installation
-        No additional environment setup needed - libraries are available through standard Homebrew paths:
+        Libraries are automatically available through standard Homebrew paths - no environment setup needed:
         
         ```bash
         # Install to Homebrew
         sudo ./install.sh --homebrew
         
-        # QEMU configure works directly:
+        # QEMU configure works directly without extra flags:
+        cd qemu
         ./configure --enable-virglrenderer --enable-opengl
         make -j$(sysctl -n hw.ncpu)
         ```
@@ -845,8 +890,12 @@ jobs:
           
           ### QEMU VirGL Device Support
           ```bash
-          # QEMU can be compiled with VirGL GPU device support:
-          -device virtio-gpu-gl-pci,blob=true
+          # Standard VirGL OpenGL device (basic 3D acceleration):
+          -device virtio-gpu-gl-pci
+          -display sdl,gl=on
+          
+          # VirGL with Venus Vulkan support (requires virglrenderer v1.0.0+):
+          -device virtio-gpu-gl-pci,hostmem=8G,blob=true,venus=true
           -display sdl,gl=on
           ```
           
@@ -887,8 +936,15 @@ jobs:
           
           **1. Install VirGL Renderer Library**
           ```bash
-          # Required for QEMU VirGL support
-          brew install virglrenderer
+          # Install build dependencies
+          brew install meson ninja pkg-config libepoxy
+          
+          # Build virglrenderer from source (not available in Homebrew)
+          git clone https://gitlab.freedesktop.org/virgl/virglrenderer.git
+          cd virglrenderer
+          meson setup build
+          meson compile -C build
+          sudo meson install -C build
           ```
           
           **2. Install Mesa VirGL Libraries (this package)**
@@ -925,7 +981,7 @@ jobs:
           # Install Mesa VirGL to Homebrew
           sudo ./install.sh --homebrew
           
-          # QEMU configure finds libraries automatically
+          # QEMU configure finds libraries automatically - no extra flags needed
           cd qemu
           ./configure --enable-virglrenderer --enable-opengl
           make -j$(sysctl -n hw.ncpu)
@@ -954,10 +1010,20 @@ jobs:
           
           ### Running QEMU with VirGL
           
-          **Basic VirGL VM Setup:**
+          **Basic VirGL OpenGL Setup:**
           ```bash
           ./qemu-system-x86_64 \\
-            -device virtio-gpu-gl-pci,blob=true \\
+            -device virtio-gpu-gl-pci \\
+            -display sdl,gl=on \\
+            -m 4G \\
+            [your VM disk and options...]
+          ```
+          
+          **VirGL with Venus Vulkan Support:**
+          ```bash
+          # Requires virglrenderer v1.0.0+ and Venus-enabled guest drivers
+          ./qemu-system-x86_64 \\
+            -device virtio-gpu-gl-pci,hostmem=8G,blob=true,venus=true \\
             -display sdl,gl=on \\
             -m 4G \\
             [your VM disk and options...]
@@ -966,7 +1032,7 @@ jobs:
           **Advanced VirGL Configuration:**
           ```bash
           ./qemu-system-x86_64 \\
-            -device virtio-gpu-gl-pci,blob=true,max_outputs=1 \\
+            -device virtio-gpu-gl-pci,max_outputs=2 \\
             -display gtk,gl=on,show-cursor=on \\
             -object memory-backend-memfd,id=mem,size=4G,share=on \\
             -machine memory-backend=mem \\
@@ -989,13 +1055,6 @@ jobs:
           - Verify QEMU VirGL dependencies resolve correctly
           - Test pkg-config integration for OpenGL ES libraries
           - Validate VirGL renderer compilation on macOS
-          
-          ## 🚫 What This is NOT For
-          
-          - **❌ Direct Runtime Usage**: Current build focused on compilation support
-          - **❌ Production macOS VMs**: Use system OpenGL for production VM setups
-          - **❌ macOS Host Gaming**: System OpenGL performs better for macOS applications
-          - **❌ General OpenGL**: This is specifically for QEMU VirGL development
           
           ## ✅ Installation for QEMU Development
           
