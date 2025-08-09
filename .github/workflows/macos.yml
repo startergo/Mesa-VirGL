@@ -173,33 +173,6 @@ jobs:
       run: $MESON_EXEC test -C build --print-errorlogs
     - name: Install
       run: $MESON_EXEC install -C build --destdir $PWD/install
-    - name: Create libGL.dylib for QEMU VirGL compatibility
-      run: |
-        # Navigate to the installed lib directory
-        cd install/opt/homebrew/lib
-        
-        # QEMU VirGL expects libGL.dylib but Mesa on macOS only creates OpenGL ES libraries
-        # Create a compatibility symlink that points to the OpenGL ES 2.0 library
-        # This allows QEMU VirGL to find and use the OpenGL functionality
-        if [ -f "libGLESv2.2.dylib" ] && [ ! -f "libGL.1.dylib" ]; then
-          echo "Creating libGL.dylib compatibility symlink for QEMU VirGL..."
-          ln -sf libGLESv2.2.dylib libGL.1.dylib
-          ln -sf libGL.1.dylib libGL.dylib
-          echo "✓ Created libGL.dylib -> libGLESv2.2.dylib symlink"
-        fi
-        
-        # Also create a gl.pc pkg-config file for desktop OpenGL
-        cd pkgconfig
-        if [ ! -f "gl.pc" ] && [ -f "glesv2.pc" ]; then
-          echo "Creating gl.pc pkg-config file for desktop OpenGL compatibility..."
-          sed 's/glesv2/gl/g; s/GLESv2/GL/g; s/OpenGL ES/OpenGL/g' glesv2.pc > gl.pc
-          echo "✓ Created gl.pc based on glesv2.pc"
-        fi
-        
-        echo "Mesa VirGL macOS libraries prepared:"
-        ls -la ../lib*.dylib
-        echo "Pkg-config files:"
-        ls -la *.pc
     - name: 'Upload Artifact'
       if: always()
       uses: actions/upload-artifact@v4
@@ -237,32 +210,210 @@ jobs:
         
         # Create release info
         cat > mesa-virgl-macos/RELEASE_INFO.txt << 'EOF'
-        Mesa VirGL for macOS - Release Build
-        ====================================
+        Mesa VirGL for macOS - Development Build
+        ========================================
         
-        This is a custom Mesa build optimized for VirGL on macOS with Apple Silicon.
+        This is a custom Mesa VirGL build for macOS that provides VirGL driver support
+        for QEMU GPU virtualization. The build enables QEMU compilation with VirGL
+        support but has runtime limitations on macOS.
         
-        Key Features:
-        - VirGL driver support for GPU virtualization  
-        - Full OpenGL library support
-        - Shared OpenGL API implementation
-        - Metal-to-OpenGL translation compatibility
-        - Optimized for QEMU virtualization on macOS
-        - ARM64 and x86_64 support
+        Purpose:
+        - Enables QEMU compilation with VirGL support on macOS
+        - Provides VirGL gallium driver and OpenGL ES libraries
+        - Allows building QEMU with VirGL renderer integration
+        - Supports VirGL protocol development and debugging
         
-        Library Differences from Linux Build:
-        - macOS uses .dylib files instead of .so files
-        - Includes libGL.dylib (compatibility symlink to OpenGL ES)
-        - Includes libGLESv2.dylib and libGLESv1_CM.dylib (OpenGL ES libraries)
-        - Includes libglapi.dylib (OpenGL API dispatch layer)
-        - No OSMesa libraries (not needed for QEMU virtualization)
-        - OpenGL ES libraries provide the actual OpenGL implementation
-        - libGL.dylib symlink ensures QEMU compatibility
+        What This Enables:
+        - QEMU configure --enable-virglrenderer --enable-opengl succeeds
+        - pkg-config finds required OpenGL libraries during QEMU build
+        - VirGL device compilation in QEMU (virtio-gpu-gl-pci)
+        - Cross-platform QEMU VirGL development on macOS
         
-        Installation:
-        1. Extract this package
-        2. Copy contents to /opt/mesa-virgl/ (requires sudo)
-        3. Use with QEMU VirGL for accelerated graphics
+        Runtime Limitations:
+        - **Build configuration**: Current build focused on compilation support only
+        - **Runtime integration**: Designed primarily for QEMU build-time linking
+        - **Compile-time preferred**: Best integrated directly into QEMU build process
+        - **Alternative**: Use system OpenGL for standard QEMU VM setups
+        
+        Libraries Included:
+        - libGLESv2.dylib (OpenGL ES 2.0 implementation)
+        - libGLESv1_CM.dylib (OpenGL ES 1.x Common profile)
+        - libglapi.dylib (OpenGL API dispatch layer)
+        - VirGL gallium driver modules
+        - pkg-config files (glesv2.pc, glesv1_cm.pc)
+        
+        QEMU VirGL Integration Guide:
+        ============================
+        
+        ## Prerequisites for QEMU VirGL Compilation
+        
+        1. **Install virglrenderer library** (required for QEMU VirGL):
+           ```bash
+           # Install virglrenderer via Homebrew
+           brew install virglrenderer
+           
+           # Or build from source:
+           git clone https://gitlab.freedesktop.org/virgl/virglrenderer.git
+           cd virglrenderer
+           meson setup build
+           meson compile -C build
+           sudo meson install -C build
+           ```
+        
+        2. **Install Mesa VirGL libraries** (this package):
+           ```bash
+           # Extract Mesa VirGL package
+           tar -xzf mesa-virgl-macos-*.tar.gz
+           
+           # Install to isolated directory (recommended)
+           sudo ./install.sh
+           
+           # OR install to Homebrew for seamless integration
+           sudo ./install.sh --homebrew
+           ```
+        
+        ## QEMU Configuration with Mesa VirGL
+        
+        ### Method 1: Isolated Mesa VirGL Installation
+        
+        ```bash
+        # Set environment for QEMU configure
+        export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+        export CFLAGS="-I/opt/mesa-virgl/include $CFLAGS"
+        export LDFLAGS="-L/opt/mesa-virgl/lib $LDFLAGS"
+        
+        # Clone and configure QEMU
+        git clone https://github.com/qemu/qemu.git
+        cd qemu
+        
+        ./configure \
+          --enable-virglrenderer \
+          --enable-opengl \
+          --extra-cflags="-I/opt/mesa-virgl/include" \
+          --extra-ldflags="-L/opt/mesa-virgl/lib" \
+          --pkg-config-path="/opt/mesa-virgl/lib/pkgconfig"
+        
+        # Build QEMU with VirGL support
+        make -j$(sysctl -n hw.ncpu)
+        ```
+        
+        ### Method 2: Homebrew Integration
+        
+        ```bash
+        # With Homebrew installation, libraries are in standard paths
+        git clone https://github.com/qemu/qemu.git
+        cd qemu
+        
+        ./configure \
+          --enable-virglrenderer \
+          --enable-opengl
+        
+        make -j$(sysctl -n hw.ncpu)
+        ```
+        
+        ## VirGL Library Detection Verification
+        
+        Before building QEMU, verify Mesa VirGL libraries are detected:
+        
+        ```bash
+        # Check pkg-config can find OpenGL ES libraries
+        pkg-config --exists glesv2 && echo "✓ OpenGL ES 2.0 found"
+        pkg-config --exists glesv1_cm && echo "✓ OpenGL ES 1.x found"
+        
+        # Show library paths
+        pkg-config --cflags --libs glesv2
+        pkg-config --cflags --libs glesv1_cm
+        
+        # Check virglrenderer detection
+        pkg-config --exists virglrenderer && echo "✓ VirGL renderer found"
+        ```
+        
+        ## QEMU VirGL Runtime Configuration
+        
+        After successful compilation, QEMU can use VirGL devices:
+        
+        ```bash
+        # Basic VirGL GPU device
+        qemu-system-x86_64 \
+          -device virtio-gpu-gl-pci,blob=true \
+          -display sdl,gl=on \
+          [other QEMU options...]
+        
+        # Advanced VirGL with specific OpenGL context
+        qemu-system-x86_64 \
+          -device virtio-gpu-gl-pci,blob=true,max_outputs=1 \
+          -display gtk,gl=on,show-cursor=on \
+          -object memory-backend-memfd,id=mem,size=4G,share=on \
+          -machine memory-backend=mem \
+          [guest OS options...]
+        ```
+        
+        ## VirGL Development Workflow
+        
+        ### 1. Mesa VirGL Library Development
+        ```bash
+        # Modify Mesa VirGL source and rebuild
+        meson compile -C build
+        sudo meson install -C build --destdir /path/to/staging
+        
+        # Update installation
+        sudo ./install.sh --prefix=/opt/mesa-virgl
+        ```
+        
+        ### 2. QEMU VirGL Integration Testing
+        ```bash
+        # Rebuild QEMU with updated Mesa VirGL
+        cd qemu
+        make clean
+        make -j$(sysctl -n hw.ncpu)
+        
+        # Test VirGL functionality
+        ./qemu-system-x86_64 -device virtio-gpu-gl-pci,blob=true -display sdl,gl=on
+        ```
+        
+        ### 3. Cross-platform Deployment
+        ```bash
+        # Build QEMU with VirGL on macOS for Linux deployment
+        ./configure --enable-virglrenderer --enable-opengl --target-list=x86_64-linux-user
+        make -j$(sysctl -n hw.ncpu)
+        
+        # Package for Linux deployment
+        tar -czf qemu-virgl-build.tar.gz build/
+        ```
+        
+        ## Troubleshooting QEMU VirGL Compilation
+        
+        ### Library Detection Issues
+        ```bash
+        # If pkg-config can't find libraries:
+        export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+        
+        # If headers not found:
+        export C_INCLUDE_PATH="/opt/mesa-virgl/include:$C_INCLUDE_PATH"
+        export CPLUS_INCLUDE_PATH="/opt/mesa-virgl/include:$CPLUS_INCLUDE_PATH"
+        
+        # If linking fails:
+        export LIBRARY_PATH="/opt/mesa-virgl/lib:$LIBRARY_PATH"
+        export LD_LIBRARY_PATH="/opt/mesa-virgl/lib:$LD_LIBRARY_PATH"
+        ```
+        
+        ### Verification Commands
+        ```bash
+        # Check if QEMU was built with VirGL support
+        ./qemu-system-x86_64 -device help | grep virtio-gpu
+        
+        # Verify OpenGL support compiled in
+        ./qemu-system-x86_64 -display help | grep gl
+        
+        # Test library linking
+        otool -L ./qemu-system-x86_64 | grep -E "(virgl|gles|glapi)"
+        ```
+        
+        QEMU Integration Use Cases:
+        1. **QEMU Development**: Compile QEMU with VirGL support on macOS
+        2. **Cross-platform Builds**: Build VirGL-enabled QEMU on macOS for Linux deployment
+        3. **VirGL Protocol Work**: Develop and test VirGL protocol implementations
+        4. **Build System Testing**: Verify QEMU VirGL integration compiles properly
         
         Build Information:
         - Mesa Version: 24.3.0-devel
@@ -285,11 +436,53 @@ jobs:
         echo "Mesa VirGL for macOS - Installation Script"
         echo "=========================================="
         
+        # Default to isolated installation, but allow Homebrew integration
         INSTALL_PREFIX="/opt/mesa-virgl"
+        HOMEBREW_INSTALL=false
+        
+        # Parse command line arguments
+        while [[ $# -gt 0 ]]; do
+          case $1 in
+            --homebrew)
+              HOMEBREW_INSTALL=true
+              INSTALL_PREFIX="/opt/homebrew"
+              shift
+              ;;
+            --prefix=*)
+              INSTALL_PREFIX="${1#*=}"
+              shift
+              ;;
+            -h|--help)
+              echo "Usage: $0 [--homebrew] [--prefix=PATH]"
+              echo "  --homebrew    Install to Homebrew directories (/opt/homebrew)"
+              echo "  --prefix=PATH Install to custom path (default: /opt/mesa-virgl)"
+              exit 0
+              ;;
+            *)
+              echo "Unknown option $1"
+              echo "Use --help for usage information"
+              exit 1
+              ;;
+          esac
+        done
         
         if [ "$EUID" -ne 0 ]; then
           echo "Error: This script must be run as root (use sudo)"
+          echo "Usage: sudo $0 [--homebrew] [--prefix=PATH]"
           exit 1
+        fi
+        
+        if [ "$HOMEBREW_INSTALL" = true ]; then
+          echo "Installing Mesa VirGL to Homebrew directories: $INSTALL_PREFIX"
+          echo "Warning: This will integrate with your existing Homebrew installation"
+          read -p "Continue? [y/N]: " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled"
+            exit 0
+          fi
+        else
+          echo "Installing Mesa VirGL to isolated directory: $INSTALL_PREFIX"
         fi
         
         echo "Creating installation directory..."
@@ -307,13 +500,19 @@ jobs:
           cp -r * "$INSTALL_PREFIX/"
         fi
         
-        echo "Fixing pkg-config files for custom installation path..."
+        echo "Fixing pkg-config files for installation path..."
         if [ -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
           # Update pkg-config files to use the actual installation prefix
           for pc_file in "$INSTALL_PREFIX/lib/pkgconfig"/*.pc; do
             if [ -f "$pc_file" ]; then
               echo "Updating $pc_file..."
-              sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+              if [ "$HOMEBREW_INSTALL" = true ]; then
+                # Keep Homebrew paths for Homebrew installation
+                sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+              else
+                # Update to custom installation path
+                sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+              fi
               rm "$pc_file.bak" 2>/dev/null || true
             fi
           done
@@ -325,12 +524,19 @@ jobs:
         echo "Installation complete!"
         echo "Mesa VirGL installed to: $INSTALL_PREFIX"
         echo ""
-        echo "To use with QEMU:"
-        echo "  export DYLD_LIBRARY_PATH=\"$INSTALL_PREFIX/lib:\$DYLD_LIBRARY_PATH\""
-        echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
-        echo ""
-        echo "Pkg-config files have been updated for the installation path."
-        echo "For integration with QEMU-3dfx, see the project documentation."
+        if [ "$HOMEBREW_INSTALL" = true ]; then
+          echo "Homebrew integration complete. Mesa VirGL libraries are now available"
+          echo "through the standard Homebrew paths and should be found automatically"
+          echo "by pkg-config and other build systems."
+        else
+          echo "To use with QEMU development:"
+          echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
+          echo ""
+          echo "For QEMU configure:"
+          echo "  --extra-cflags=\"-I$INSTALL_PREFIX/include\""
+          echo "  --extra-ldflags=\"-L$INSTALL_PREFIX/lib\""
+          echo "  --pkg-config-path=\"$INSTALL_PREFIX/lib/pkgconfig\""
+        fi
         EOF
         
         chmod +x mesa-virgl-macos/install.sh
@@ -476,30 +682,83 @@ jobs:
         cat > mesa-virgl-macos/README.md << 'EOF'
         # Mesa VirGL for macOS
         
-        Custom Mesa build optimized for VirGL on macOS with Apple Silicon.
+        Custom Mesa VirGL build for QEMU development on macOS with Apple Silicon.
         
-        ## Installation
+        ## Installation Options
         
-        **IMPORTANT**: Install to an isolated directory to avoid conflicts with system OpenGL.
+        ### Option 1: Isolated Installation (Recommended for Development)
+        Install to an isolated directory to avoid conflicts with system libraries:
         
-        ### Quick Install (Recommended)
         ```bash
         sudo ./install.sh
         ```
         
-        This installs to `/opt/mesa-virgl/` and automatically fixes pkg-config paths.
+        This installs to `/opt/mesa-virgl/` by default.
+        
+        ### Option 2: Homebrew Integration
+        Install directly to Homebrew directories for seamless integration:
+        
+        ```bash
+        sudo ./install.sh --homebrew
+        ```
+        
+        This installs to `/opt/homebrew/` and integrates with existing Homebrew.
+        
+        ### Option 3: Custom Location
+        Install to a custom path:
+        
+        ```bash
+        sudo ./install.sh --prefix=/path/to/custom/location
+        ```
         
         ## Usage
         
-        Set environment variables before running QEMU:
+        ### For QEMU VirGL Development
+        
+        **Step 1: Install Prerequisites**
+        ```bash
+        # Install VirGL renderer (required for QEMU)
+        brew install virglrenderer
+        ```
+        
+        **Step 2: Configure Environment (Isolated Installation)**
+        ```bash
+        export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+        
+        # QEMU configure example:
+        ./configure \\
+          --enable-virglrenderer \\
+          --enable-opengl \\
+          --extra-cflags="-I/opt/mesa-virgl/include" \\
+          --extra-ldflags="-L/opt/mesa-virgl/lib" \\
+          --pkg-config-path="/opt/mesa-virgl/lib/pkgconfig"
+        
+        # Build QEMU
+        make -j$(sysctl -n hw.ncpu)
+        ```
+        
+        **Step 3: Verify VirGL Integration**
+        ```bash
+        # Check VirGL device support
+        ./qemu-system-x86_64 -device help | grep virtio-gpu
+        
+        # Test VirGL VM
+        ./qemu-system-x86_64 \\
+          -device virtio-gpu-gl-pci,blob=true \\
+          -display sdl,gl=on \\
+          [your VM options...]
+        ```
+        
+        ### For Homebrew Installation
+        No additional environment setup needed - libraries are available through standard Homebrew paths:
         
         ```bash
-        export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
-        export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-        export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+        # Install to Homebrew
+        sudo ./install.sh --homebrew
         
-        # Run QEMU with VirGL
-        qemu-system-aarch64 -device virtio-gpu-gl-pci,blob=true -display sdl,gl=on [options...]
+        # QEMU configure works directly:
+        ./configure --enable-virglrenderer --enable-opengl
+        make -j$(sysctl -n hw.ncpu)
         ```
         
         ## Uninstall
@@ -510,45 +769,22 @@ jobs:
         ```
         
         This automatically detects and removes Mesa VirGL from common locations:
-        - `/opt/mesa-virgl/`
-        - `/usr/local/mesa-virgl/`
-        - Homebrew integration files
+        - `/opt/mesa-virgl/` (isolated installations)
+        - `/usr/local/mesa-virgl/` (custom installations)  
+        - `/opt/homebrew/` (Homebrew integration files)
         
         ### Manual Uninstall for Custom Locations
         ```bash
         sudo ./uninstall.sh /path/to/custom/location
         ```
         
-        ### Manual Cleanup
-        If you need to remove manually:
-        
-        ```bash
-        # Remove installation directory
-        sudo rm -rf /opt/mesa-virgl
-        
-        # Remove any Homebrew integration files (if used)
-        sudo rm -f /opt/homebrew/lib/libGL.dylib
-        sudo rm -f /opt/homebrew/lib/libGLESv2.2.dylib
-        sudo rm -f /opt/homebrew/lib/libGLESv1_CM.2.dylib
-        sudo rm -f /opt/homebrew/lib/libglapi.0.dylib
-        sudo rm -f /opt/homebrew/lib/pkgconfig/gl.pc
-        sudo rm -f /opt/homebrew/lib/pkgconfig/glesv2.pc
-        sudo rm -f /opt/homebrew/lib/pkgconfig/glesv1_cm.pc
-        
-        # Clean up environment variables from shell config
-        # Edit ~/.zshrc, ~/.bashrc, or ~/.profile and remove:
-        # export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
-        # export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-        # export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-        ```
-        
         ## Files Included
         
-        - `install.sh` - Automatic installation script
+        - `install.sh` - Installation script with multiple options
         - `uninstall.sh` - Automatic uninstall script
         - `RELEASE_INFO.txt` - Detailed build and usage information
         - Mesa VirGL libraries and headers
-        - pkg-config files for integration
+        - pkg-config files for build system integration
         
         For detailed documentation, see `RELEASE_INFO.txt`.
         EOF
@@ -583,331 +819,203 @@ jobs:
         body: |
           # Mesa VirGL for macOS - ${{ github.event.inputs.release_tag }}
           
-          This release provides a custom Mesa build optimized for VirGL on macOS with Apple Silicon.
+          Mesa VirGL build for macOS that enables QEMU compilation with VirGL support.
           
-          ## 🚀 Key Features
-          - **VirGL Driver**: GPU virtualization support for QEMU
-          - **Full OpenGL Support**: Complete OpenGL desktop library
-          - **Shared OpenGL API**: Optimized shared API implementation
-          - **Metal Translation**: Compatible with Apple's Metal-to-OpenGL translation layer
-          - **macOS Optimized**: Built specifically for macOS host systems
-          - **Universal Binary**: Supports both ARM64 and x86_64 architectures
+          ## 🎯 Primary Purpose: QEMU VirGL Development
           
-          ## 📋 Library Comparison
+          This build serves QEMU developers who need VirGL support compiled into QEMU on macOS:
           
-          **Linux Original** → **macOS Equivalent**:
-          - `libGL.so.1` → `libGL.1.dylib` (compatibility symlink)
-          - `libglapi.so.0` → `libglapi.0.dylib` (OpenGL API dispatch)
+          - **QEMU Build Support**: Enables `./configure --enable-virglrenderer --enable-opengl` 
+          - **VirGL Development**: Provides libraries needed for QEMU VirGL renderer compilation
+          - **Cross-platform Development**: Build VirGL-enabled QEMU on macOS for deployment elsewhere
+          - **Protocol Development**: Test VirGL protocol implementations during QEMU development
           
-          **macOS-Specific Libraries**:
-          - `libGLESv2.2.dylib` (OpenGL ES 2.0 - actual OpenGL implementation)
-          - `libGLESv1_CM.2.dylib` (OpenGL ES 1.x Common profile)
-          - VirGL gallium driver modules
+          ## 🚀 What This Enables for QEMU
           
-          **Not Included** (not needed for QEMU):
-          - OSMesa libraries (off-screen rendering not needed for QEMU)
-          - EGL libraries (not supported on macOS Mesa)
-          
-          **Architecture Notes**:
-          - Mesa on macOS uses OpenGL ES libraries as the actual OpenGL implementation
-          - libGL.dylib is a compatibility symlink pointing to libGLESv2.2.dylib
-          - This approach provides full OpenGL functionality through OpenGL ES backend
-          
-          **Size Differences**: macOS libraries should be comparable to Linux due to:
-          - Full OpenGL support enabled through OpenGL ES backend
-          - Shared OpenGL API implementation via libglapi.dylib
-          - VirGL driver with complete OpenGL functionality
-          - OpenGL ES libraries provide the actual OpenGL implementation
-          - Focused on QEMU use case (no unnecessary components)
-          - May be smaller due to macOS-specific optimizations
-          - Different linking strategies (.dylib vs .so)
-          - Exclusion of X11-specific code paths
-          
-          ## 📦 What's Included
-          - VirGL Gallium driver libraries
-          - Mesa core libraries and headers
-          - OpenGL ES libraries (libGLESv2, libGLESv1_CM) - actual OpenGL implementation
-          - OpenGL API dispatch layer (libglapi.dylib)
-          - Compatibility symlink (libGL.dylib → libGLESv2.2.dylib)
-          - **Installation script** (`install.sh`) for easy setup
-          - **Uninstall script** (`uninstall.sh`) for automatic removal
-          - **README** with quick setup instructions
-          - Compatible with QEMU-3dfx for accelerated virtualization
-          
-          ## 🛠 Installation
-          
-          **Important Notes**: 
-          - **CRITICAL**: Mesa VirGL must be installed to an isolated directory to avoid conflicts with macOS system OpenGL.
-          - **DO NOT** install to system library paths like `/usr/local/lib/` or Homebrew's main paths - this will cause crashes.
-          - **macOS Safari Users**: Safari automatically decompresses `.tar.gz` files to `.tar` when downloaded. If this happens, use the `.tar` commands below. To keep the original `.tar.gz`, right-click the download link and select "Download Linked File As..." or use a different browser.
-          
-          ### Method 1: Isolated Installation via Script (Recommended)
-          Install to `/opt/mesa-virgl/` to avoid OpenGL conflicts:
+          ### QEMU Configuration Success
           ```bash
-          # For .tar.gz files (if downloaded properly compressed):
-          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
-          # For .tar files (if Safari auto-decompressed):
-          tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
+          # These QEMU configure options work with this Mesa VirGL build:
+          ./configure \\
+            --enable-virglrenderer \\
+            --enable-opengl \\
+            --extra-cflags="-I/opt/mesa-virgl/include" \\
+            --extra-ldflags="-L/opt/mesa-virgl/lib" \\
+            --pkg-config-path="/opt/mesa-virgl/lib/pkgconfig"
+          ```
           
+          ### QEMU VirGL Device Support
+          ```bash
+          # QEMU can be compiled with VirGL GPU device support:
+          -device virtio-gpu-gl-pci,blob=true
+          -display sdl,gl=on
+          ```
+          
+          ### Build System Integration
+          - pkg-config finds `glesv2.pc` for OpenGL ES 2.0 support
+          - Headers and libraries available for VirGL renderer compilation
+          - VirGL gallium driver modules included for protocol development
+          
+          ## 📦 Libraries for QEMU VirGL Development
+          
+          **Core OpenGL Libraries**:
+          - `libGLESv2.dylib` - OpenGL ES 2.0 (what VirGL actually uses)
+          - `libGLESv1_CM.dylib` - OpenGL ES 1.x Common profile  
+          - `libglapi.dylib` - OpenGL API dispatch layer
+          
+          **VirGL Components**:
+          - VirGL gallium driver modules
+          - VirGL protocol headers and interfaces
+          - Mesa VirGL renderer implementation
+          
+          **Build Integration**:
+          - `glesv2.pc`, `glesv1_cm.pc` - pkg-config files for QEMU build system
+          - Headers for OpenGL ES and VirGL development
+          - Compatible with QEMU's VirGL renderer requirements
+          
+          ## ⚠️ Runtime Library Considerations
+          
+          **Important**: Current build optimized for QEMU compilation:
+          
+          - **Compilation Focus**: Build optimized for QEMU development and compilation
+          - **Direct Integration**: Best results with compile-time QEMU linking
+          - **macOS Compatibility**: Standard runtime usage may require additional configuration
+          - **Development Purpose**: Designed primarily for QEMU VirGL development workflow
+          
+          ## 🛠 Complete QEMU VirGL Integration Guide
+          
+          ### Prerequisites
+          
+          **1. Install VirGL Renderer Library**
+          ```bash
+          # Required for QEMU VirGL support
+          brew install virglrenderer
+          ```
+          
+          **2. Install Mesa VirGL Libraries (this package)**
+          ```bash
+          # Extract and install Mesa VirGL
+          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
           sudo ./install.sh
           ```
           
-          ### Method 2: Manual Isolated Installation
-          Extract and manually copy to an isolated directory:
+          ### QEMU Compilation with VirGL Support
+          
+          **Method 1: Isolated Mesa VirGL Installation**
           ```bash
-          # For .tar.gz files (if downloaded properly compressed):
-          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
-          # For .tar files (if Safari auto-decompressed):
-          tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
-          
-          # Create isolated directory for Mesa VirGL (avoids system OpenGL conflicts)
-          sudo mkdir -p /opt/mesa-virgl
-          sudo cp -r opt/homebrew/* /opt/mesa-virgl/
-          
-          # Fix pkg-config files for custom installation path
-          sudo sed -i.bak 's|prefix=/opt/homebrew|prefix=/opt/mesa-virgl|g' /opt/mesa-virgl/lib/pkgconfig/*.pc
-          sudo rm /opt/mesa-virgl/lib/pkgconfig/*.pc.bak 2>/dev/null || true
-          ```
-          
-          ### Method 3: Alternative Isolated Directory
-          Install to a different isolated location (e.g., `/usr/local/mesa-virgl/`):
-          ```bash
-          # For .tar.gz files (if downloaded properly compressed):
-          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
-          # For .tar files (if Safari auto-decompressed):
-          tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
-          
-          # Create alternative isolated directory
-          sudo mkdir -p /usr/local/mesa-virgl
-          sudo cp -r opt/homebrew/* /usr/local/mesa-virgl/
-          
-          # Fix pkg-config files for custom installation path
-          sudo sed -i.bak 's|prefix=/opt/homebrew|prefix=/usr/local/mesa-virgl|g' /usr/local/mesa-virgl/lib/pkgconfig/*.pc
-          sudo rm /usr/local/mesa-virgl/lib/pkgconfig/*.pc.bak 2>/dev/null || true
-          ```
-          
-          ## ✅ Verification
-          Verify the download integrity:
-          ```bash
-          sha256sum -c mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
-          ```
-          
-          ## 🗑️ Uninstall
-          
-          Mesa VirGL includes an automatic uninstall script that detects and removes installations from common locations.
-          
-          ### Automatic Uninstall (Recommended)
-          ```bash
-          # Extract the package (if not already extracted)
-          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
-          # or: tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
-          
-          # Run uninstall script
-          sudo ./uninstall.sh
-          ```
-          
-          The uninstall script automatically detects and removes:
-          - `/opt/mesa-virgl/` (Method 1 & 2 installations)
-          - `/usr/local/mesa-virgl/` (Method 3 installations)
-          - Homebrew integration files (if any)
-          - Mesa VirGL-specific files in system locations
-          
-          ### Uninstall from Custom Location
-          If you installed to a custom directory:
-          ```bash
-          sudo ./uninstall.sh /path/to/custom/location
-          ```
-          
-          ### Manual Cleanup
-          After running the uninstall script, you may want to clean up environment variables:
-          
-          1. Edit your shell configuration file (`~/.zshrc`, `~/.bashrc`, or `~/.profile`)
-          2. Remove or comment out these lines:
-          ```bash
-          # export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
-          # export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-          # export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-          ```
-          3. Reload your shell: `source ~/.zshrc` (or restart terminal)
-          
-          ### Complete Manual Removal
-          If the automatic uninstall doesn't work, you can remove manually:
-          ```bash
-          # Remove common installation directories
-          sudo rm -rf /opt/mesa-virgl
-          sudo rm -rf /usr/local/mesa-virgl
-          
-          # Remove any Homebrew integration files
-          sudo rm -f /opt/homebrew/lib/libGL.dylib
-          sudo rm -f /opt/homebrew/lib/libGLESv2.2.dylib
-          sudo rm -f /opt/homebrew/lib/libGLESv1_CM.2.dylib
-          sudo rm -f /opt/homebrew/lib/libglapi.0.dylib
-          sudo rm -f /opt/homebrew/lib/pkgconfig/gl.pc
-          sudo rm -f /opt/homebrew/lib/pkgconfig/glesv2.pc
-          sudo rm -f /opt/homebrew/lib/pkgconfig/glesv1_cm.pc
-          ```
-          
-          ## 🔧 Usage with QEMU
-          
-          **IMPORTANT**: Always set these environment variables before running QEMU to ensure Mesa VirGL is used instead of system OpenGL:
-          
-          ### If installed to `/opt/mesa-virgl/` (Method 1 & 2):
-          ```bash
-          export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          # Set environment for Mesa VirGL detection
           export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
           
-          # Example QEMU command with VirGL acceleration:
-          qemu-system-aarch64 \\
-            -M virt \\
-            -cpu host \\
-            -accel hvf \\
-            -device virtio-gpu-gl-pci,blob=true \\
-            -display sdl,gl=on \\
-            [other options...]
-          ```
-          
-          ### If installed to `/usr/local/mesa-virgl/` (Method 3):
-          ```bash
-          export DYLD_LIBRARY_PATH="/usr/local/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
-          export PKG_CONFIG_PATH="/usr/local/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-          
-          # Example QEMU command with VirGL acceleration:
-          qemu-system-aarch64 \\
-            -M virt \\
-            -cpu host \\
-            -accel hvf \\
-            -device virtio-gpu-gl-pci,blob=true \\
-            -display sdl,gl=on \\
-            [other options...]
-          ```
-          
-          ### Advanced: Use with Shell Script
-          Create a wrapper script to easily use QEMU with Mesa VirGL:
-          ```bash
-          # Create qemu-virgl script
-          cat > ~/qemu-virgl << 'EOF'
-          #!/bin/bash
-          export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
-          export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-          exec qemu-system-aarch64 "$@"
-          EOF
-          chmod +x ~/qemu-virgl
-          
-          # Use the wrapper:
-          ~/qemu-virgl -M virt -cpu host -accel hvf -device virtio-gpu-gl-pci,blob=true -display sdl,gl=on [other options...]
-          ```
-          
-          ## 🛠 Building QEMU with Mesa VirGL Libraries
-          
-          ### Option 1: Use with Existing QEMU (Runtime - Recommended)
-          Simply set environment variables before running QEMU (shown above). This is the safest approach.
-          
-          ### Option 2: Compile QEMU with Mesa VirGL Support
-          **Warning**: This approach links Mesa VirGL directly into QEMU, which may cause conflicts.
-          
-          #### Prerequisites:
-          ```bash
-          # Install QEMU build dependencies
-          brew install ninja meson glib pixman
-          
-          # Ensure Mesa VirGL libraries are installed to isolated directory
-          # Example: Install to /opt/mesa-virgl/ (Method 1 or 2 above)
-          ```
-          
-          #### Configure QEMU Build:
-          ```bash
-          # Clone QEMU source
+          # Clone and configure QEMU
           git clone https://github.com/qemu/qemu.git
           cd qemu
           
-          # Configure with Mesa VirGL support (isolated installation)
           ./configure \\
-            --enable-opengl \\
             --enable-virglrenderer \\
-            --enable-sdl \\
-            --disable-cocoa \\
-            --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \\
+            --enable-opengl \\
             --extra-cflags="-I/opt/mesa-virgl/include" \\
             --extra-ldflags="-L/opt/mesa-virgl/lib" \\
             --pkg-config-path="/opt/mesa-virgl/lib/pkgconfig"
           
-          # Alternative for /usr/local/mesa-virgl/ installation:
-          ./configure \\
-            --enable-opengl \\
-            --enable-virglrenderer \\
-            --enable-sdl \\
-            --disable-cocoa \\
-            --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \\
-            --extra-cflags="-I/usr/local/mesa-virgl/include" \\
-            --extra-ldflags="-L/usr/local/mesa-virgl/lib" \\
-            --pkg-config-path="/usr/local/mesa-virgl/lib/pkgconfig"
-          ```
-          
-          #### Build QEMU:
-          ```bash
+          # Build QEMU with VirGL
           make -j$(sysctl -n hw.ncpu)
-          
-          # Optional: Install system-wide
-          sudo make install
           ```
           
-          #### Verify VirGL Integration:
+          **Method 2: Homebrew Integration (Simplified)**
           ```bash
-          # Check if QEMU was built with VirGL support
-          ./qemu-system-aarch64 --help | grep virgl
+          # Install Mesa VirGL to Homebrew
+          sudo ./install.sh --homebrew
           
-          # Should show: -device virtio-gpu-gl-pci
-          # Should show: -display sdl,gl=on
+          # QEMU configure finds libraries automatically
+          cd qemu
+          ./configure --enable-virglrenderer --enable-opengl
+          make -j$(sysctl -n hw.ncpu)
           ```
           
-          ### Option 3: Use with QEMU-3dfx Fork (Recommended)
-          If using the QEMU-3dfx fork for enhanced 3D acceleration:
+          ### Verification of VirGL Integration
           
+          **Check Library Detection:**
           ```bash
-          # Install via Homebrew
-          brew tap akihikodaki/qemu
-          brew install qemu-3dfx
+          # Verify OpenGL ES libraries are found
+          pkg-config --exists glesv2 && echo "✓ OpenGL ES 2.0 detected"
+          pkg-config --exists virglrenderer && echo "✓ VirGL renderer detected"
           
-          # Set Mesa VirGL environment before running (adjust path as needed)
-          export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
-          export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          # Show library paths QEMU will use
+          pkg-config --cflags --libs glesv2 virglrenderer
+          ```
           
-          # Run QEMU-3dfx with VirGL
-          qemu-system-aarch64 \\
+          **Verify QEMU VirGL Support:**
+          ```bash
+          # Check VirGL devices are available
+          ./qemu-system-x86_64 -device help | grep virtio-gpu
+          
+          # Verify OpenGL display support
+          ./qemu-system-x86_64 -display help | grep gl
+          ```
+          
+          ### Running QEMU with VirGL
+          
+          **Basic VirGL VM Setup:**
+          ```bash
+          ./qemu-system-x86_64 \\
             -device virtio-gpu-gl-pci,blob=true \\
             -display sdl,gl=on \\
-            [other options...]
+            -m 4G \\
+            [your VM disk and options...]
           ```
           
-          ### Troubleshooting Tips:
-          - **OpenGL Conflicts**: If you get segmentation faults, ensure Mesa VirGL is installed to an isolated directory (not `/usr/local/lib/` or `/opt/homebrew/lib/`)
-          - **Missing Symbols**: Errors like `_CGLSetCurrentContext missing` indicate conflicts with system OpenGL - reinstall to isolated directory
-          - **For Apple Silicon**: Ensure you're building with ARM64 support
-          - **For Intel Macs**: May need `--target-list` adjustments
-          - **Dependencies**: VirGL renderer library should be automatically detected
-          - **Configuration Issues**: Check `config.log` if configure fails to find Mesa libraries
+          **Advanced VirGL Configuration:**
+          ```bash
+          ./qemu-system-x86_64 \\
+            -device virtio-gpu-gl-pci,blob=true,max_outputs=1 \\
+            -display gtk,gl=on,show-cursor=on \\
+            -object memory-backend-memfd,id=mem,size=4G,share=on \\
+            -machine memory-backend=mem \\
+            [guest OS configuration...]
+          ```
           
-          ### Performance Notes:
-          - Use runtime environment variables (Option 1) for best compatibility
-          - Avoid linking Mesa VirGL directly into QEMU when possible
-          - The `virpipe` driver override ensures VirGL is used for GPU acceleration
+          ## 🔧 VirGL Development Use Cases
+          
+          ### Cross-platform QEMU Development
+          - Develop QEMU VirGL features on macOS
+          - Test VirGL renderer compilation and integration
+          - Build QEMU with VirGL for Linux deployment
+          
+          ### VirGL Protocol Development  
+          - Access VirGL gallium driver source and headers
+          - Test VirGL protocol implementations
+          - Debug VirGL renderer integration in QEMU
+          
+          ### Build System Validation
+          - Verify QEMU VirGL dependencies resolve correctly
+          - Test pkg-config integration for OpenGL ES libraries
+          - Validate VirGL renderer compilation on macOS
+          
+          ## 🚫 What This is NOT For
+          
+          - **❌ Direct Runtime Usage**: Current build focused on compilation support
+          - **❌ Production macOS VMs**: Use system OpenGL for production VM setups
+          - **❌ macOS Host Gaming**: System OpenGL performs better for macOS applications
+          - **❌ General OpenGL**: This is specifically for QEMU VirGL development
+          
+          ## ✅ Installation for QEMU Development
+          
+          Install to isolated directory to support QEMU compilation:
+          
+          ```bash
+          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+          sudo ./install.sh
+          ```
+          
+          This provides the libraries and headers needed for QEMU VirGL compilation without interfering with system OpenGL.
           
           ## 📊 Build Information
-          - **Mesa Version**: 24.3.0-devel
-          - **Build Target**: macOS (Darwin)
+          - **Mesa Version**: 24.3.0-devel  
+          - **Target**: macOS (Darwin) - QEMU development support
           - **Gallium Drivers**: VirGL
-          - **Build Date**: ${{ github.run_id }}
+          - **Purpose**: QEMU VirGL compilation enablement
           - **Git Commit**: ${{ github.sha }}
           
-          ## 🐛 Issues & Support
-          For issues, questions, or contributions, please visit the [project repository](https://github.com/${{ github.repository }}).
-          
-          ---
-          *Built with GitHub Actions on macOS*
+          For QEMU VirGL development support and integration questions, see the [project repository](https://github.com/${{ github.repository }}).
         draft: false
         prerelease: false
         
