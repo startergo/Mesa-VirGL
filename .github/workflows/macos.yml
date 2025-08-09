@@ -335,14 +335,24 @@ jobs:
         
         chmod +x mesa-virgl-macos/install.sh
         
-        # Create archive
-        tar -czf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz mesa-virgl-macos
+        # Create archive with contents directly (no wrapper directory)
+        cd mesa-virgl-macos
+        echo "Creating compressed archive..."
+        tar -czf ../mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz .
+        cd ..
+        
+        # Verify archive was created correctly
+        echo "Archive created:"
+        ls -la mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+        file mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
         
         # Calculate checksums
         sha256sum mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz > mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
         
         echo "Release package created:"
-        ls -la mesa-virgl-macos-${{ github.event.inputs.release_tag }}.*
+        ls -la mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz*
+        echo "Archive file type:"
+        file mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
         
     - name: Create Release
       uses: actions/create-release@v1
@@ -406,27 +416,38 @@ jobs:
           
           ## 🛠 Installation
           
-          **Important Note**: The pkg-config files are initially configured for `/opt/homebrew/`. Methods 2 and 3 automatically fix these paths for custom installations.
+          **Important Notes**: 
+          - The pkg-config files are initially configured for `/opt/homebrew/`. Methods 2 and 3 automatically fix these paths for custom installations.
+          - **macOS Safari Users**: Safari automatically decompresses `.tar.gz` files to `.tar` when downloaded. If this happens, use the `.tar` commands below. To keep the original `.tar.gz`, right-click the download link and select "Download Linked File As..." or use a different browser.
           
           ### Method 1: Direct to Homebrew (Recommended)
           Extract directly to `/opt/homebrew/` (integrates with existing Homebrew):
           ```bash
-          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C / 2>/dev/null
+          # For .tar.gz files (if downloaded properly compressed):
+          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C /
+          
+          # For .tar files (if Safari auto-decompressed):
+          sudo tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar -C /
           ```
           
           ### Method 2: Custom Location via Script
           Install to `/opt/mesa-virgl/` using the installation script (automatically fixes pkg-config):
           ```bash
+          # For .tar.gz files (if downloaded properly compressed):
           tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
-          cd mesa-virgl-macos
+          # For .tar files (if Safari auto-decompressed):
+          tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
+          
           sudo ./install.sh
           ```
           
           ### Method 3: Manual Custom Location
           Extract and manually copy to any location (example: `/usr/local/`):
           ```bash
+          # For .tar.gz files (if downloaded properly compressed):
           tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
-          cd mesa-virgl-macos
+          # For .tar files (if Safari auto-decompressed):
+          tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
           
           # Copy files to custom location
           sudo cp -r opt/homebrew/* /usr/local/
@@ -483,7 +504,7 @@ jobs:
           
           # Ensure Mesa VirGL libraries are installed (any method above)
           # Example: Method 1 (Homebrew integration)
-          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C / 2>/dev/null
+          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C /
           ```
           
           #### Configure QEMU Build:
