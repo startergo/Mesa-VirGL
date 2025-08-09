@@ -522,7 +522,18 @@ jobs:
         fi
         
         echo "Creating installation directory..."
-        mkdir -p "$INSTALL_PREFIX"
+        if [ "$HOMEBREW_INSTALL" = true ]; then
+          # For Homebrew, ensure directories exist with proper ownership
+          if [ ! -d "$INSTALL_PREFIX" ]; then
+            echo "Warning: Homebrew directory $INSTALL_PREFIX does not exist"
+            echo "This suggests Homebrew is not properly installed."
+            echo "Please install Homebrew first: https://brew.sh"
+            exit 1
+          fi
+          # Directory already exists, don't create it
+        else
+          mkdir -p "$INSTALL_PREFIX"
+        fi
         
         echo "Installing Mesa VirGL libraries..."
         if [ "$HOMEBREW_INSTALL" = true ]; then
@@ -530,8 +541,8 @@ jobs:
           echo "Installing to Homebrew with proper permissions..."
           
           # Get the current Homebrew directory owner
-          HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || echo "$(logname)")
-          HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || echo "admin")
+          HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || whoami 2>/dev/null || echo "$(logname)")
+          HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || id -gn 2>/dev/null || echo "admin")
           
           # Copy files while preserving structure
           if [ -d "opt/homebrew" ]; then
@@ -572,6 +583,19 @@ jobs:
         fi
         
         echo "Fixing pkg-config files for installation path..."
+        if [ "$HOMEBREW_INSTALL" = true ]; then
+          # For Homebrew, ensure pkg-config directory exists with proper ownership
+          HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || whoami 2>/dev/null || echo "$(logname)")
+          HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || id -gn 2>/dev/null || echo "admin")
+          
+          if [ ! -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
+            echo "Creating pkg-config directory with proper Homebrew ownership..."
+            mkdir -p "$INSTALL_PREFIX/lib/pkgconfig"
+            chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$INSTALL_PREFIX/lib/pkgconfig"
+            chmod 755 "$INSTALL_PREFIX/lib/pkgconfig"
+          fi
+        fi
+        
         if [ -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
           # Update only Mesa VirGL pkg-config files to use the actual installation prefix
           MESA_PC_FILES=(
@@ -589,6 +613,8 @@ jobs:
               if [ "$HOMEBREW_INSTALL" = true ]; then
                 # Keep Homebrew paths for Homebrew installation
                 sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+                # Ensure proper ownership for Homebrew
+                chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$pc_file"
               else
                 # Update to custom installation path
                 sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
@@ -697,11 +723,22 @@ jobs:
           sudo cp -r "$STAGING_DIR/include/"* "$HOMEBREW_PREFIX/include/"
         fi
         
+        # Ensure pkg-config directory exists with proper ownership
+        if [ ! -d "$HOMEBREW_PREFIX/lib/pkgconfig" ]; then
+          echo "Creating pkg-config directory..."
+          sudo mkdir -p "$HOMEBREW_PREFIX/lib/pkgconfig"
+        fi
+        
         # Get the actual Homebrew directory owner (usually the user who installed Homebrew)
-        HOMEBREW_OWNER=$(stat -f "%Su" "$HOMEBREW_PREFIX")
-        HOMEBREW_GROUP=$(stat -f "%Sg" "$HOMEBREW_PREFIX")
+        HOMEBREW_OWNER=$(stat -f "%Su" "$HOMEBREW_PREFIX" 2>/dev/null || whoami)
+        HOMEBREW_GROUP=$(stat -f "%Sg" "$HOMEBREW_PREFIX" 2>/dev/null || id -gn)
         
         echo "Restoring Homebrew ownership to $HOMEBREW_OWNER:$HOMEBREW_GROUP..."
+        
+        # Restore ownership of directories we may have created
+        if [ -d "$HOMEBREW_PREFIX/lib/pkgconfig" ]; then
+          sudo chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$HOMEBREW_PREFIX/lib/pkgconfig"
+        fi
         
         # Restore ownership of the specific files we installed
         if [ -d "$HOMEBREW_PREFIX/lib" ]; then
