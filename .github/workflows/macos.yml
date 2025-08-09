@@ -335,6 +335,224 @@ jobs:
         
         chmod +x mesa-virgl-macos/install.sh
         
+        # Create uninstall script
+        cat > mesa-virgl-macos/uninstall.sh << 'EOF'
+        #!/bin/bash
+        # Mesa VirGL macOS Uninstall Script
+        
+        set -e
+        
+        echo "Mesa VirGL for macOS - Uninstall Script"
+        echo "======================================="
+        
+        # Default installation directories to check
+        INSTALL_DIRS=(
+          "/opt/mesa-virgl"
+          "/usr/local/mesa-virgl"
+          "/opt/homebrew/lib/libGL.dylib"
+          "/opt/homebrew/lib/libGLESv2.dylib"
+          "/opt/homebrew/lib/libGLESv1_CM.dylib"
+          "/opt/homebrew/lib/libglapi.dylib"
+        )
+        
+        # Custom directory from user input
+        if [ "$1" != "" ]; then
+          echo "Checking custom directory: $1"
+          INSTALL_DIRS+=("$1")
+        fi
+        
+        if [ "$EUID" -ne 0 ]; then
+          echo "Error: This script must be run as root (use sudo)"
+          echo "Usage: sudo ./uninstall.sh [custom_path]"
+          exit 1
+        fi
+        
+        echo "Searching for Mesa VirGL installations..."
+        
+        FOUND_INSTALLATIONS=()
+        
+        # Check for directory installations
+        for dir in "/opt/mesa-virgl" "/usr/local/mesa-virgl"; do
+          if [ -d "$dir" ]; then
+            echo "Found Mesa VirGL installation: $dir"
+            FOUND_INSTALLATIONS+=("$dir")
+          fi
+        done
+        
+        # Check for Homebrew integration (individual files)
+        HOMEBREW_FILES=(
+          "/opt/homebrew/lib/libGL.dylib"
+          "/opt/homebrew/lib/libGLESv2.2.dylib"
+          "/opt/homebrew/lib/libGLESv1_CM.2.dylib"
+          "/opt/homebrew/lib/libglapi.0.dylib"
+          "/opt/homebrew/lib/pkgconfig/gl.pc"
+          "/opt/homebrew/lib/pkgconfig/glesv2.pc"
+          "/opt/homebrew/lib/pkgconfig/glesv1_cm.pc"
+        )
+        
+        HOMEBREW_MESA_FILES=()
+        for file in "${HOMEBREW_FILES[@]}"; do
+          if [ -f "$file" ]; then
+            # Check if it's a Mesa VirGL file (look for symlinks or Mesa signatures)
+            if [ -L "$file" ] || grep -q "Mesa" "$file" 2>/dev/null || strings "$file" 2>/dev/null | grep -q "virgl\|Mesa" 2>/dev/null; then
+              HOMEBREW_MESA_FILES+=("$file")
+            fi
+          fi
+        done
+        
+        if [ ${#HOMEBREW_MESA_FILES[@]} -gt 0 ]; then
+          echo "Found Mesa VirGL files in Homebrew directory:"
+          printf '  %s\n' "${HOMEBREW_MESA_FILES[@]}"
+          FOUND_INSTALLATIONS+=("HOMEBREW_FILES")
+        fi
+        
+        # Check custom directory if provided
+        if [ "$1" != "" ] && [ -d "$1" ]; then
+          echo "Found custom Mesa VirGL installation: $1"
+          FOUND_INSTALLATIONS+=("$1")
+        fi
+        
+        if [ ${#FOUND_INSTALLATIONS[@]} -eq 0 ]; then
+          echo "No Mesa VirGL installations found."
+          echo ""
+          echo "If you installed to a custom location, run:"
+          echo "  sudo ./uninstall.sh /path/to/custom/directory"
+          exit 0
+        fi
+        
+        echo ""
+        echo "Found ${#FOUND_INSTALLATIONS[@]} Mesa VirGL installation(s):"
+        for installation in "${FOUND_INSTALLATIONS[@]}"; do
+          if [ "$installation" = "HOMEBREW_FILES" ]; then
+            echo "  - Homebrew integration (individual files)"
+          else
+            echo "  - $installation"
+          fi
+        done
+        
+        echo ""
+        read -p "Do you want to remove ALL found Mesa VirGL installations? [y/N]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+          echo "Uninstall cancelled."
+          exit 0
+        fi
+        
+        echo ""
+        echo "Removing Mesa VirGL installations..."
+        
+        for installation in "${FOUND_INSTALLATIONS[@]}"; do
+          if [ "$installation" = "HOMEBREW_FILES" ]; then
+            echo "Removing Homebrew Mesa VirGL files..."
+            for file in "${HOMEBREW_MESA_FILES[@]}"; do
+              if [ -f "$file" ] || [ -L "$file" ]; then
+                echo "  Removing: $file"
+                rm -f "$file"
+              fi
+            done
+          else
+            if [ -d "$installation" ]; then
+              echo "Removing directory: $installation"
+              rm -rf "$installation"
+            fi
+          fi
+        done
+        
+        echo ""
+        echo "Mesa VirGL uninstall complete!"
+        echo ""
+        echo "Note: You may want to clean up environment variables:"
+        echo "  - Remove DYLD_LIBRARY_PATH entries for Mesa VirGL"
+        echo "  - Remove PKG_CONFIG_PATH entries for Mesa VirGL"
+        echo "  - Remove MESA_LOADER_DRIVER_OVERRIDE=virpipe"
+        echo ""
+        echo "Check your shell configuration files:"
+        echo "  ~/.zshrc, ~/.bashrc, ~/.profile"
+        EOF
+        
+        chmod +x mesa-virgl-macos/uninstall.sh
+        
+        # Create README with installation and uninstall instructions
+        cat > mesa-virgl-macos/README.md << 'EOF'
+        # Mesa VirGL for macOS
+        
+        Custom Mesa build optimized for VirGL on macOS with Apple Silicon.
+        
+        ## Installation
+        
+        **IMPORTANT**: Install to an isolated directory to avoid conflicts with system OpenGL.
+        
+        ### Quick Install (Recommended)
+        ```bash
+        sudo ./install.sh
+        ```
+        
+        This installs to `/opt/mesa-virgl/` and automatically fixes pkg-config paths.
+        
+        ## Usage
+        
+        Set environment variables before running QEMU:
+        
+        ```bash
+        export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+        export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+        export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+        
+        # Run QEMU with VirGL
+        qemu-system-aarch64 -device virtio-gpu-gl-pci,blob=true -display sdl,gl=on [options...]
+        ```
+        
+        ## Uninstall
+        
+        ### Automatic Uninstall
+        ```bash
+        sudo ./uninstall.sh
+        ```
+        
+        This automatically detects and removes Mesa VirGL from common locations:
+        - `/opt/mesa-virgl/`
+        - `/usr/local/mesa-virgl/`
+        - Homebrew integration files
+        
+        ### Manual Uninstall for Custom Locations
+        ```bash
+        sudo ./uninstall.sh /path/to/custom/location
+        ```
+        
+        ### Manual Cleanup
+        If you need to remove manually:
+        
+        ```bash
+        # Remove installation directory
+        sudo rm -rf /opt/mesa-virgl
+        
+        # Remove any Homebrew integration files (if used)
+        sudo rm -f /opt/homebrew/lib/libGL.dylib
+        sudo rm -f /opt/homebrew/lib/libGLESv2.2.dylib
+        sudo rm -f /opt/homebrew/lib/libGLESv1_CM.2.dylib
+        sudo rm -f /opt/homebrew/lib/libglapi.0.dylib
+        sudo rm -f /opt/homebrew/lib/pkgconfig/gl.pc
+        sudo rm -f /opt/homebrew/lib/pkgconfig/glesv2.pc
+        sudo rm -f /opt/homebrew/lib/pkgconfig/glesv1_cm.pc
+        
+        # Clean up environment variables from shell config
+        # Edit ~/.zshrc, ~/.bashrc, or ~/.profile and remove:
+        # export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+        # export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+        # export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+        ```
+        
+        ## Files Included
+        
+        - `install.sh` - Automatic installation script
+        - `uninstall.sh` - Automatic uninstall script
+        - `RELEASE_INFO.txt` - Detailed build and usage information
+        - Mesa VirGL libraries and headers
+        - pkg-config files for integration
+        
+        For detailed documentation, see `RELEASE_INFO.txt`.
+        EOF
+        
         # Create archive with contents directly (no wrapper directory)
         cd mesa-virgl-macos
         echo "Creating compressed archive..."
@@ -411,27 +629,20 @@ jobs:
           - OpenGL ES libraries (libGLESv2, libGLESv1_CM) - actual OpenGL implementation
           - OpenGL API dispatch layer (libglapi.dylib)
           - Compatibility symlink (libGL.dylib → libGLESv2.2.dylib)
-          - Installation script for easy setup
+          - **Installation script** (`install.sh`) for easy setup
+          - **Uninstall script** (`uninstall.sh`) for automatic removal
+          - **README** with quick setup instructions
           - Compatible with QEMU-3dfx for accelerated virtualization
           
           ## 🛠 Installation
           
           **Important Notes**: 
-          - The pkg-config files are initially configured for `/opt/homebrew/`. Methods 2 and 3 automatically fix these paths for custom installations.
+          - **CRITICAL**: Mesa VirGL must be installed to an isolated directory to avoid conflicts with macOS system OpenGL.
+          - **DO NOT** install to system library paths like `/usr/local/lib/` or Homebrew's main paths - this will cause crashes.
           - **macOS Safari Users**: Safari automatically decompresses `.tar.gz` files to `.tar` when downloaded. If this happens, use the `.tar` commands below. To keep the original `.tar.gz`, right-click the download link and select "Download Linked File As..." or use a different browser.
           
-          ### Method 1: Direct to Homebrew (Recommended)
-          Extract directly to `/opt/homebrew/` (integrates with existing Homebrew):
-          ```bash
-          # For .tar.gz files (if downloaded properly compressed):
-          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C /
-          
-          # For .tar files (if Safari auto-decompressed):
-          sudo tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar -C /
-          ```
-          
-          ### Method 2: Custom Location via Script
-          Install to `/opt/mesa-virgl/` using the installation script (automatically fixes pkg-config):
+          ### Method 1: Isolated Installation via Script (Recommended)
+          Install to `/opt/mesa-virgl/` to avoid OpenGL conflicts:
           ```bash
           # For .tar.gz files (if downloaded properly compressed):
           tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
@@ -441,20 +652,38 @@ jobs:
           sudo ./install.sh
           ```
           
-          ### Method 3: Manual Custom Location
-          Extract and manually copy to any location (example: `/usr/local/`):
+          ### Method 2: Manual Isolated Installation
+          Extract and manually copy to an isolated directory:
           ```bash
           # For .tar.gz files (if downloaded properly compressed):
           tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
           # For .tar files (if Safari auto-decompressed):
           tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
           
-          # Copy files to custom location
-          sudo cp -r opt/homebrew/* /usr/local/
+          # Create isolated directory for Mesa VirGL (avoids system OpenGL conflicts)
+          sudo mkdir -p /opt/mesa-virgl
+          sudo cp -r opt/homebrew/* /opt/mesa-virgl/
           
           # Fix pkg-config files for custom installation path
-          sudo sed -i.bak 's|prefix=/opt/homebrew|prefix=/usr/local|g' /usr/local/lib/pkgconfig/*.pc
-          sudo rm /usr/local/lib/pkgconfig/*.pc.bak 2>/dev/null || true
+          sudo sed -i.bak 's|prefix=/opt/homebrew|prefix=/opt/mesa-virgl|g' /opt/mesa-virgl/lib/pkgconfig/*.pc
+          sudo rm /opt/mesa-virgl/lib/pkgconfig/*.pc.bak 2>/dev/null || true
+          ```
+          
+          ### Method 3: Alternative Isolated Directory
+          Install to a different isolated location (e.g., `/usr/local/mesa-virgl/`):
+          ```bash
+          # For .tar.gz files (if downloaded properly compressed):
+          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+          # For .tar files (if Safari auto-decompressed):
+          tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
+          
+          # Create alternative isolated directory
+          sudo mkdir -p /usr/local/mesa-virgl
+          sudo cp -r opt/homebrew/* /usr/local/mesa-virgl/
+          
+          # Fix pkg-config files for custom installation path
+          sudo sed -i.bak 's|prefix=/opt/homebrew|prefix=/usr/local/mesa-virgl|g' /usr/local/mesa-virgl/lib/pkgconfig/*.pc
+          sudo rm /usr/local/mesa-virgl/lib/pkgconfig/*.pc.bak 2>/dev/null || true
           ```
           
           ## ✅ Verification
@@ -463,48 +692,129 @@ jobs:
           sha256sum -c mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz.sha256
           ```
           
-          ## 🔧 Usage with QEMU
+          ## 🗑️ Uninstall
           
-          ### If installed to `/opt/homebrew/` (Method 1):
+          Mesa VirGL includes an automatic uninstall script that detects and removes installations from common locations.
+          
+          ### Automatic Uninstall (Recommended)
           ```bash
-          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:$DYLD_LIBRARY_PATH"
-          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-          # Your QEMU command with -device virtio-gpu-gl-pci
+          # Extract the package (if not already extracted)
+          tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz
+          # or: tar -xf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar
+          
+          # Run uninstall script
+          sudo ./uninstall.sh
           ```
           
-          ### If installed to `/opt/mesa-virgl/` (Method 2):
+          The uninstall script automatically detects and removes:
+          - `/opt/mesa-virgl/` (Method 1 & 2 installations)
+          - `/usr/local/mesa-virgl/` (Method 3 installations)
+          - Homebrew integration files (if any)
+          - Mesa VirGL-specific files in system locations
+          
+          ### Uninstall from Custom Location
+          If you installed to a custom directory:
+          ```bash
+          sudo ./uninstall.sh /path/to/custom/location
+          ```
+          
+          ### Manual Cleanup
+          After running the uninstall script, you may want to clean up environment variables:
+          
+          1. Edit your shell configuration file (`~/.zshrc`, `~/.bashrc`, or `~/.profile`)
+          2. Remove or comment out these lines:
+          ```bash
+          # export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          # export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+          # export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          ```
+          3. Reload your shell: `source ~/.zshrc` (or restart terminal)
+          
+          ### Complete Manual Removal
+          If the automatic uninstall doesn't work, you can remove manually:
+          ```bash
+          # Remove common installation directories
+          sudo rm -rf /opt/mesa-virgl
+          sudo rm -rf /usr/local/mesa-virgl
+          
+          # Remove any Homebrew integration files
+          sudo rm -f /opt/homebrew/lib/libGL.dylib
+          sudo rm -f /opt/homebrew/lib/libGLESv2.2.dylib
+          sudo rm -f /opt/homebrew/lib/libGLESv1_CM.2.dylib
+          sudo rm -f /opt/homebrew/lib/libglapi.0.dylib
+          sudo rm -f /opt/homebrew/lib/pkgconfig/gl.pc
+          sudo rm -f /opt/homebrew/lib/pkgconfig/glesv2.pc
+          sudo rm -f /opt/homebrew/lib/pkgconfig/glesv1_cm.pc
+          ```
+          
+          ## 🔧 Usage with QEMU
+          
+          **IMPORTANT**: Always set these environment variables before running QEMU to ensure Mesa VirGL is used instead of system OpenGL:
+          
+          ### If installed to `/opt/mesa-virgl/` (Method 1 & 2):
           ```bash
           export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
           export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
           export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-          # Your QEMU command with -device virtio-gpu-gl-pci
+          
+          # Example QEMU command with VirGL acceleration:
+          qemu-system-aarch64 \\
+            -M virt \\
+            -cpu host \\
+            -accel hvf \\
+            -device virtio-gpu-gl-pci,blob=true \\
+            -display sdl,gl=on \\
+            [other options...]
           ```
           
-          ### If installed to `/usr/local/` (Method 3):
+          ### If installed to `/usr/local/mesa-virgl/` (Method 3):
           ```bash
-          export DYLD_LIBRARY_PATH="/usr/local/lib:$DYLD_LIBRARY_PATH"
-          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export DYLD_LIBRARY_PATH="/usr/local/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/usr/local/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
           export MESA_LOADER_DRIVER_OVERRIDE=virpipe
-          # Your QEMU command with -device virtio-gpu-gl-pci
+          
+          # Example QEMU command with VirGL acceleration:
+          qemu-system-aarch64 \\
+            -M virt \\
+            -cpu host \\
+            -accel hvf \\
+            -device virtio-gpu-gl-pci,blob=true \\
+            -display sdl,gl=on \\
+            [other options...]
+          ```
+          
+          ### Advanced: Use with Shell Script
+          Create a wrapper script to easily use QEMU with Mesa VirGL:
+          ```bash
+          # Create qemu-virgl script
+          cat > ~/qemu-virgl << 'EOF'
+          #!/bin/bash
+          export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export MESA_LOADER_DRIVER_OVERRIDE=virpipe
+          exec qemu-system-aarch64 "$@"
+          EOF
+          chmod +x ~/qemu-virgl
+          
+          # Use the wrapper:
+          ~/qemu-virgl -M virt -cpu host -accel hvf -device virtio-gpu-gl-pci,blob=true -display sdl,gl=on [other options...]
           ```
           
           ## 🛠 Building QEMU with Mesa VirGL Libraries
           
-          ### Option 1: Use with Existing QEMU (Runtime)
-          Simply set environment variables before running QEMU (shown above).
+          ### Option 1: Use with Existing QEMU (Runtime - Recommended)
+          Simply set environment variables before running QEMU (shown above). This is the safest approach.
           
           ### Option 2: Compile QEMU with Mesa VirGL Support
-          To build QEMU that uses these Mesa libraries directly:
+          **Warning**: This approach links Mesa VirGL directly into QEMU, which may cause conflicts.
           
           #### Prerequisites:
           ```bash
           # Install QEMU build dependencies
           brew install ninja meson glib pixman
           
-          # Ensure Mesa VirGL libraries are installed (any method above)
-          # Example: Method 1 (Homebrew integration)
-          sudo tar -xzf mesa-virgl-macos-${{ github.event.inputs.release_tag }}.tar.gz -C /
+          # Ensure Mesa VirGL libraries are installed to isolated directory
+          # Example: Install to /opt/mesa-virgl/ (Method 1 or 2 above)
           ```
           
           #### Configure QEMU Build:
@@ -513,18 +823,7 @@ jobs:
           git clone https://github.com/qemu/qemu.git
           cd qemu
           
-          # Configure with Mesa VirGL support
-          ./configure \\
-            --enable-opengl \\
-            --enable-virglrenderer \\
-            --enable-sdl \\
-            --disable-cocoa \\
-            --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \\
-            --extra-cflags="-I/opt/homebrew/include" \\
-            --extra-ldflags="-L/opt/homebrew/lib" \\
-            --pkg-config-path="/opt/homebrew/lib/pkgconfig"
-          
-          # Alternative for custom Mesa installation (/opt/mesa-virgl):
+          # Configure with Mesa VirGL support (isolated installation)
           ./configure \\
             --enable-opengl \\
             --enable-virglrenderer \\
@@ -534,6 +833,17 @@ jobs:
             --extra-cflags="-I/opt/mesa-virgl/include" \\
             --extra-ldflags="-L/opt/mesa-virgl/lib" \\
             --pkg-config-path="/opt/mesa-virgl/lib/pkgconfig"
+          
+          # Alternative for /usr/local/mesa-virgl/ installation:
+          ./configure \\
+            --enable-opengl \\
+            --enable-virglrenderer \\
+            --enable-sdl \\
+            --disable-cocoa \\
+            --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \\
+            --extra-cflags="-I/usr/local/mesa-virgl/include" \\
+            --extra-ldflags="-L/usr/local/mesa-virgl/lib" \\
+            --pkg-config-path="/usr/local/mesa-virgl/lib/pkgconfig"
           ```
           
           #### Build QEMU:
@@ -553,17 +863,17 @@ jobs:
           # Should show: -display sdl,gl=on
           ```
           
-          ### Option 3: Use with QEMU-3dfx Fork
-          If using the QEMU-3dfx fork (recommended for enhanced 3D acceleration):
+          ### Option 3: Use with QEMU-3dfx Fork (Recommended)
+          If using the QEMU-3dfx fork for enhanced 3D acceleration:
           
           ```bash
           # Install via Homebrew
           brew tap akihikodaki/qemu
           brew install qemu-3dfx
           
-          # Set Mesa VirGL environment before running
-          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:$DYLD_LIBRARY_PATH"
-          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+          # Set Mesa VirGL environment before running (adjust path as needed)
+          export DYLD_LIBRARY_PATH="/opt/mesa-virgl/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="/opt/mesa-virgl/lib/pkgconfig:$PKG_CONFIG_PATH"
           export MESA_LOADER_DRIVER_OVERRIDE=virpipe
           
           # Run QEMU-3dfx with VirGL
@@ -573,11 +883,18 @@ jobs:
             [other options...]
           ```
           
-          ### Compilation Tips:
+          ### Troubleshooting Tips:
+          - **OpenGL Conflicts**: If you get segmentation faults, ensure Mesa VirGL is installed to an isolated directory (not `/usr/local/lib/` or `/opt/homebrew/lib/`)
+          - **Missing Symbols**: Errors like `_CGLSetCurrentContext missing` indicate conflicts with system OpenGL - reinstall to isolated directory
           - **For Apple Silicon**: Ensure you're building with ARM64 support
           - **For Intel Macs**: May need `--target-list` adjustments
           - **Dependencies**: VirGL renderer library should be automatically detected
-          - **Troubleshooting**: Check `config.log` if configure fails to find Mesa libraries
+          - **Configuration Issues**: Check `config.log` if configure fails to find Mesa libraries
+          
+          ### Performance Notes:
+          - Use runtime environment variables (Option 1) for best compatibility
+          - Avoid linking Mesa VirGL directly into QEMU when possible
+          - The `virpipe` driver override ensures VirGL is used for GPU acceleration
           
           ## 📊 Build Information
           - **Mesa Version**: 24.3.0-devel
