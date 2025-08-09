@@ -533,10 +533,19 @@ jobs:
         
         echo "Fixing pkg-config files for installation path..."
         if [ -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
-          # Update pkg-config files to use the actual installation prefix
-          for pc_file in "$INSTALL_PREFIX/lib/pkgconfig"/*.pc; do
-            if [ -f "$pc_file" ]; then
-              echo "Updating $pc_file..."
+          # Update only Mesa VirGL pkg-config files to use the actual installation prefix
+          MESA_PC_FILES=(
+            "gl.pc"
+            "glesv2.pc" 
+            "glesv1_cm.pc"
+            "egl.pc"
+            "osmesa.pc"
+          )
+          
+          for pc_name in "${MESA_PC_FILES[@]}"; do
+            pc_file="$INSTALL_PREFIX/lib/pkgconfig/$pc_name"
+            if [ -f "$pc_file" ] && [ ! -L "$pc_file" ]; then
+              echo "Updating Mesa VirGL pkg-config file: $pc_file"
               if [ "$HOMEBREW_INSTALL" = true ]; then
                 # Keep Homebrew paths for Homebrew installation
                 sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
@@ -616,22 +625,27 @@ jobs:
           fi
         done
         
-        # Check for Homebrew integration (individual files)
+        # Check for Homebrew integration (individual Mesa VirGL files only)
         HOMEBREW_FILES=(
-          "/opt/homebrew/lib/libGL.dylib"
           "/opt/homebrew/lib/libGLESv2.2.dylib"
+          "/opt/homebrew/lib/libGLESv2.dylib"
           "/opt/homebrew/lib/libGLESv1_CM.2.dylib"
+          "/opt/homebrew/lib/libGLESv1_CM.dylib"
           "/opt/homebrew/lib/libglapi.0.dylib"
+          "/opt/homebrew/lib/libglapi.dylib"
           "/opt/homebrew/lib/pkgconfig/gl.pc"
           "/opt/homebrew/lib/pkgconfig/glesv2.pc"
           "/opt/homebrew/lib/pkgconfig/glesv1_cm.pc"
+          "/opt/homebrew/lib/pkgconfig/egl.pc"
+          "/opt/homebrew/lib/pkgconfig/osmesa.pc"
         )
         
         HOMEBREW_MESA_FILES=()
         for file in "${HOMEBREW_FILES[@]}"; do
-          if [ -f "$file" ]; then
-            # Check if it's a Mesa VirGL file (look for symlinks or Mesa signatures)
-            if [ -L "$file" ] || grep -q "Mesa" "$file" 2>/dev/null || strings "$file" 2>/dev/null | grep -q "virgl\|Mesa" 2>/dev/null; then
+          if [ -f "$file" ] || [ -L "$file" ]; then
+            # Only consider files that are likely Mesa VirGL files
+            # Check if it's in our installation or contains Mesa signatures
+            if [ ! -f "$file" ] || file "$file" 2>/dev/null | grep -q "Mach-O\|dylib" || strings "$file" 2>/dev/null | grep -q "Mesa\|virgl\|gallium" 2>/dev/null; then
               HOMEBREW_MESA_FILES+=("$file")
             fi
           fi
