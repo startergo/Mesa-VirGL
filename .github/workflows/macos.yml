@@ -197,10 +197,9 @@ jobs:
         name: macos-dri-result
         path: ./artifacts
         
-    - name: Create release archive
+    - name: Create package structure
       run: |
         cd artifacts
-        # Create a comprehensive release package
         mkdir -p mesa-virgl-macos
         
         # Copy installation files
@@ -208,7 +207,9 @@ jobs:
           cp -r install/* mesa-virgl-macos/
         fi
         
-        # Create release info
+    - name: Create release documentation
+      run: |
+        cd artifacts
         cat > mesa-virgl-macos/RELEASE_INFO.txt << 'EOF'
         Mesa VirGL for macOS - Development Build
         ========================================
@@ -456,7 +457,10 @@ jobs:
         
         For more information, see: https://github.com/${{ github.repository }}
         EOF
-        
+
+    - name: Create installation scripts
+      run: |
+        cd artifacts
         # Create installation script
         cat > mesa-virgl-macos/install.sh << 'EOF'
         #!/bin/bash
@@ -509,7 +513,10 @@ jobs:
         # Run the installation
         main_install
         EOF
-        
+
+    - name: Create installation functions
+      run: |
+        cd artifacts
         # Create installation functions library
         cat > mesa-virgl-macos/install-functions.sh << 'EOF'
         #!/bin/bash
@@ -660,6 +667,11 @@ jobs:
           fi
         }
         EOF
+
+    - name: Create safe installation script
+      run: |
+        cd artifacts
+        cat > mesa-virgl-macos/install-homebrew-safe.sh << 'EOF'
         #!/bin/bash
         # Mesa VirGL macOS Safe Homebrew Installation Script
         # This script installs without changing Homebrew directory ownership
@@ -800,7 +812,10 @@ jobs:
         echo "  ./configure --enable-virglrenderer --enable-opengl"
         
         EOF
-        
+
+    - name: Create safe installation functions
+      run: |
+        cd artifacts
         # Create safe installation functions library
         cat > mesa-virgl-macos/install-safe-functions.sh << 'EOF'
         #!/bin/bash
@@ -921,9 +936,10 @@ jobs:
           echo "  ./configure --enable-virglrenderer --enable-opengl"
         }
         EOF
-        
-        chmod +x mesa-virgl-macos/install-homebrew-safe.sh
-        
+
+    - name: Create uninstall scripts
+      run: |
+        cd artifacts
         # Create uninstall script
         cat > mesa-virgl-macos/uninstall.sh << 'EOF'
         #!/bin/bash
@@ -946,7 +962,10 @@ jobs:
         # Run the uninstall
         main_uninstall "$1"
         EOF
-        
+
+    - name: Create uninstall functions
+      run: |
+        cd artifacts
         # Create uninstall functions library
         cat > mesa-virgl-macos/uninstall-functions.sh << 'EOF'
         #!/bin/bash
@@ -1081,7 +1100,10 @@ jobs:
           echo "  ~/.zshrc, ~/.bashrc, ~/.profile"
         }
         EOF
-        
+
+    - name: Create README and finalize
+      run: |
+        cd artifacts
         chmod +x mesa-virgl-macos/install.sh
         chmod +x mesa-virgl-macos/install-functions.sh
         chmod +x mesa-virgl-macos/install-homebrew-safe.sh
@@ -1230,7 +1252,10 @@ jobs:
         
         For detailed documentation, see `RELEASE_INFO.txt`.
         EOF
-        
+
+    - name: Create archive
+      run: |
+        cd artifacts
         # Create archive with contents directly (no wrapper directory)
         cd mesa-virgl-macos
         echo "Creating compressed archive..."
