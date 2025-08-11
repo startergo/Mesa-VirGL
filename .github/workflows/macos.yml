@@ -503,7 +503,31 @@ jobs:
           exit 1
         fi
         
-        if [ "$HOMEBREW_INSTALL" = true ]; then
+        # Source the installation functions
+        source ./install-functions.sh
+        
+        # Run the installation
+        main_install
+        EOF
+        
+        # Create installation functions library
+        cat > mesa-virgl-macos/install-functions.sh << 'EOF'
+        #!/bin/bash
+        # Mesa VirGL Installation Functions
+        
+        main_install() {
+          if [ "$HOMEBREW_INSTALL" = true ]; then
+            install_to_homebrew
+          else
+            install_isolated
+          fi
+          
+          fix_pkgconfig_files
+          set_permissions
+          show_completion_message
+        }
+        
+        install_to_homebrew() {
           echo "Installing Mesa VirGL to Homebrew directories: $INSTALL_PREFIX"
           echo "Warning: This will integrate with your existing Homebrew installation"
           echo "The script will preserve Homebrew ownership and permissions."
@@ -517,12 +541,7 @@ jobs:
             echo "Installation cancelled"
             exit 0
           fi
-        else
-          echo "Installing Mesa VirGL to isolated directory: $INSTALL_PREFIX"
-        fi
-        
-        echo "Creating installation directory..."
-        if [ "$HOMEBREW_INSTALL" = true ]; then
+          
           # For Homebrew, ensure directories exist with proper ownership
           if [ ! -d "$INSTALL_PREFIX" ]; then
             echo "Warning: Homebrew directory $INSTALL_PREFIX does not exist"
@@ -530,31 +549,15 @@ jobs:
             echo "Please install Homebrew first: https://brew.sh"
             exit 1
           fi
-          # Directory already exists, don't create it
-        else
-          mkdir -p "$INSTALL_PREFIX"
-        fi
-        
-        echo "Installing Mesa VirGL libraries..."
-        if [ "$HOMEBREW_INSTALL" = true ]; then
-          # For Homebrew installation, preserve ownership and permissions
+          
+          echo "Installing Mesa VirGL libraries..."
           echo "Installing to Homebrew with proper permissions..."
           
           # Get the current Homebrew directory owner
           HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || whoami 2>/dev/null || echo "$(logname)")
           HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || id -gn 2>/dev/null || echo "admin")
           
-          # Copy files while preserving structure
-          if [ -d "opt/homebrew" ]; then
-            cp -r opt/homebrew/* "$INSTALL_PREFIX/"
-          elif [ -d "opt" ]; then
-            cp -r opt/* "$INSTALL_PREFIX/"
-          elif [ -d "usr" ]; then
-            cp -r usr/* "$INSTALL_PREFIX/"
-          else
-            echo "Warning: No standard installation structure found"
-            cp -r * "$INSTALL_PREFIX/"
-          fi
+          copy_files
           
           # Restore proper Homebrew ownership and permissions
           echo "Restoring Homebrew ownership to $HOMEBREW_OWNER:$HOMEBREW_GROUP"
@@ -567,9 +570,17 @@ jobs:
           # Make executables and libraries executable
           find "$INSTALL_PREFIX" -name "*.dylib" -exec chmod 755 {} \;
           find "$INSTALL_PREFIX/bin" -type f -exec chmod 755 {} \; 2>/dev/null || true
-          
-        else
-          # For isolated installation, use standard copy
+        }
+        
+        install_isolated() {
+          echo "Installing Mesa VirGL to isolated directory: $INSTALL_PREFIX"
+          echo "Creating installation directory..."
+          mkdir -p "$INSTALL_PREFIX"
+          echo "Installing Mesa VirGL libraries..."
+          copy_files
+        }
+        
+        copy_files() {
           if [ -d "opt/homebrew" ]; then
             cp -r opt/homebrew/* "$INSTALL_PREFIX/"
           elif [ -d "opt" ]; then
@@ -580,80 +591,75 @@ jobs:
             echo "Warning: No standard installation structure found"
             cp -r * "$INSTALL_PREFIX/"
           fi
-        fi
+        }
         
-        echo "Fixing pkg-config files for installation path..."
-        if [ "$HOMEBREW_INSTALL" = true ]; then
-          # For Homebrew, ensure pkg-config directory exists with proper ownership
-          HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || whoami 2>/dev/null || echo "$(logname)")
-          HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || id -gn 2>/dev/null || echo "admin")
-          
-          if [ ! -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
-            echo "Creating pkg-config directory with proper Homebrew ownership..."
-            mkdir -p "$INSTALL_PREFIX/lib/pkgconfig"
-            chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$INSTALL_PREFIX/lib/pkgconfig"
-            chmod 755 "$INSTALL_PREFIX/lib/pkgconfig"
-          fi
-        fi
-        
-        if [ -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
-          # Update only Mesa VirGL pkg-config files to use the actual installation prefix
-          MESA_PC_FILES=(
-            "gl.pc"
-            "glesv2.pc" 
-            "glesv1_cm.pc"
-            "egl.pc"
-            "osmesa.pc"
-          )
-          
-          for pc_name in "${MESA_PC_FILES[@]}"; do
-            pc_file="$INSTALL_PREFIX/lib/pkgconfig/$pc_name"
-            if [ -f "$pc_file" ] && [ ! -L "$pc_file" ]; then
-              echo "Updating Mesa VirGL pkg-config file: $pc_file"
-              if [ "$HOMEBREW_INSTALL" = true ]; then
-                # Keep Homebrew paths for Homebrew installation
-                sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
-                # Ensure proper ownership for Homebrew
-                chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$pc_file"
-              else
-                # Update to custom installation path
-                sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
-              fi
-              rm "$pc_file.bak" 2>/dev/null || true
+        fix_pkgconfig_files() {
+          echo "Fixing pkg-config files for installation path..."
+          if [ "$HOMEBREW_INSTALL" = true ]; then
+            # For Homebrew, ensure pkg-config directory exists with proper ownership
+            HOMEBREW_OWNER=$(stat -f "%Su" "$INSTALL_PREFIX" 2>/dev/null || whoami 2>/dev/null || echo "$(logname)")
+            HOMEBREW_GROUP=$(stat -f "%Sg" "$INSTALL_PREFIX" 2>/dev/null || id -gn 2>/dev/null || echo "admin")
+            
+            if [ ! -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
+              echo "Creating pkg-config directory with proper Homebrew ownership..."
+              mkdir -p "$INSTALL_PREFIX/lib/pkgconfig"
+              chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$INSTALL_PREFIX/lib/pkgconfig"
+              chmod 755 "$INSTALL_PREFIX/lib/pkgconfig"
             fi
-          done
-        fi
+          fi
+          
+          if [ -d "$INSTALL_PREFIX/lib/pkgconfig" ]; then
+            # Update only Mesa VirGL pkg-config files to use the actual installation prefix
+            MESA_PC_FILES=("gl.pc" "glesv2.pc" "glesv1_cm.pc" "egl.pc" "osmesa.pc")
+            
+            for pc_name in "${MESA_PC_FILES[@]}"; do
+              pc_file="$INSTALL_PREFIX/lib/pkgconfig/$pc_name"
+              if [ -f "$pc_file" ] && [ ! -L "$pc_file" ]; then
+                echo "Updating Mesa VirGL pkg-config file: $pc_file"
+                if [ "$HOMEBREW_INSTALL" = true ]; then
+                  sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+                  chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$pc_file"
+                else
+                  sed -i.bak "s|prefix=/opt/homebrew|prefix=$INSTALL_PREFIX|g" "$pc_file"
+                fi
+                rm "$pc_file.bak" 2>/dev/null || true
+              fi
+            done
+          fi
+        }
         
-        echo "Setting permissions..."
-        if [ "$HOMEBREW_INSTALL" = true ]; then
-          echo "Homebrew permissions already set correctly"
-        else
-          chmod -R 755 "$INSTALL_PREFIX"
-        fi
+        set_permissions() {
+          echo "Setting permissions..."
+          if [ "$HOMEBREW_INSTALL" = true ]; then
+            echo "Homebrew permissions already set correctly"
+          else
+            chmod -R 755 "$INSTALL_PREFIX"
+          fi
+        }
         
-        echo "Installation complete!"
-        echo "Mesa VirGL installed to: $INSTALL_PREFIX"
-        echo ""
-        if [ "$HOMEBREW_INSTALL" = true ]; then
-          echo "Homebrew integration complete. Mesa VirGL libraries are now available"
-          echo "through the standard Homebrew paths and should be found automatically"
-          echo "by pkg-config and other build systems."
+        show_completion_message() {
+          echo "Installation complete!"
+          echo "Mesa VirGL installed to: $INSTALL_PREFIX"
           echo ""
-          echo "If you experience permission issues with Homebrew after installation:"
-          echo "  sudo chown -R \$(whoami) $INSTALL_PREFIX"
-          echo "  brew doctor  # to check for any permission issues"
-        else
-          echo "To use with QEMU development:"
-          echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
-          echo ""
-          echo "For QEMU configure:"
-          echo "  --extra-cflags=\"-I$INSTALL_PREFIX/include\""
-          echo "  --extra-ldflags=\"-L$INSTALL_PREFIX/lib\""
-          echo "  --pkg-config-path=\"$INSTALL_PREFIX/lib/pkgconfig\""
-        fi
+          if [ "$HOMEBREW_INSTALL" = true ]; then
+            echo "Homebrew integration complete. Mesa VirGL libraries are now available"
+            echo "through the standard Homebrew paths and should be found automatically"
+            echo "by pkg-config and other build systems."
+            echo ""
+            echo "If you experience permission issues with Homebrew after installation:"
+            echo "  sudo chown -R \$(whoami) $INSTALL_PREFIX"
+            echo "  brew doctor  # to check for any permission issues"
+          else
+            echo "To use with QEMU development:"
+            echo "  export PKG_CONFIG_PATH=\"$INSTALL_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH\""
+            echo ""
+            echo "For QEMU configure:"
+            echo "  --extra-cflags=\"-I$INSTALL_PREFIX/include\""
+            echo "  --extra-ldflags=\"-L$INSTALL_PREFIX/lib\""
+            echo "  --pkg-config-path=\"$INSTALL_PREFIX/lib/pkgconfig\""
+          fi
+        }
         EOF
-        
-        cat > mesa-virgl-macos/install-homebrew-safe.sh << 'EOF'
         #!/bin/bash
         # Mesa VirGL macOS Safe Homebrew Installation Script
         # This script installs without changing Homebrew directory ownership
@@ -795,6 +801,127 @@ jobs:
         
         EOF
         
+        # Create safe installation functions library
+        cat > mesa-virgl-macos/install-safe-functions.sh << 'EOF'
+        #!/bin/bash
+        # Mesa VirGL Safe Installation Functions
+        
+        safe_homebrew_install() {
+          echo "Installing Mesa VirGL libraries to Homebrew..."
+          
+          # Create temporary staging directory
+          STAGING_DIR="/tmp/mesa-virgl-staging-$$"
+          mkdir -p "$STAGING_DIR"
+          
+          stage_files
+          install_to_homebrew_dirs
+          restore_homebrew_ownership
+          fix_safe_pkgconfig
+          cleanup_staging
+          show_safe_completion
+        }
+        
+        stage_files() {
+          # Copy files to staging area first
+          if [ -d "opt/homebrew" ]; then
+            cp -r opt/homebrew/* "$STAGING_DIR/"
+          elif [ -d "opt" ]; then
+            cp -r opt/* "$STAGING_DIR/"
+          elif [ -d "usr" ]; then
+            cp -r usr/* "$STAGING_DIR/"
+          else
+            echo "Warning: No standard installation structure found"
+            cp -r * "$STAGING_DIR/"
+          fi
+        }
+        
+        install_to_homebrew_dirs() {
+          echo "Copying files to Homebrew directories..."
+          
+          # Install libraries
+          if [ -d "$STAGING_DIR/lib" ]; then
+            sudo cp -r "$STAGING_DIR/lib/"* "$HOMEBREW_PREFIX/lib/"
+          fi
+          
+          # Install headers
+          if [ -d "$STAGING_DIR/include" ]; then
+            sudo cp -r "$STAGING_DIR/include/"* "$HOMEBREW_PREFIX/include/"
+          fi
+          
+          # Ensure pkg-config directory exists with proper ownership
+          if [ ! -d "$HOMEBREW_PREFIX/lib/pkgconfig" ]; then
+            echo "Creating pkg-config directory..."
+            sudo mkdir -p "$HOMEBREW_PREFIX/lib/pkgconfig"
+          fi
+        }
+        
+        restore_homebrew_ownership() {
+          # Get the actual Homebrew directory owner (usually the user who installed Homebrew)
+          HOMEBREW_OWNER=$(stat -f "%Su" "$HOMEBREW_PREFIX" 2>/dev/null || whoami)
+          HOMEBREW_GROUP=$(stat -f "%Sg" "$HOMEBREW_PREFIX" 2>/dev/null || id -gn)
+          
+          echo "Restoring Homebrew ownership to $HOMEBREW_OWNER:$HOMEBREW_GROUP..."
+          
+          # Restore ownership of directories we may have created
+          if [ -d "$HOMEBREW_PREFIX/lib/pkgconfig" ]; then
+            sudo chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$HOMEBREW_PREFIX/lib/pkgconfig"
+          fi
+          
+          # Restore ownership of the specific files we installed
+          if [ -d "$HOMEBREW_PREFIX/lib" ]; then
+            sudo find "$HOMEBREW_PREFIX/lib" -name "*mesa*" -o -name "*virgl*" -o -name "*gles*" -o -name "*glapi*" | \
+              sudo xargs chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" 2>/dev/null || true
+          fi
+          
+          if [ -d "$HOMEBREW_PREFIX/include" ]; then
+            sudo find "$HOMEBREW_PREFIX/include" -name "*mesa*" -o -name "*virgl*" -o -name "*gl*" | \
+              sudo xargs chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" 2>/dev/null || true
+          fi
+        }
+        
+        fix_safe_pkgconfig() {
+          # Fix pkg-config files
+          if [ -d "$HOMEBREW_PREFIX/lib/pkgconfig" ]; then
+            MESA_PC_FILES=("gl.pc" "glesv2.pc" "glesv1_cm.pc" "egl.pc" "osmesa.pc")
+            
+            for pc_name in "${MESA_PC_FILES[@]}"; do
+              pc_file="$HOMEBREW_PREFIX/lib/pkgconfig/$pc_name"
+              if [ -f "$pc_file" ]; then
+                echo "Updating Mesa VirGL pkg-config file: $pc_file"
+                sudo sed -i.bak "s|prefix=/opt/homebrew|prefix=$HOMEBREW_PREFIX|g" "$pc_file"
+                sudo rm "$pc_file.bak" 2>/dev/null || true
+                sudo chown "$HOMEBREW_OWNER:$HOMEBREW_GROUP" "$pc_file"
+              fi
+            done
+          fi
+          
+          # Set proper permissions
+          echo "Setting correct permissions..."
+          sudo find "$HOMEBREW_PREFIX/lib" -name "*.dylib" -exec chmod 755 {} \; 2>/dev/null || true
+          sudo find "$HOMEBREW_PREFIX/lib/pkgconfig" -name "*.pc" -exec chmod 644 {} \; 2>/dev/null || true
+        }
+        
+        cleanup_staging() {
+          # Clean up staging directory
+          rm -rf "$STAGING_DIR"
+        }
+        
+        show_safe_completion() {
+          echo ""
+          echo "✅ Mesa VirGL installation complete!"
+          echo ""
+          echo "Libraries installed to: $HOMEBREW_PREFIX"
+          echo "Mesa VirGL is now available through standard Homebrew paths."
+          echo ""
+          echo "To verify installation:"
+          echo "  pkg-config --exists glesv2 && echo '✓ OpenGL ES 2.0 found'"
+          echo "  pkg-config --cflags --libs glesv2"
+          echo ""
+          echo "For QEMU development, no extra configure flags needed:"
+          echo "  ./configure --enable-virglrenderer --enable-opengl"
+        }
+        EOF
+        
         chmod +x mesa-virgl-macos/install-homebrew-safe.sh
         
         # Create uninstall script
@@ -807,137 +934,160 @@ jobs:
         echo "Mesa VirGL for macOS - Uninstall Script"
         echo "======================================="
         
-        # Default installation directories to check
-        INSTALL_DIRS=(
-          "/opt/mesa-virgl"
-          "/usr/local/mesa-virgl"
-          "/opt/homebrew/lib/libGL.dylib"
-          "/opt/homebrew/lib/libGLESv2.dylib"
-          "/opt/homebrew/lib/libGLESv1_CM.dylib"
-          "/opt/homebrew/lib/libglapi.dylib"
-        )
-        
-        # Custom directory from user input
-        if [ "$1" != "" ]; then
-          echo "Checking custom directory: $1"
-          INSTALL_DIRS+=("$1")
-        fi
-        
         if [ "$EUID" -ne 0 ]; then
           echo "Error: This script must be run as root (use sudo)"
           echo "Usage: sudo ./uninstall.sh [custom_path]"
           exit 1
         fi
         
-        echo "Searching for Mesa VirGL installations..."
+        # Source the uninstall functions
+        source ./uninstall-functions.sh
         
-        FOUND_INSTALLATIONS=()
-        
-        # Check for directory installations
-        for dir in "/opt/mesa-virgl" "/usr/local/mesa-virgl"; do
-          if [ -d "$dir" ]; then
-            echo "Found Mesa VirGL installation: $dir"
-            FOUND_INSTALLATIONS+=("$dir")
-          fi
-        done
-        
-        # Check for Homebrew integration (individual Mesa VirGL files only)
-        HOMEBREW_FILES=(
-          "/opt/homebrew/lib/libGLESv2.2.dylib"
-          "/opt/homebrew/lib/libGLESv2.dylib"
-          "/opt/homebrew/lib/libGLESv1_CM.2.dylib"
-          "/opt/homebrew/lib/libGLESv1_CM.dylib"
-          "/opt/homebrew/lib/libglapi.0.dylib"
-          "/opt/homebrew/lib/libglapi.dylib"
-          "/opt/homebrew/lib/pkgconfig/gl.pc"
-          "/opt/homebrew/lib/pkgconfig/glesv2.pc"
-          "/opt/homebrew/lib/pkgconfig/glesv1_cm.pc"
-          "/opt/homebrew/lib/pkgconfig/egl.pc"
-          "/opt/homebrew/lib/pkgconfig/osmesa.pc"
-        )
-        
-        HOMEBREW_MESA_FILES=()
-        for file in "${HOMEBREW_FILES[@]}"; do
-          if [ -f "$file" ] || [ -L "$file" ]; then
-            # Only consider files that are likely Mesa VirGL files
-            # Check if it's in our installation or contains Mesa signatures
-            if [ ! -f "$file" ] || file "$file" 2>/dev/null | grep -q "Mach-O\|dylib" || strings "$file" 2>/dev/null | grep -q "Mesa\|virgl\|gallium" 2>/dev/null; then
-              HOMEBREW_MESA_FILES+=("$file")
-            fi
-          fi
-        done
-        
-        if [ ${#HOMEBREW_MESA_FILES[@]} -gt 0 ]; then
-          echo "Found Mesa VirGL files in Homebrew directory:"
-          printf '  %s\n' "${HOMEBREW_MESA_FILES[@]}"
-          FOUND_INSTALLATIONS+=("HOMEBREW_FILES")
-        fi
-        
-        # Check custom directory if provided
-        if [ "$1" != "" ] && [ -d "$1" ]; then
-          echo "Found custom Mesa VirGL installation: $1"
-          FOUND_INSTALLATIONS+=("$1")
-        fi
-        
-        if [ ${#FOUND_INSTALLATIONS[@]} -eq 0 ]; then
-          echo "No Mesa VirGL installations found."
-          echo ""
-          echo "If you installed to a custom location, run:"
-          echo "  sudo ./uninstall.sh /path/to/custom/directory"
-          exit 0
-        fi
-        
-        echo ""
-        echo "Found ${#FOUND_INSTALLATIONS[@]} Mesa VirGL installation(s):"
-        for installation in "${FOUND_INSTALLATIONS[@]}"; do
-          if [ "$installation" = "HOMEBREW_FILES" ]; then
-            echo "  - Homebrew integration (individual files)"
-          else
-            echo "  - $installation"
-          fi
-        done
-        
-        echo ""
-        read -p "Do you want to remove ALL found Mesa VirGL installations? [y/N]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-          echo "Uninstall cancelled."
-          exit 0
-        fi
-        
-        echo ""
-        echo "Removing Mesa VirGL installations..."
-        
-        for installation in "${FOUND_INSTALLATIONS[@]}"; do
-          if [ "$installation" = "HOMEBREW_FILES" ]; then
-            echo "Removing Homebrew Mesa VirGL files..."
-            for file in "${HOMEBREW_MESA_FILES[@]}"; do
-              if [ -f "$file" ] || [ -L "$file" ]; then
-                echo "  Removing: $file"
-                rm -f "$file"
-              fi
-            done
-          else
-            if [ -d "$installation" ]; then
-              echo "Removing directory: $installation"
-              rm -rf "$installation"
-            fi
-          fi
-        done
-        
-        echo ""
-        echo "Mesa VirGL uninstall complete!"
-        echo ""
-        echo "Note: You may want to clean up environment variables:"
-        echo "  - Remove DYLD_LIBRARY_PATH entries for Mesa VirGL"
-        echo "  - Remove PKG_CONFIG_PATH entries for Mesa VirGL"
-        echo "  - Remove MESA_LOADER_DRIVER_OVERRIDE=virpipe"
-        echo ""
-        echo "Check your shell configuration files:"
-        echo "  ~/.zshrc, ~/.bashrc, ~/.profile"
+        # Run the uninstall
+        main_uninstall "$1"
         EOF
         
+        # Create uninstall functions library
+        cat > mesa-virgl-macos/uninstall-functions.sh << 'EOF'
+        #!/bin/bash
+        # Mesa VirGL Uninstall Functions
+        
+        main_uninstall() {
+          local custom_path="$1"
+          
+          echo "Searching for Mesa VirGL installations..."
+          
+          FOUND_INSTALLATIONS=()
+          search_installations "$custom_path"
+          
+          if [ ${#FOUND_INSTALLATIONS[@]} -eq 0 ]; then
+            echo "No Mesa VirGL installations found."
+            echo ""
+            echo "If you installed to a custom location, run:"
+            echo "  sudo ./uninstall.sh /path/to/custom/directory"
+            exit 0
+          fi
+          
+          show_found_installations
+          confirm_removal
+          remove_installations
+          show_cleanup_message
+        }
+        
+        search_installations() {
+          local custom_path="$1"
+          
+          # Check for directory installations
+          for dir in "/opt/mesa-virgl" "/usr/local/mesa-virgl"; do
+            if [ -d "$dir" ]; then
+              echo "Found Mesa VirGL installation: $dir"
+              FOUND_INSTALLATIONS+=("$dir")
+            fi
+          done
+          
+          # Check for Homebrew integration
+          search_homebrew_files
+          
+          # Check custom directory if provided
+          if [ "$custom_path" != "" ] && [ -d "$custom_path" ]; then
+            echo "Found custom Mesa VirGL installation: $custom_path"
+            FOUND_INSTALLATIONS+=("$custom_path")
+          fi
+        }
+        
+        search_homebrew_files() {
+          HOMEBREW_FILES=(
+            "/opt/homebrew/lib/libGLESv2.2.dylib"
+            "/opt/homebrew/lib/libGLESv2.dylib"
+            "/opt/homebrew/lib/libGLESv1_CM.2.dylib"
+            "/opt/homebrew/lib/libGLESv1_CM.dylib"
+            "/opt/homebrew/lib/libglapi.0.dylib"
+            "/opt/homebrew/lib/libglapi.dylib"
+            "/opt/homebrew/lib/pkgconfig/gl.pc"
+            "/opt/homebrew/lib/pkgconfig/glesv2.pc"
+            "/opt/homebrew/lib/pkgconfig/glesv1_cm.pc"
+            "/opt/homebrew/lib/pkgconfig/egl.pc"
+            "/opt/homebrew/lib/pkgconfig/osmesa.pc"
+          )
+          
+          HOMEBREW_MESA_FILES=()
+          for file in "${HOMEBREW_FILES[@]}"; do
+            if [ -f "$file" ] || [ -L "$file" ]; then
+              HOMEBREW_MESA_FILES+=("$file")
+            fi
+          done
+          
+          if [ ${#HOMEBREW_MESA_FILES[@]} -gt 0 ]; then
+            echo "Found Mesa VirGL files in Homebrew directory:"
+            printf '  %s\n' "${HOMEBREW_MESA_FILES[@]}"
+            FOUND_INSTALLATIONS+=("HOMEBREW_FILES")
+          fi
+        }
+        
+        show_found_installations() {
+          echo ""
+          echo "Found ${#FOUND_INSTALLATIONS[@]} Mesa VirGL installation(s):"
+          for installation in "${FOUND_INSTALLATIONS[@]}"; do
+            if [ "$installation" = "HOMEBREW_FILES" ]; then
+              echo "  - Homebrew integration (individual files)"
+            else
+              echo "  - $installation"
+            fi
+          done
+        }
+        
+        confirm_removal() {
+          echo ""
+          read -p "Do you want to remove ALL found Mesa VirGL installations? [y/N]: " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Uninstall cancelled."
+            exit 0
+          fi
+        }
+        
+        remove_installations() {
+          echo ""
+          echo "Removing Mesa VirGL installations..."
+          
+          for installation in "${FOUND_INSTALLATIONS[@]}"; do
+            if [ "$installation" = "HOMEBREW_FILES" ]; then
+              echo "Removing Homebrew Mesa VirGL files..."
+              for file in "${HOMEBREW_MESA_FILES[@]}"; do
+                if [ -f "$file" ] || [ -L "$file" ]; then
+                  echo "  Removing: $file"
+                  rm -f "$file"
+                fi
+              done
+            else
+              if [ -d "$installation" ]; then
+                echo "Removing directory: $installation"
+                rm -rf "$installation"
+              fi
+            fi
+          done
+        }
+        
+        show_cleanup_message() {
+          echo ""
+          echo "Mesa VirGL uninstall complete!"
+          echo ""
+          echo "Note: You may want to clean up environment variables:"
+          echo "  - Remove DYLD_LIBRARY_PATH entries for Mesa VirGL"
+          echo "  - Remove PKG_CONFIG_PATH entries for Mesa VirGL"
+          echo "  - Remove MESA_LOADER_DRIVER_OVERRIDE=virpipe"
+          echo ""
+          echo "Check your shell configuration files:"
+          echo "  ~/.zshrc, ~/.bashrc, ~/.profile"
+        }
+        EOF
+        
+        chmod +x mesa-virgl-macos/install.sh
+        chmod +x mesa-virgl-macos/install-functions.sh
+        chmod +x mesa-virgl-macos/install-homebrew-safe.sh
+        chmod +x mesa-virgl-macos/install-safe-functions.sh
         chmod +x mesa-virgl-macos/uninstall.sh
+        chmod +x mesa-virgl-macos/uninstall-functions.sh
         
         # Create README with installation and uninstall instructions
         cat > mesa-virgl-macos/README.md << 'EOF'
