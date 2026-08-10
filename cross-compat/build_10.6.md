@@ -23,15 +23,15 @@ below).
 
 | File | Change | Reason |
 |------|--------|--------|
-| `meson.build` | Guard `rt` library for darwin | macOS has no librt; `clock_gettime` detection returns NO, fallback to `find_library('rt')` fails |
-| `src/c11/impl/time.c` | Forward-declare `clock_gettime` (gated on macOS < 10.12) | 10.6 SDK doesn't declare it; implementation provided by compat shim |
+| `meson.build` | Skip `find_library('rt')` on darwin, keep `cc.has_function('clock_gettime')` as primary | macOS has no librt; `clock_gettime` is either native (10.12+) or provided by the cross-compat shim. Detection via `has_function` remains the authoritative check; darwin special-case only avoids the librt probe that would fail. |
+| `src/c11/impl/time.c` | Forward-declare `clock_gettime`, gated on `__has_include(<_time.h>)` | 10.6 SDK has no `<_time.h>` and doesn't declare `clock_gettime`; modern macOS SDK (CI) has both and declares it with `clockid_t`. The `__has_include` gate tracks the actual root cause without being corrupted by deployment-target env quirks. |
 | `src/util/compress.h` | `#include <stddef.h>` | 10.6 SDK doesn't transitively expose `size_t` through `inttypes.h` |
 | `src/util/fossilize_db.c` | Forward-declare `strndup` | macOS 10.7+ only |
 | `src/util/memstream.c` | Forward-declare `open_memstream` | macOS 10.13+ only |
 | `src/util/ralloc.c` | Forward-declare `strnlen` | macOS 10.7+ only |
-| `src/util/u_call_once.c` | Remove `thread_local` (plain `static`) | TLS requires macOS 10.7+ dyld. Correctness compromise: single-threaded only |
-| `src/util/u_qsort.cpp` | Remove `thread_local` (plain `static`) | Same TLS issue. macOS has native BSD `qsort_r` since 10.5; this path should be unreachable |
-| `src/util/u_thread.h` | Gate `__THREAD_INITIAL_EXEC` on macOS >= 10.7 | The GL dispatch path (`src/mapi/`) uses TLS for per-thread current-context. Without TLS, falls back to `_glapi_Dispatch` / `_glapi_Context` plain globals. **Correctness compromise: single-threaded GL only.** |
+| `src/util/u_call_once.c` | Gate `thread_local` fallback on macOS < 10.7 | TLS requires macOS 10.7+ dyld. Plain `static` is used only when `__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070`; `thread_local` is kept everywhere else (Linux/glibc, modern macOS). **Correctness compromise on 10.6 only: single-threaded call_once.** |
+| `src/util/u_qsort.cpp` | Gate `thread_local` fallback on macOS < 10.7 | Same TLS issue. Plain `static` on 10.6 only; `thread_local` elsewhere. macOS has native BSD `qsort_r` since 10.5 so the fallback path should never execute at runtime anyway. |
+| `src/util/u_thread.h` | Gate `__THREAD_INITIAL_EXEC` on macOS >= 10.7 | The GL dispatch path (`src/mapi/`) uses TLS for per-thread current-context. On 10.6, `__THREAD_INITIAL_EXEC` is defined empty so the dispatch state variables declared with it (`_glapi_tls_Dispatch`, `_glapi_tls_Context`, `__glX_tls_Context`, `_egl_TLS`) become plain globals. **Correctness compromise on 10.6: single-threaded GL only.** |
 
 ### TLS gate — behavioural risk
 
