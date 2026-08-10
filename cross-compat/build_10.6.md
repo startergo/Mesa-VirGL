@@ -70,7 +70,27 @@ for f in clock_gettime_compat vl_video_stubs dri_stubs; do
 done
 ```
 
+All three objects are linked into every target via the cross file's
+`c_link_args` / `cpp_link_args`. `clock_gettime_compat.o` provides the
+POSIX clock shim; `dri_stubs.o` and `vl_video_stubs.o` resolve the
+driver-init references that virgl pulls in (`driParseConfigFiles`,
+`driQueryOptionb/i`, `vl_video_buffer_*`) — xmlconfig.c and the vl
+subsystem are not compiled in this cross build.
+
 ### 2. Configure
+
+Before running `meson setup`, substitute the `@SOURCE_ROOT@` placeholder
+in the cross file with the absolute path to your repo root:
+
+```sh
+sed -i.bak "s|@SOURCE_ROOT@|$(pwd)|" cross-compat/mesa-cross-10.6.txt
+```
+
+The cross file also references `/Applications/Xcode.app/.../MacOSX10.6.sdk`
+for the 10.6 SDK and `/opt/homebrew/opt/llvm/bin/llvm-ar` for llvm-ar;
+adjust those if your toolchain is in a different location.
+
+Then:
 
 ```sh
 meson setup build-106 \

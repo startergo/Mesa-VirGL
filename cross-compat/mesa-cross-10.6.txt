@@ -1,3 +1,16 @@
+# Meson cross file for x86_64-apple-macos10.6.
+#
+# PORTABILITY: @SOURCE_ROOT@ below is a placeholder for the absolute path to
+# the Mesa-VirGL repo root on your machine. Before running `meson setup`,
+# replace it. From the repo root:
+#
+#   sed -i.bak "s|@SOURCE_ROOT@|$(pwd)|" cross-compat/mesa-cross-10.6.txt
+#
+# Other paths that may need adjustment:
+#   - /Applications/Xcode.app/.../MacOSX10.6.sdk  (10.6 SDK location)
+#   - /opt/homebrew/opt/llvm/bin/llvm-ar          (Homebrew LLVM bin tools)
+#   - /opt/homebrew/opt/llvm/bin/llvm-ranlib
+
 [binaries]
 c = 'clang'
 cpp = 'clang++'
@@ -6,11 +19,11 @@ ar = '/opt/homebrew/opt/llvm/bin/llvm-ar'
 ranlib = '/opt/homebrew/opt/llvm/bin/llvm-ranlib'
 
 [built-in options]
-c_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-I/Users/macbookpro/Mesa-VirGL/cross-compat/compat-headers', '-fallow-unsupported', '-w', '-femulated-tls', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1', '-DO_CLOEXEC=0x01000000', '-Dstatic_assert=_Static_assert']
-cpp_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-I/Users/macbookpro/Mesa-VirGL/cross-compat/compat-headers', '-fallow-unsupported', '-w', '-femulated-tls', '-std=c++17', '-nostdinc++', '-isystem', '/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/include', '-include', '/Users/macbookpro/Mesa-VirGL/cross-compat/math_compat.h', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1', '-DO_CLOEXEC=0x01000000', '-Dstatic_assert=_Static_assert']
+c_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-I@SOURCE_ROOT@/cross-compat/compat-headers', '-fallow-unsupported', '-w', '-femulated-tls', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1', '-DO_CLOEXEC=0x01000000', '-Dstatic_assert=_Static_assert']
+cpp_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-I@SOURCE_ROOT@/cross-compat/compat-headers', '-fallow-unsupported', '-w', '-femulated-tls', '-std=c++17', '-nostdinc++', '-isystem', '@SOURCE_ROOT@/cross-compat/libcxx/include', '-include', '@SOURCE_ROOT@/cross-compat/math_compat.h', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1', '-DO_CLOEXEC=0x01000000', '-Dstatic_assert=_Static_assert']
 objc_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported']
-c_link_args = ['-target', 'x86_64-apple-macos10.6', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-L/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/lib', '-Wl,-reexport_library,/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/lib/libc++.1.dylib', '-Wl,-reexport_library,/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/lib/libc++abi.dylib', '/Users/macbookpro/Mesa-VirGL/cross-compat/clock_gettime_compat.o']
-cpp_link_args = ['-target', 'x86_64-apple-macos10.6', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-L/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/lib', '-Wl,-reexport_library,/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/lib/libc++.1.dylib', '-Wl,-reexport_library,/Users/macbookpro/Mesa-VirGL/cross-compat/libcxx/lib/libc++abi.dylib', '/Users/macbookpro/Mesa-VirGL/cross-compat/clock_gettime_compat.o']
+c_link_args = ['-target', 'x86_64-apple-macos10.6', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-L@SOURCE_ROOT@/cross-compat/libcxx/lib', '-Wl,-reexport_library,@SOURCE_ROOT@/cross-compat/libcxx/lib/libc++.1.dylib', '-Wl,-reexport_library,@SOURCE_ROOT@/cross-compat/libcxx/lib/libc++abi.dylib', '@SOURCE_ROOT@/cross-compat/clock_gettime_compat.o', '@SOURCE_ROOT@/cross-compat/dri_stubs.o', '@SOURCE_ROOT@/cross-compat/vl_video_stubs.o']
+cpp_link_args = ['-target', 'x86_64-apple-macos10.6', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-L@SOURCE_ROOT@/cross-compat/libcxx/lib', '-Wl,-reexport_library,@SOURCE_ROOT@/cross-compat/libcxx/lib/libc++.1.dylib', '-Wl,-reexport_library,@SOURCE_ROOT@/cross-compat/libcxx/lib/libc++abi.dylib', '@SOURCE_ROOT@/cross-compat/clock_gettime_compat.o', '@SOURCE_ROOT@/cross-compat/dri_stubs.o', '@SOURCE_ROOT@/cross-compat/vl_video_stubs.o']
 
 [host_machine]
 system = 'darwin'
