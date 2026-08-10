@@ -30,10 +30,19 @@
 
 #include "c11/time.h"
 
-/* clock_gettime compat: macOS < 10.12 doesn't declare or define it in <time.h>.
- * The implementation is provided externally (cross-compat/clock_gettime_compat.o)
- * via gettimeofday(). On newer systems this is a harmless compatible redeclaration. */
+/* clock_gettime compat: only declare our shim when the SDK doesn't already
+ * declare clock_gettime. The legacy 10.6 SDK lacks <_time.h> entirely and has
+ * no clock_gettime declaration, so the shim is required there (the
+ * implementation lives in cross-compat/clock_gettime_compat.o). The modern
+ * macOS SDK used on CI declares clock_gettime(clockid_t, ...) in <_time.h>;
+ * redeclaring it with `int` instead of `clockid_t` is a conflicting-types
+ * error, so we must skip the shim whenever <_time.h> is available. */
+#ifndef __has_include
+#define __has_include(x) 0
+#endif
+#if defined(__APPLE__) && !__has_include(<_time.h>)
 extern int clock_gettime(int clk_id, struct timespec *ts);
+#endif
 
 #ifdef _TIMESPEC_GET_NEED_IMPL
 
