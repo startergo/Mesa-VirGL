@@ -7,8 +7,8 @@ Cross-compile from Apple Silicon to x86_64-apple-macos10.6 using the
 
 - **Xcode** with the 10.6 SDK installed at
   `/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk`
-- **leopard-webkit-build** providing libcxx 5.0.1 at
-  `dist/libcxx/{include,lib}/`
+- **libcxx 5.0.1** vendored in `cross-compat/libcxx/` (headers + dylibs,
+  originally from the leopard-webkit-build project)
 - **Homebrew LLVM** for `llvm-ar` / `llvm-ranlib` at
   `/opt/homebrew/opt/llvm/bin/`
 - **meson >= 1.0**, **ninja**, **Python 3 with mako**, **bison**, **flex**

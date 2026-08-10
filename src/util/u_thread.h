@@ -48,9 +48,10 @@
 #if DETECT_OS_APPLE
 #  if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
      /* TLS (__thread / thread_local) requires macOS 10.7+ dyld support.
-      * On 10.6, define empty to fall through to the non-TLS dispatch path
-      * (_glapi_Dispatch / _glapi_Context plain globals). Single-threaded only;
-      * multi-threaded GL would need pthread_key_create/pthread_getspecific. */
+      * On 10.6, define empty so the dispatch state variables declared with
+      * this attribute (_glapi_tls_Dispatch / _glapi_tls_Context,
+      * __glX_tls_Context, _egl_TLS) become plain globals. Single-threaded
+      * only; multi-threaded GL would need pthread_key_create/pthread_getspecific. */
 #    define __THREAD_INITIAL_EXEC
 #  else
 /* Apple Clang emits wrappers when using thread_local that break module linkage,
