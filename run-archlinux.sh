@@ -464,11 +464,11 @@ echo 'Comment=Parallels-optimized Mesa OpenGL 4.0 configuration'
 echo 'Exec=sh -c \"export MESA_GL_VERSION_OVERRIDE=4.0; export MESA_GLSL_VERSION_OVERRIDE=400; export MESA_NO_ERROR=1; export MESA_GLTHREAD=true; export MESA_GL_CORE_PROFILE=false; export GALLIUM_THREAD=0; export VIRGL_NO_READBACK_CACHE=1; export VIRGL_TEXTURE_TRANSFER_QUEUE_SIZE=128\"'
 echo 'Hidden=false'
 echo 'X-GNOME-Autostart-enabled=true'
-echo 'DESKTOPEOF'"
+echo 'DESKTOPEOF'
 echo ""
 echo "echo 'Configuration updated! Restart shell or VM to apply changes.'"
 echo "echo 'Test with: glxinfo | grep \"OpenGL version\"'"
-echo "echo 'Should show: OpenGL version string: 4.0 (Compatibility Profile) Mesa'
+echo "echo 'Should show: OpenGL version string: 4.0 (Compatibility Profile) Mesa'"
 echo ""
 echo "# TROUBLESHOOTING IF STILL SHOWING 4.6:"
 echo "1. Check current environment variables:"
@@ -522,7 +522,7 @@ echo "   bash --login -c 'env | grep MESA'"
 echo ""
 echo "6. Add debug to find source of 4.6:"
 echo "   echo 'MESA config loaded from startup' >> ~/.bashrc"
-echo "   echo 'Current MESA_GL_VERSION_OVERRIDE:' \$MESA_GL_VERSION_OVERRIDE >> ~/.bashrc""
+echo "   echo 'Current MESA_GL_VERSION_OVERRIDE:' \$MESA_GL_VERSION_OVERRIDE >> ~/.bashrc"
 echo "EOF"
 echo ""
 echo "chmod +x ~/update-to-parallels-mode.sh"
@@ -700,15 +700,26 @@ case "$ARCH" in
         ;;
     x86_64)
         QEMU_BIN="/opt/homebrew/bin/qemu-system-x86_64"
-        MACHINE="pc,accel=hvf"  # Use pc instead of q35 for better compatibility
-        CPU_TYPE="-cpu host"
+        # HVF (Hypervisor.framework) only accelerates a guest whose ISA
+        # matches the host. On Apple Silicon (arm64) an x86_64 guest must
+        # use TCG software emulation.
+        HOST_ARCH=$(uname -m)
+        if [ "$HOST_ARCH" = "x86_64" ]; then
+            MACHINE="pc,accel=hvf"
+            CPU_TYPE="-cpu host"
+            echo "Starting QEMU x86_64 with HVF acceleration (Intel host)..."
+        else
+            MACHINE="pc,accel=tcg"
+            CPU_TYPE="-cpu qemu64"
+            echo "Starting QEMU x86_64 with TCG emulation (host: $HOST_ARCH)..."
+            echo "Note: HVF unavailable for x86_64 guest on $HOST_ARCH host."
+        fi
         VGA_DEVICE="-vga std"  # Standard VGA for broad compatibility
         # 3dfx support is built into QEMU 3dfx - no additional devices needed
         THREED_FX=""  # 3dfx support is integrated into the QEMU binary itself
         EFI_CODE=""  # Skip UEFI for better compatibility
         EFI_VARS=""
         BOOT_OPTS="-boot order=cd"
-        echo "Starting QEMU x86_64 for modern systems..."
         echo "3dfx support: Built into QEMU 3dfx binary (enhanced graphics available)"
         ;;
     aarch64)
@@ -835,10 +846,10 @@ esac
 
 # Display and SPICE configuration
 if [ "$USE_VNC" = "1" ]; then
-    DISPLAY="-display vnc=:1,password=on"
+    DISPLAY="-display vnc=:1"
     SPICE_DISPLAY=""
     echo "Using VNC display on localhost:5901 (set USE_VNC=1)"
-    echo "VNC Password: qemu123"
+    echo "Note: No VNC password required (loopback-only display)"
     echo "Note: Clipboard sharing not available with VNC"
 elif [ "$USE_SPICE" = "1" ]; then
     # Hardware acceleration: VirtIO GPU with OpenGL + SDL with gl=on and improved scaling
@@ -1002,7 +1013,7 @@ if [ "$USE_VNC" != "1" ]; then
     export MESA_DEBUG=silent  # Reduce Mesa debug noise
     export LIBGL_DEBUG=verbose  # Enable libGL debugging
     export VIRGL_NO_READBACK_CACHE=1  # Disable readback cache for better performance
-    export VIRGL_TEXTURE_TRANSFER_QUEUE_SIZE=64  # Increase transfer queue size
+    export VIRGL_TEXTURE_TRANSFER_QUEUE_SIZE=128  # Keep consistent with double-queue optimization
     
     # Mouse handling optimizations
     export SDL_MOUSE_RELATIVE_MODE_WARP=0
@@ -1138,7 +1149,7 @@ echo "=== Starting QEMU ==="
 if [ "$USE_VNC" = "1" ]; then
     echo "Display: VNC on localhost:5901"
     echo "Connect with: open vnc://localhost:5901"
-    echo "VNC Password: qemu123"
+    echo "Note: No VNC password required (loopback-only display)"
     echo "Note: Clipboard sharing not available with VNC display"
 elif [ "$USE_SPICE" = "1" ]; then
     echo "Display: QEMU 3dfx style dual access setup"
