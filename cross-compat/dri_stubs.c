@@ -11,29 +11,45 @@
  * driParseConfigFiles at startup). Aborting would prevent the driver
  * from initializing at all. Returning "no config found" is the correct
  * behavior when there's no drirc to parse.
+ *
+ * Signatures match src/util/xmlconfig.h exactly (types AND parameter
+ * count) so the linker is not relying on ABI luck. The real types live
+ * in xmlconfig.h; here we forward-declare the one struct the caller
+ * passes by pointer so the prototypes are self-contained.
  */
 
-/* Opaque types matching the real API */
+#include <stdint.h>
+
+/* Forward-declared to match the real API in xmlconfig.h without pulling
+ * in Mesa's full header chain (mesa-sha1.h, ralloc.h, etc.). The real
+ * typedef is `typedef struct driOptionCache { ... } driOptionCache;`
+ * (a tagged struct), so we declare it under the same tag name. */
 struct driOptionCache;
-struct driInfoCache;
 
 /* driParseConfigFiles: parse drirc XML files into option cache.
- * Stub: leave cache empty (all options at defaults). */
+ * Real signature (xmlconfig.h): 10 parameters.
+ * Stub: no-op, leaves cache at defaults. */
 void driParseConfigFiles(struct driOptionCache *cache,
-    struct driInfoCache *info, unsigned int screen_num,
-    const char *driver_name, const char *kernel_driver_name,
-    const char *device_name, int api_type) {
+                         const struct driOptionCache *info,
+                         int screenNum, const char *driverName,
+                         const char *kernelDriverName, const char *deviceName,
+                         const char *applicationName, uint32_t applicationVersion,
+                         const char *engineName, uint32_t engineVersion) {
     /* No-op: no drirc.d on target, defaults are already set */
 }
 
-/* driQueryOptionb: query boolean option from cache.
+/* driQueryOptionb: query boolean option value.
+ * Real signature (xmlconfig.h): returns unsigned char, 2nd param is const char *.
  * Stub: return false (safe default for all virgl options). */
-int driQueryOptionb(struct driOptionCache *cache, unsigned int opt) {
+unsigned char driQueryOptionb(const struct driOptionCache *cache,
+                              const char *name) {
     return 0;
 }
 
-/* driQueryOptioni: query integer option from cache.
+/* driQueryOptioni: query integer option value.
+ * Real signature (xmlconfig.h): returns int, 2nd param is const char *.
  * Stub: return 0 (safe default for all virgl options). */
-int driQueryOptioni(struct driOptionCache *cache, unsigned int opt) {
+int driQueryOptioni(const struct driOptionCache *cache,
+                    const char *name) {
     return 0;
 }

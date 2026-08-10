@@ -9,22 +9,61 @@
  * All abort() — per the project's fail-loud pattern. If video support
  * is ever needed, compile src/gallium/auxiliary/vl/ properly and
  * delete this file.
+ *
+ * Signatures match src/gallium/auxiliary/vl/vl_video_buffer.h exactly
+ * (return types, parameter types, and parameter order). The real types
+ * come from Gallium's pipe/p_*.h headers; we forward-declare the tagged
+ * structs/enums we need so the prototypes are self-contained without
+ * dragging in the full Gallium auxiliary header chain.
  */
-#include <stddef.h>
 
-/* Forward-declare the types we need to match the vl API signatures.
- * The real types come from vl/vl_video_buffer.h, but we can't include
- * that here without pulling in the full Gallium auxiliary header chain. */
+#include <stdbool.h>   /* bool */
+#include <stddef.h>    /* NULL */
+
+/* Forward-declared tagged structs matching Gallium's real types. The
+ * typedefs in pipe/p_defines.h, pipe/p_video_codec.h, etc. are
+ * `typedef struct pipe_screen { ... } pipe_screen;` and so on, so
+ * referring to them as `struct pipe_screen` here matches the tag the
+ * real API uses. */
 struct pipe_screen;
 struct pipe_context;
 struct pipe_video_buffer;
+struct pipe_video_codec;
 
-void vl_video_buffer_destroy(struct pipe_video_buffer *buf) { __builtin_abort(); }
-struct pipe_video_buffer *vl_video_buffer_create(struct pipe_context *ctx,
-    const void *tmpl) { __builtin_abort(); }
-void *vl_video_buffer_get_associated_data(struct pipe_video_buffer *buf,
-    void *destroy_cb) { __builtin_abort(); }
-void vl_video_buffer_set_associated_data(struct pipe_video_buffer *buf,
-    struct pipe_context *ctx, void *data, void (*destroy)(void *)) { __builtin_abort(); }
-int vl_video_buffer_is_format_supported(struct pipe_screen *screen,
-    unsigned int format, unsigned int profile, unsigned int entrypoint) { __builtin_abort(); }
+/* is_format_supported takes three Gallium enums (pipe_format,
+ * pipe_video_profile, pipe_video_entrypoint). C allows forward declarations
+ * of enum *tags* but a forward-declared enum is an incomplete type, so the
+ * 10.6 toolchain rejects it in a parameter list. Use `int` instead: under
+ * the C calling convention Gallium enums are int-sized, and the stub never
+ * inspects the value (it aborts unconditionally), so the ABI is preserved. */
+
+void
+vl_video_buffer_destroy(struct pipe_video_buffer *buf) { __builtin_abort(); }
+
+struct pipe_video_buffer *
+vl_video_buffer_create(struct pipe_context *ctx,
+                       const struct pipe_video_buffer *templat) {
+    __builtin_abort();
+}
+
+void *
+vl_video_buffer_get_associated_data(struct pipe_video_buffer *vbuf,
+                                    struct pipe_video_codec *vcodec) {
+    __builtin_abort();
+}
+
+void
+vl_video_buffer_set_associated_data(struct pipe_video_buffer *vbuf,
+                                    struct pipe_video_codec *vcodec,
+                                    void *associated_data,
+                                    void (*destroy_associated_data)(void *)) {
+    __builtin_abort();
+}
+
+bool
+vl_video_buffer_is_format_supported(struct pipe_screen *screen,
+                                    int format,
+                                    int profile,
+                                    int entrypoint) {
+    __builtin_abort();
+}
