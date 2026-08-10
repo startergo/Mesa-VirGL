@@ -24,7 +24,8 @@
 #include "u_qsort.h"
 #include <thread>
 
-/* thread_local removed for 10.6 cross-build: unsupported on macOS < 10.7.
+#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+/* macOS 10.6 lacks TLS runtime: single-threaded fallback only.
  * Plain static is a theoretical race if called concurrently from multiple
  * threads. In practice qsort_r emulation is only used on platforms that
  * lack the native function, and Mesa's usage is not concurrent.
@@ -32,6 +33,10 @@
  * never execute at runtime anyway. */
 static int (*tl_qsort_r_compar)(const void *, const void *, void *);
 static void *tl_qsort_r_arg;
+#else
+thread_local int (*tl_qsort_r_compar)(const void *, const void *, void *);
+thread_local void *tl_qsort_r_arg;
+#endif
 
 static int
 qsort_r_compar(const void *a, const void *b)

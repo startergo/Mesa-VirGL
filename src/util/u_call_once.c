@@ -11,11 +11,15 @@ struct util_call_once_context_t
    util_call_once_data_func func;
 };
 
-/* thread_local removed for 10.6 cross-build: unsupported on macOS < 10.7.
+#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+/* macOS 10.6 lacks TLS runtime: single-threaded fallback only.
  * Plain static is a theoretical race if two different once_flags initialize
  * concurrently. In practice Mesa's call_once paths are not concurrent.
  * For a proper fix: pthread_key_create/pthread_getspecific. */
 static struct util_call_once_context_t call_once_context;
+#else
+static thread_local struct util_call_once_context_t call_once_context;
+#endif
 
 static void
 util_call_once_data_slow_once(void)
