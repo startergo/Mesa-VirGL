@@ -27,6 +27,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* strnlen compat: macOS < 10.7 doesn't declare it */
+extern size_t strnlen(const char *s, size_t maxlen);
 
 #include "util/list.h"
 #include "util/macros.h"

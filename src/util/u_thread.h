@@ -46,10 +46,18 @@
  * expensive pthread_getspecific() or its equivalent).
  */
 #if DETECT_OS_APPLE
+#  if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+     /* TLS (__thread / thread_local) requires macOS 10.7+ dyld support.
+      * On 10.6, define empty to fall through to the non-TLS dispatch path
+      * (_glapi_Dispatch / _glapi_Context plain globals). Single-threaded only;
+      * multi-threaded GL would need pthread_key_create/pthread_getspecific. */
+#    define __THREAD_INITIAL_EXEC
+#  else
 /* Apple Clang emits wrappers when using thread_local that break module linkage,
  * but not with __thread
  */
-#define __THREAD_INITIAL_EXEC __thread
+#    define __THREAD_INITIAL_EXEC __thread
+#  endif
 #elif defined(__GLIBC__)
 #define __THREAD_INITIAL_EXEC thread_local __attribute__((tls_model("initial-exec")))
 #define REALLY_INITIAL_EXEC

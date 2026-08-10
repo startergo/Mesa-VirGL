@@ -84,7 +84,12 @@ files_mesa_util = files(
   'perf/u_trace_priv.h',
   'u_process.c',
   'u_process.h',
-  'u_qsort.cpp',
+  # u_qsort.cpp excluded for cross-10.6: it uses C++ thread_local which
+  # clang rejects for macOS < 10.7 even with -femulated-tls (C++ frontend
+  # has a separate TLS check). macOS has native BSD qsort_r since 10.5,
+  # so the emulation path is unnecessary. If the link fails for
+  # util_tls_qsort_r, restore this and patch the thread_locals to pthread keys.
+  #'u_qsort.cpp',
   'u_qsort.h',
   'rwlock.c',
   'rwlock.h',

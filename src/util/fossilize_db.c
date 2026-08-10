@@ -30,6 +30,9 @@
 
 #include "fossilize_db.h"
 
+/* strndup compat: macOS < 10.7 doesn't declare or define it */
+extern char *strndup(const char *s, size_t n);
+
 #ifdef FOZ_DB_UTIL
 
 #include <assert.h>

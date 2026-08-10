@@ -1,11 +1,13 @@
 /*
- * clock_gettime compat for macOS < 10.12.
- * Compiled as a separate translation unit to avoid -include on assembly files.
- * CLOCK_REALTIME / CLOCK_MONOTONIC are defined via -D in the cross file.
+ * OS compat shims for macOS 10.6.
+ * Compiled as a separate translation unit, linked via the cross file.
  */
 #include <sys/time.h>
 #include <time.h>
+#include <string.h>
+#include <stdlib.h>
 
+/* clock_gettime — macOS 10.12+ */
 int clock_gettime(int clk_id, struct timespec *ts)
 {
     struct timeval tv;
@@ -13,4 +15,22 @@ int clock_gettime(int clk_id, struct timespec *ts)
     ts->tv_sec = tv.tv_sec;
     ts->tv_nsec = (long)tv.tv_usec * 1000;
     return 0;
+}
+
+/* strndup — macOS 10.7+ */
+char *strndup(const char *s, size_t n)
+{
+    size_t len = strlen(s);
+    if (len > n) len = n;
+    char *p = (char *)malloc(len + 1);
+    if (p) { memcpy(p, s, len); p[len] = '\0'; }
+    return p;
+}
+
+/* strnlen — macOS 10.7+ */
+size_t strnlen(const char *s, size_t maxlen)
+{
+    size_t len = 0;
+    while (len < maxlen && s[len]) len++;
+    return len;
 }

@@ -26,6 +26,9 @@
 #include "memstream.h"
 
 #include <stdlib.h>
+#include <stdio.h>
+/* open_memstream compat: macOS < 10.13 doesn't declare it */
+extern FILE *open_memstream(char **buf, size_t *size);
 
 #ifdef _WIN32
 #include <windows.h>
