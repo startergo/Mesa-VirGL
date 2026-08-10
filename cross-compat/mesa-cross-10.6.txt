@@ -2,6 +2,7 @@
 c = 'clang'
 cpp = 'clang++'
 objc = 'clang'
+ar = '/usr/bin/ar'
 
 [built-in options]
 c_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-I/Users/macbookpro/Mesa-VirGL/cross-compat/compat-headers', '-fallow-unsupported', '-w', '-femulated-tls', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1', '-DO_CLOEXEC=0x01000000', '-Dstatic_assert=_Static_assert']
