@@ -1520,7 +1520,7 @@ if with_gallium_i915 and host_machine.cpu_family().startswith('x86') == false
 endif
 
 # Determine whether or not the rt library is needed for time functions
-if host_machine.system() == 'windows' or cc.has_function('clock_gettime')
+if host_machine.system() == 'windows' or host_machine.system() == 'darwin' or cc.has_function('clock_gettime')
   dep_clock = null_dep
 else
   dep_clock = cc.find_library('rt')

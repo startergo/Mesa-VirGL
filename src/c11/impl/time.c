@@ -30,6 +30,11 @@
 
 #include "c11/time.h"
 
+/* clock_gettime compat: macOS < 10.12 doesn't declare or define it in <time.h>.
+ * The implementation is provided externally (cross-compat/clock_gettime_compat.o)
+ * via gettimeofday(). On newer systems this is a harmless compatible redeclaration. */
+extern int clock_gettime(int clk_id, struct timespec *ts);
+
 #ifdef _TIMESPEC_GET_NEED_IMPL
 
 #if defined(_WIN32) && !defined(HAVE_PTHREAD)

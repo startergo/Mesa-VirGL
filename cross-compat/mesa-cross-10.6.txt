@@ -1,0 +1,17 @@
+[binaries]
+c = 'clang'
+cpp = 'clang++'
+objc = 'clang'
+
+[built-in options]
+c_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1']
+cpp_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-std=c++17', '-nostdinc++', '-isystem', '/Users/macbookpro/leopard-webkit-build/dist/libcxx/include', '-DHAVE_STRUCT_TIMESPEC', '-DHAVE_PTHREAD', '-DCLOCK_REALTIME=0', '-DCLOCK_MONOTONIC=1']
+objc_args = ['-target', 'x86_64-apple-macos10.6', '-arch', 'x86_64', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported']
+c_link_args = ['-target', 'x86_64-apple-macos10.6', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-L/Users/macbookpro/leopard-webkit-build/dist/libcxx/lib', '/Users/macbookpro/Mesa-VirGL/cross-compat/clock_gettime_compat.o']
+cpp_link_args = ['-target', 'x86_64-apple-macos10.6', '-isysroot', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk', '-fallow-unsupported', '-L/Users/macbookpro/leopard-webkit-build/dist/libcxx/lib', '-lc++', '/Users/macbookpro/Mesa-VirGL/cross-compat/clock_gettime_compat.o']
+
+[host_machine]
+system = 'darwin'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
