@@ -25,25 +25,32 @@ typedef int drmDevicePtr;
 typedef struct drm_version *drmVersionPtr;
 #endif
 
-/* Additional DRM function stubs needed by VirGL */
+/* Additional DRM function stubs needed by VirGL — all abort.
+ * These are unreachable on macOS (vtest winsys is the active path).
+ * See drmIoctl comment above for the fail-loud rationale. */
 static inline int drmPrimeFDToHandle(int fd, int prime_fd, uint32_t *handle) {
-    return -1;
+    abort();
 }
 
 static inline int drmPrimeHandleToFD(int fd, uint32_t handle, uint32_t flags, int *prime_fd) {
-    return -1;
+    abort();
 }
 
 static inline drmVersionPtr drmGetVersion(int fd) {
-    return NULL;
+    abort();
 }
 
 static inline void drmFreeVersion(drmVersionPtr version) {
+    abort();
 }
 
-/* Main DRM ioctl stub */
+/* Main DRM ioctl stub — must abort, not return success.
+ * If the DRM winsys is ever selected at runtime on macOS, something is
+ * fundamentally wrong. Returning 0 would produce the exact silent-failure
+ * pattern that cost this project weeks on submitCommand (reported success,
+ * did nothing). An abort turns the mystery into a stack trace. */
 static inline int drmIoctl(int fd, unsigned long request, void *arg) {
-    return 0;
+    abort();
 }
 
 #endif

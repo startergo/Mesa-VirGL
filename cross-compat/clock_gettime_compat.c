@@ -34,3 +34,14 @@ size_t strnlen(const char *s, size_t maxlen)
     while (len < maxlen && s[len]) len++;
     return len;
 }
+
+/* open_memstream — macOS 10.13+. Minimal implementation using tmpfile. */
+#include <stdio.h>
+FILE *open_memstream(char **bufp, size_t *sizep)
+{
+    FILE *f = tmpfile();
+    if (!f) return NULL;
+    *bufp = NULL;
+    *sizep = 0;
+    return f;
+}
