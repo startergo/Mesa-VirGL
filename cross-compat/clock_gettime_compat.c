@@ -36,6 +36,20 @@
 #include <mach/mach_time.h>
 #include <stdio.h>
 
+/* The 10.6 SDK has no clockid_t / CLOCK_* macros. The cross file's c_args
+ * defines CLOCK_REALTIME=0 and CLOCK_MONOTONIC=1, but step 1 of build_10.6.md
+ * compiles this file standalone (no -D flags), so define them here if the
+ * SDK / compile flags haven't already. Values match macOS. */
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME 0
+#endif
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 1
+#endif
+#ifndef CLOCK_MONOTONIC_RAW
+#define CLOCK_MONOTONIC_RAW 2
+#endif
+
 /* ------------------------------------------------------------------ */
 /* clock_gettime — macOS 10.12+                                       */
 /* ------------------------------------------------------------------ */
