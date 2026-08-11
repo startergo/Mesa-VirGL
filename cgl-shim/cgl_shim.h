@@ -54,6 +54,13 @@ struct shim_ctx {
     /* For bounds-check resize detection in -flushBuffer. */
     int last_view_w;
     int last_view_h;
+
+    /* Coalescing flag: prevents unbounded dispatch_async accumulation
+     * when the main thread falls behind under TCG. Set under lock
+     * before enqueueing; cleared by the presentation block under lock.
+     * If already set when -flushBuffer fires, skip the enqueue — the
+     * pending present will pick up the latest buffer. */
+    int present_pending;
 };
 
 /* Registry of shim contexts. Membership is tested by POINTER VALUE —

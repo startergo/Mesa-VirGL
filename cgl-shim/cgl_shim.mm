@@ -82,7 +82,10 @@ static void shim_present(NSOpenGLContext *nsc)
     NSRect bounds = [view bounds];
     if (bounds.size.width < 1 || bounds.size.height < 1) return;
 
+    /* Clear the coalescing flag under the lock — next -flushBuffer
+     * will enqueue a new present. */
     pthread_mutex_lock(&sc->lock);
+    sc->present_pending = 0;
     unsigned char *planes[1] = { (unsigned char *)sc->present_buf };
     NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:planes
@@ -246,13 +249,21 @@ static void shim_present(NSOpenGLContext *nsc)
      * writes into the buffer the main thread is reading. */
     OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
                       sc->width, sc->height);
+
+    /* Coalesce: if a present is already queued, don't enqueue another.
+     * The pending present will pick up the latest buffer. Without this,
+     * dispatch_async blocks accumulate without bound under TCG. */
+    int should_enqueue = !sc->present_pending;
+    sc->present_pending = 1;
     pthread_mutex_unlock(&sc->lock);
 
     /* Trigger presentation on main thread */
-    NSOpenGLContext *ctxForPresent = self;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        shim_present(ctxForPresent);
-    });
+    if (should_enqueue) {
+        NSOpenGLContext *ctxForPresent = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            shim_present(ctxForPresent);
+        });
+    }
 }
 
 - (void)shim_setView:(NSView *)view
