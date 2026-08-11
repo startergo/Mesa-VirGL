@@ -102,7 +102,21 @@ static void shim_present(NSOpenGLContext *nsc)
 
     if (!rep) return;
 
+    /* Diagnostic: print first pixel's values on first few presents */
+    static int present_count = 0;
+    if (present_count < 3) {
+        unsigned char *px = (unsigned char *)sc->present_buf;
+        fprintf(stderr, "cgl_shim: present[%d] %dx%d first pixel RGBA(%d,%d,%d,%d)\n",
+                present_count, sc->width, sc->height, px[0], px[1], px[2], px[3]);
+        present_count++;
+    }
+
+    /* Draw using the killtest's exact pattern: saveGraphicsContext /
+     * setCurrentContext / drawInRect / restoreGraphicsContext. The
+     * setCurrentContext call is essential on 10.6 — without it,
+     * drawInRect has no valid target context. */
     [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithWindow:[view window]]];
     [rep drawInRect:bounds
            fromRect:NSMakeRect(0, 0, sc->width, sc->height)
           operation:NSCompositeCopy
@@ -111,6 +125,7 @@ static void shim_present(NSOpenGLContext *nsc)
               hints:nil];
     [NSGraphicsContext restoreGraphicsState];
     [rep release];
+
     [view setNeedsDisplay:YES];
 }
 
@@ -154,7 +169,7 @@ static void shim_present(NSOpenGLContext *nsc)
     if (!sc) { return self; }
 
     sc->magic = SHIM_MAGIC;
-    sc->osmesa_ctx = OSMesaCreateContextExt(OSMESA_BGRA, 16, 0, 0, NULL);
+    sc->osmesa_ctx = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0, NULL);
     if (!sc->osmesa_ctx) {
         free(sc);
         return self;
@@ -239,7 +254,15 @@ static void shim_present(NSOpenGLContext *nsc)
     }
 
     /* --- Compositor-thread marshalling (design problem #1) --- */
-    glFinish();  /* simple-correct; fence would be the optimisation */
+    glFinish();  /* flush Mesa's command queue to the host */
+
+    /* Force readback from host GPU to guest buffer. virgl renders on the
+     * host; the guest-side OSMesa buffer only gets the pixels when a
+     * TRANSFER_FROM_HOST_3D fires. softpipe renders directly into the
+     * guest buffer and doesn't need this. Without it, present_buf stays
+     * zero-filled and the window shows white. */
+    glReadPixels(0, 0, sc->width, sc->height, GL_RGBA, GL_UNSIGNED_BYTE,
+                 sc->render_buf);
 
     pthread_mutex_lock(&sc->lock);
     /* Swap render and present buffers */
