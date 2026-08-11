@@ -168,6 +168,9 @@ if with_gallium_virgl
     subdir('winsys/virgl/drm')
     subdir('winsys/virgl/vtest')
   endif
+  if host_machine.system() == 'darwin'
+    subdir('winsys/virgl/iokit')
+  endif
   subdir('drivers/virgl')
 else
   driver_virgl = declare_dependency()

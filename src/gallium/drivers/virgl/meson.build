@@ -29,6 +29,9 @@ if not with_platform_windows
   virgl_deps += libvirgldrm
   virgl_deps += libvirglvtest
 endif
+if host_machine.system() == 'darwin'
+  virgl_deps += libvirgliokit
+endif
 
 driver_virgl = declare_dependency(
   compile_args : '-DGALLIUM_VIRGL',
