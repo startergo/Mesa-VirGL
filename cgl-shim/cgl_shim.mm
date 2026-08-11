@@ -106,7 +106,9 @@ static void shim_present(NSOpenGLContext *nsc)
     [rep drawInRect:bounds
            fromRect:NSMakeRect(0, 0, sc->width, sc->height)
           operation:NSCompositeCopy
-           fraction:1.0f];
+           fraction:1.0f
+     respectFlipped:NO
+              hints:nil];
     [NSGraphicsContext restoreGraphicsState];
     [rep release];
     [view setNeedsDisplay:YES];
