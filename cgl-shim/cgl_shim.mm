@@ -16,6 +16,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <OpenGL/OpenGL.h>
+#import <QuartzCore/QuartzCore.h>
 #include <objc/runtime.h>
 #include <GL/gl.h>
 #include <GL/osmesa.h>
@@ -73,60 +74,39 @@ static void free_buffers(struct shim_ctx *sc)
 
 /* --- Presentation (runs on main thread via dispatch_async) --- */
 
+/* Associated object key for present_buf on the view (for drawRect swizzle) */
+static char kPresentBufKey;
+static char kPresentSizeKey;
+#define PRESENT_BUF_KEY (&kPresentBufKey)
+#define PRESENT_SIZE_KEY (&kPresentSizeKey)
+
 static void shim_present(NSOpenGLContext *nsc)
 {
     struct shim_ctx *sc = get_shim_ctx(nsc);
     if (!sc || !sc->present_buf || !sc->view) return;
 
     NSView *view = (NSView *)sc->view;
-    NSRect bounds = [view bounds];
-    if (bounds.size.width < 1 || bounds.size.height < 1) return;
 
-    /* Clear the coalescing flag under the lock — next -flushBuffer
-     * will enqueue a new present. */
+    /* Clear the coalescing flag, store present_buf on the view for
+     * drawRect to pick up. */
     pthread_mutex_lock(&sc->lock);
     sc->present_pending = 0;
-    unsigned char *planes[1] = { (unsigned char *)sc->present_buf };
-    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
-        initWithBitmapDataPlanes:planes
-                      pixelsWide:sc->width
-                      pixelsHigh:sc->height
-                   bitsPerSample:8
-                 samplesPerPixel:4
-                        hasAlpha:YES
-                        isPlanar:NO
-                  colorSpaceName:NSDeviceRGBColorSpace
-                     bytesPerRow:sc->width * 4
-                    bitsPerPixel:32];
+
+    NSData *bufData = [NSData dataWithBytesNoCopy:sc->present_buf
+                                           length:(NSUInteger)(sc->width * sc->height * 4)
+                                     freeWhenDone:NO];
+    NSDictionary *sizeDict = [NSDictionary dictionaryWithObjectsAndKeys:
+                              [NSNumber numberWithInt:sc->width], @"w",
+                              [NSNumber numberWithInt:sc->height], @"h", nil];
+    objc_setAssociatedObject(view, PRESENT_BUF_KEY, bufData, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(view, PRESENT_SIZE_KEY, sizeDict, OBJC_ASSOCIATION_RETAIN);
+
     pthread_mutex_unlock(&sc->lock);
 
-    if (!rep) return;
-
-    /* Diagnostic: print first pixel's values on first few presents */
-    static int present_count = 0;
-    if (present_count < 3) {
-        unsigned char *px = (unsigned char *)sc->present_buf;
-        fprintf(stderr, "cgl_shim: present[%d] %dx%d first pixel RGBA(%d,%d,%d,%d)\n",
-                present_count, sc->width, sc->height, px[0], px[1], px[2], px[3]);
-        present_count++;
-    }
-
-    /* Draw using the killtest's exact pattern: saveGraphicsContext /
-     * setCurrentContext / drawInRect / restoreGraphicsContext. The
-     * setCurrentContext call is essential on 10.6 — without it,
-     * drawInRect has no valid target context. */
-    [NSGraphicsContext saveGraphicsState];
-    [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithWindow:[view window]]];
-    [rep drawInRect:bounds
-           fromRect:NSMakeRect(0, 0, sc->width, sc->height)
-          operation:NSCompositeCopy
-           fraction:1.0f
-     respectFlipped:NO
-              hints:nil];
-    [NSGraphicsContext restoreGraphicsState];
-    [rep release];
-
-    [view setNeedsDisplay:YES];
+    /* Trigger drawRect on the main thread */
+    [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
+                           withObject:[NSNumber numberWithBool:YES]
+                        waitUntilDone:NO];
 }
 
 /* ===================================================================
@@ -154,19 +134,19 @@ static void shim_present(NSOpenGLContext *nsc)
 
 - (id)shim_initWithFormat:(NSOpenGLPixelFormat *)fmt shareContext:(NSOpenGLContext *)share
 {
-    /* Call original to get a real NSOpenGLContext object. We need the
-     * object for AppKit state tracking, but we'll route GL through OSMesa. */
+    /* Call original to get a valid NSOpenGLContext object with AppKit
+     * ivars initialized. We need this for AppKit state tracking; we'll
+     * route GL through OSMesa. The CGL context is created but we never
+     * call through to original -setView:, so no CGS GL surface should
+     * be bound. */
     self = [self shim_initWithFormat:fmt shareContext:share];
     if (!self) return nil;
 
-    /* Set GALLIUM_DRIVER if not already set. softpipe is the default
-     * fallback; virgl is the target. */
     if (!getenv("GALLIUM_DRIVER"))
         setenv("GALLIUM_DRIVER", "virgl", 0);
 
-    /* Create the shim context state. */
     struct shim_ctx *sc = (struct shim_ctx *)calloc(1, sizeof(struct shim_ctx));
-    if (!sc) { return self; }
+    if (!sc) return self;
 
     sc->magic = SHIM_MAGIC;
     sc->osmesa_ctx = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0, NULL);
@@ -175,14 +155,12 @@ static void shim_present(NSOpenGLContext *nsc)
         return self;
     }
 
-    /* Start with a 1x1 buffer; reallocated on -setView: or -flushBuffer. */
     alloc_buffers(sc, 1, 1);
     OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE, 1, 1);
     pthread_mutex_init(&sc->lock, NULL);
     sc->last_view_w = -1;
     sc->last_view_h = -1;
 
-    /* Register for CGL token lookup and store on the context. */
     shim_register(sc);
     set_shim_ctx(self, sc);
 
@@ -351,9 +329,12 @@ static void shim_present(NSOpenGLContext *nsc)
 
 - (void)shim_setValues:(const GLint *)vals forParameter:(NSOpenGLContextParameter)param
 {
-    /* Most parameters are no-ops for OSMesa. Pass through to original
-     * for AppKit bookkeeping. */
-    [self shim_setValues:vals forParameter:param];
+    struct shim_ctx *sc = get_shim_ctx(self);
+    if (sc) {
+        /* No-op for shim contexts — no CGL context to configure. */
+    } else {
+        [self shim_setValues:vals forParameter:param];  /* original */
+    }
 }
 
 - (CGLContextObj)shim_CGLContextObj
@@ -365,6 +346,66 @@ static void shim_present(NSOpenGLContext *nsc)
         return (CGLContextObj)sc;
     }
     return [self shim_CGLContextObj];  /* original for non-shim */
+}
+
+@end
+
+/* ===================================================================
+ * NSView drawRect swizzle — draws present_buf into the view when
+ * the system calls drawRect during the display cycle.
+ * =================================================================== */
+
+@interface NSView (CGLShimDraw)
+- (void)shim_drawRect:(NSRect)dirtyRect;
+@end
+
+@implementation NSView (CGLShimDraw)
+
+- (void)shim_drawRect:(NSRect)dirtyRect
+{
+    /* Check if this view has a present buffer (only shim-attached views do). */
+    NSData *bufData = objc_getAssociatedObject(self, PRESENT_BUF_KEY);
+    NSDictionary *sizeDict = objc_getAssociatedObject(self, PRESENT_SIZE_KEY);
+    if (bufData && sizeDict) {
+        int w = [[sizeDict objectForKey:@"w"] intValue];
+        int h = [[sizeDict objectForKey:@"h"] intValue];
+        const void *buf = [bufData bytes];
+
+        /* Draw present_buf via NSBitmapImageRep — same pattern as killtest */
+        unsigned char *planes[1] = { (unsigned char *)buf };
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+            initWithBitmapDataPlanes:planes
+                          pixelsWide:w
+                          pixelsHigh:h
+                       bitsPerSample:8
+                     samplesPerPixel:4
+                            hasAlpha:YES
+                            isPlanar:NO
+                      colorSpaceName:NSDeviceRGBColorSpace
+                         bytesPerRow:w * 4
+                        bitsPerPixel:32];
+        if (rep) {
+            [rep drawInRect:[self bounds]
+                   fromRect:NSMakeRect(0, 0, w, h)
+                  operation:NSCompositeCopy
+                   fraction:1.0f
+             respectFlipped:YES
+                      hints:nil];
+            [rep release];
+        }
+        /* Diagnostic */
+        static int draw_count = 0;
+        if (draw_count < 3) {
+            fprintf(stderr, "cgl_shim: drawRect[%d] %dx%d pixel RGBA(%d,%d,%d,%d)\n",
+                    draw_count, w, h,
+                    ((unsigned char *)buf)[0], ((unsigned char *)buf)[1],
+                    ((unsigned char *)buf)[2], ((unsigned char *)buf)[3]);
+            draw_count++;
+        }
+    }
+
+    /* Call original drawRect for non-shim views */
+    [self shim_drawRect:dirtyRect];
 }
 
 @end
@@ -422,6 +463,11 @@ static void swizzle_class_method(Class cls, SEL originalSel, SEL shimSel)
                               @selector(shim_currentContext));
     swizzle_class_method(cls, @selector(clearCurrentContext),
                               @selector(shim_clearCurrentContext));
+
+    /* Swizzle NSView drawRect for presentation path */
+    Class viewCls = [NSView class];
+    swizzle_method(viewCls, @selector(drawRect:),
+                        @selector(shim_drawRect:));
 
     fprintf(stderr, "cgl_shim: swizzles installed (GALLIUM_DRIVER=%s)\n",
             getenv("GALLIUM_DRIVER") ?: "(unset)");
