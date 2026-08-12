@@ -260,8 +260,15 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
    if (readback) {
       /* If we are performing readback for textures and renderer supports
        * copy_transfer_from_host, then we can return here with proper map.
-       */
-      if (res->use_staging) {
+       *
+       * A/B gate: also require vctx->supports_staging. virgl_can_use_staging
+       * (which sets res->use_staging) is gated on host caps only; this flag
+       * is gated on vws->supports_encoded_transfers + host caps. Without
+       * the vctx check here, the staging path is taken but
+       * virgl_staging_map asserts supports_staging — they desync when
+       * supports_encoded_transfers=0. This gate makes the path choice
+       * robust to either setting. */
+      if (res->use_staging && vctx->supports_staging) {
          if (xfer->base.usage & PIPE_MAP_READ)
             return VIRGL_TRANSFER_MAP_READ_FROM_STAGING;
          else
@@ -307,7 +314,7 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
    if (wait)
       vws->resource_wait(vws, res->hw_res);
 
-   if (res->use_staging) {
+   if (res->use_staging && vctx->supports_staging) {
       map_type = VIRGL_TRANSFER_MAP_WRITE_TO_STAGING;
    }
 

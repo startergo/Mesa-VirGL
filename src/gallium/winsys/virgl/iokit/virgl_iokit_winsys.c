@@ -563,6 +563,19 @@ virgl_iokit_winsys_wrap(struct sw_winsys *sws)
    /* Data fields */
    iws->base.pci_id                   = 0;
    iws->base.supports_fences          = 0;
+   /* drm and vtest both set this to 1 (upstream convention) but our iokit
+    * transport diverges: with =1, virgl takes the staging transfer path
+    * (encode COPY_TRANSFER into submit_cmd, flush, wait) and pixels come
+    * back RGBA(0,0,0,0) — the host isn't executing the encoded transfers
+    * the way virgl expects on this transport. With =0, the direct
+    * transfer_get path is taken, pixels are byte-exact, and wall time
+    * drops from 683 ms to 347 ms (n=13 vs n=32, consistent v2 caps both
+    * sides via the get_caps capset_id=2 fix).
+    *
+    * The divergence is justified by correctness first (staging produces
+    * no rendering here), perf second. The driver-robustness gates in
+    * virgl_resource.c (virgl_can_use_staging + transfer_prepare) make
+    * either value safe against the assertion; they stay regardless. */
    iws->base.supports_encoded_transfers = 0;
    iws->base.supports_coherent        = 0;
 
