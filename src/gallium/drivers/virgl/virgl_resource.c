@@ -84,7 +84,19 @@ static bool virgl_can_readback_from_scanout(struct virgl_screen *vs,
 static bool virgl_can_use_staging(struct virgl_screen *vs,
                                   struct virgl_resource *res)
 {
+   /* Host must advertise COPY_TRANSFER_BOTH_DIRECTIONS (v2 cap) AND the
+    * winsys must support encoded transfers — otherwise resources get
+    * allocated with alloc_size=1 (staging assumes a tiny placeholder is
+    * fine because transfers go through a staging buffer), but the actual
+    * transfer path can't use staging and falls back to direct readback,
+    * which memcpy's megabytes into the 1-byte allocation and crashes.
+    *
+    * The vctx-level supports_staging check in transfer_prepare catches
+    * the transfer-path side; this catches the allocation side. Both
+    * are needed for supports_encoded_transfers=0 to be a consistent
+    * non-staging mode. */
    return (vs->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS) &&
+         vs->vws->supports_encoded_transfers &&
          (res->b.target != PIPE_BUFFER);
 }
 
