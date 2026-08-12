@@ -19,9 +19,28 @@
  * scalar output — the winsys never picks IDs.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
+
+/* Diagnostic instrumentation gate. Set VIRGL_IOKIT_DEBUG=1 in the guest
+ * environment to enable per-call fprintfs (submit_cmd cdw, transfer_put/get
+ * box dims, winsys_wrap ENTRY). Off by default so steady-state logs stay
+ * clean. Matches the SHIM_TIMING pattern in cgl_shim.mm. Keep the gating
+ * rather than the unconditional prints — these call counts are how the
+ * "5 submitCommand calls per frame" and "2 redundant transfer_get per
+ * frame" findings were established, and they're needed again for the
+ * IOSleep poll-loop investigation. */
+static int
+virgl_iokit_debug(void) {
+   static int g_debug = -1;
+   if (g_debug == -1)
+      g_debug = getenv("VIRGL_IOKIT_DEBUG") != NULL;
+   return g_debug;
+}
+#define iokit_dbg(...) do { if (virgl_iokit_debug()) fprintf(stderr, __VA_ARGS__); } while (0)
 
 #include "util/macros.h"
 #include "util/u_memory.h"
@@ -225,6 +244,8 @@ virgl_iokit_transfer_put(struct virgl_winsys *vws,
                          uint32_t buf_offset, uint32_t level)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   iokit_dbg("iokit: transfer_put res=%u box=%ux%ux%u\n",
+             res->res_handle, box->width, box->height, box->depth);
    uint64_t in[9] = {
       res->res_handle, level,
       box->x, box->y, box->z,
@@ -245,6 +266,8 @@ virgl_iokit_transfer_get(struct virgl_winsys *vws,
                          uint32_t buf_offset, uint32_t level)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   iokit_dbg("iokit: transfer_get res=%u box=%ux%ux%u\n",
+             res->res_handle, box->width, box->height, box->depth);
    uint64_t in[9] = {
       res->res_handle, level,
       box->x, box->y, box->z,
@@ -361,6 +384,8 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
 
    if (cbuf->base.cdw == 0)
       return 0;
+
+   iokit_dbg("iokit: submit_cmd cdw=%u\n", cbuf->base.cdw);
 
    uint64_t ctx_scalar = iws->ctx_id;
    kr = IOConnectCallMethod(iws->connect, IOKIT_SUBMIT_CMDS,
@@ -488,6 +513,9 @@ virgl_iokit_winsys_wrap(struct sw_winsys *sws)
 {
    struct virgl_iokit_winsys *iws;
    kern_return_t kr;
+
+   iokit_dbg("virgl_iokit: winsys_wrap ENTRY sws=%p thread=%p\n",
+             (void*)sws, (void*)pthread_self());
 
    iws = CALLOC_STRUCT(virgl_iokit_winsys);
    if (!iws)
