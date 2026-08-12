@@ -217,14 +217,30 @@ static void shim_timing_record_flush(struct shim_ctx *sc)
     g_timing.has_last_t1 = 1;
 
     if (g_timing_verbose) {
-        fprintf(stderr,
-            "cgl_shim: frame[%u] wall=%.2f submit=%.2f transfer=%.2f lock=%.2f ms  size=%lluB\n",
-            g_timing.flush_count,
-            have_wall ? shim_ticks_to_ms(wall_d) : 0.0,
-            shim_ticks_to_ms(submit_d),
-            shim_ticks_to_ms(transfer_d),
-            shim_ticks_to_ms(lock_d),
-            (unsigned long long)size_bytes);
+        /* Include t1_abs for first 10 frames so it pairs with KT_T0 from
+         * killtest (top of renderFrame). Diff = unmeasured span. */
+        static int s_t1_abs_log = 0;
+        if (s_t1_abs_log < 10) {
+            fprintf(stderr,
+                "cgl_shim: frame[%u] wall=%.2f submit=%.2f transfer=%.2f lock=%.2f ms  size=%lluB t1_abs=%llu\n",
+                g_timing.flush_count,
+                have_wall ? shim_ticks_to_ms(wall_d) : 0.0,
+                shim_ticks_to_ms(submit_d),
+                shim_ticks_to_ms(transfer_d),
+                shim_ticks_to_ms(lock_d),
+                (unsigned long long)size_bytes,
+                (unsigned long long)g_timing.t1);
+            s_t1_abs_log++;
+        } else {
+            fprintf(stderr,
+                "cgl_shim: frame[%u] wall=%.2f submit=%.2f transfer=%.2f lock=%.2f ms  size=%lluB\n",
+                g_timing.flush_count,
+                have_wall ? shim_ticks_to_ms(wall_d) : 0.0,
+                shim_ticks_to_ms(submit_d),
+                shim_ticks_to_ms(transfer_d),
+                shim_ticks_to_ms(lock_d),
+                (unsigned long long)size_bytes);
+        }
     }
 
     if (g_timing.warmup_settled) {

@@ -114,13 +114,39 @@
 - (void)renderFrame:(NSTimer *)t {
     (void)t;
 
-    // Same animated triangle as the original killtest.
-    static float phase = 0.0f;
-    phase += 0.02f;
+    // T0 at the top of the render loop — pairs with the shim's T1 (just
+    // before glFinish inside flushBuffer) to close the unmeasured span.
+    // Same process as the shim (loaded via DYLD_INSERT_LIBRARIES), so
+    // mach_absolute_time() is directly comparable. Pair the Nth KT_T0
+    // with the Nth shim frame[] log in post-processing.
+    uint64_t t0 = mach_absolute_time();
+
+    // Time-based rotation: constant angular velocity regardless of frame rate.
+    // Makes the killtest an honest visual indicator — smooth at high fps,
+    // juddery at low fps, but always the same wall-clock time per revolution.
+    // A frame-rate improvement (e.g. poll-loop fix) visibly smooths without
+    // changing speed. Same GL commands per frame regardless of the angle.
+    static mach_timebase_info_data_t spin_tbi;
+    if (spin_tbi.denom == 0) mach_timebase_info(&spin_tbi);
+    uint64_t spin_now = mach_absolute_time();
+    double elapsed_s = (double)(spin_now - mStartTime) *
+                       (double)spin_tbi.numer / (double)spin_tbi.denom / 1e9;
+    float angle_deg = (float)(elapsed_s * 60.0); // 60 deg/s → one rev per 6s
+
+    // Log T0 (gated to first 10 frames — same pattern as shim's diagnostics).
+    // Absolute mach_absolute_time so it pairs directly with the shim's t1_abs.
+    {
+        static int s_t0_log = 0;
+        if (s_t0_log < 10) {
+            fprintf(stderr, "KT_T0[%d] abs=%llu\n",
+                    s_t0_log, (unsigned long long)t0);
+            s_t0_log++;
+        }
+    }
 
     glClear(GL_COLOR_BUFFER_BIT);
     glLoadIdentity();
-    glRotatef(phase * 57.2957795f, 0.0f, 0.0f, 1.0f);
+    glRotatef(angle_deg, 0.0f, 0.0f, 1.0f);
     glBegin(GL_TRIANGLES);
         glColor3f(0.9f, 0.2f, 0.2f); glVertex2f( 0.0f,  0.6f);
         glColor3f(0.2f, 0.9f, 0.2f); glVertex2f(-0.6f, -0.4f);
