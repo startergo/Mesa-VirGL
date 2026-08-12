@@ -387,40 +387,56 @@ virgl_iokit_get_caps(struct virgl_winsys *vws, struct virgl_drm_caps *caps)
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
    virgl_ws_fill_new_caps_defaults(caps);
 
-   /* Query capset index 0 (VIRGL id=1, v1, size=308) and index 1 (VIRGL2). */
-   for (uint32_t idx = 0; idx < 2; idx++) {
-      uint64_t in[1] = { idx };
-      uint64_t out[3] = { 0, 0, 0 };
-      uint32_t out_cnt = 3;
-      kern_return_t kr = IOConnectCallMethod(iws->connect, IOKIT_GET_CAPSET_INFO,
-                                              in, 1, NULL, 0,
-                                              out, &out_cnt, NULL, NULL);
-      if (kr != KERN_SUCCESS)
-         continue;
+   /* Match the drm winsys pattern (virgl_drm_winsys.c:1011): try capset_id=2
+    * (VIRGL2, v2 layout, 1408 B — has host_feature_check_version, renderer,
+    * capability_bits_v2) first, fall back to capset_id=1 (VIRGL, v1, 308 B).
+    *
+    * The v2 capset is what Mesa actually expects — virgl_get_name reads
+    * caps.v2.renderer when host_feature_check_version >= 5, virgl_can_use_staging
+    * reads caps.v2.capability_bits_v2, etc. Querying by capset_id (not by
+    * capset_index) avoids depending on the host's index ordering.
+    *
+    * Prior version iterated indices 0..1 and used whatever idx=0 returned,
+    * which on this device is VIRGL (v1). That left every v2 field at the
+    * fill_new_caps_defaults value (host_feature_check_version=0, renderer=""),
+    * so glGetString(GL_RENDERER) returned plain "virgl" and the driver
+    * believed the host supports less than it does. */
+   for (uint32_t want_id = 2; want_id >= 1; want_id--) {
+      for (uint32_t idx = 0; idx < 2; idx++) {
+         uint64_t in[1] = { idx };
+         uint64_t out[3] = { 0, 0, 0 };
+         uint32_t out_cnt = 3;
+         kern_return_t kr = IOConnectCallMethod(iws->connect, IOKIT_GET_CAPSET_INFO,
+                                                 in, 1, NULL, 0,
+                                                 out, &out_cnt, NULL, NULL);
+         if (kr != KERN_SUCCESS)
+            continue;
 
-      uint32_t capset_id = out[0], capset_ver = out[1], capset_size = out[2];
-      if (capset_size == 0 || capset_size > 2048)
-         continue;
+         uint32_t capset_id = out[0], capset_ver = out[1], capset_size = out[2];
+         if (capset_size == 0 || capset_size > 2048)
+            continue;
+         if (capset_id != want_id)
+            continue;
 
-      /* Prefer VIRGL2 (id=2) if available — richer capset. */
-      if (capset_id != 2 && idx == 1)
-         continue;
+         uint8_t blob[2048];
+         size_t blob_sz = capset_size;
+         uint64_t cap_in[2] = { capset_id, capset_ver };
+         kr = IOConnectCallMethod(iws->connect, IOKIT_GET_CAPSET,
+                                  cap_in, 2, NULL, 0,
+                                  NULL, NULL, blob, &blob_sz);
+         if (kr != KERN_SUCCESS)
+            continue;
 
-      uint8_t blob[2048];
-      size_t blob_sz = capset_size;
-      uint64_t cap_in[2] = { capset_id, capset_ver };
-      kr = IOConnectCallMethod(iws->connect, IOKIT_GET_CAPSET,
-                               cap_in, 2, NULL, 0,
-                               NULL, NULL, blob, &blob_sz);
-      if (kr != KERN_SUCCESS)
-         continue;
-
-      uint32_t copy = MIN2((uint32_t)blob_sz, (uint32_t)sizeof(union virgl_caps));
-      memcpy(&caps->caps, blob, copy);
-      break;  /* Use the first capset that returns successfully */
+         uint32_t copy = MIN2((uint32_t)blob_sz, (uint32_t)sizeof(union virgl_caps));
+         memcpy(&caps->caps, blob, copy);
+         fprintf(stderr, "virgl_iokit: get_caps capset_id=%u ver=%u size=%u copy=%u\n",
+                 capset_id, capset_ver, (uint32_t)blob_sz, copy);
+         return 0;
+      }
    }
 
-   return 0;
+   fprintf(stderr, "virgl_iokit: get_caps — no capset returned by host\n");
+   return -1;
 }
 
 /* ===================================================================
