@@ -78,8 +78,7 @@ clang "${COMMON_CFLAGS[@]}" \
     -Wl,-reexport_library,"$SUBST_DIR/libOSMesa.8.dylib" \
     -Wl,-reexport_library,"$REAL_GL" \
     -Wl,-rpath,@loader_path \
-    -Wl,-rpath,@loader_path/../../../build-106/src/gallium/targets/osmesa \
-    -Wl,-rpath,@loader_path/../../../build-106/src/mapi/shared-glapi \
+    -Wl,-rpath,@loader_path/../../.. \
     -Wl,-not_for_dyld_shared_cache
 
 # ---------------------------------------------------------------- verify
