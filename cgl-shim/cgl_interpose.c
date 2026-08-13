@@ -162,8 +162,10 @@ const GLubyte *(*p_glGetString)(GLenum);
 void   (*p_glLoadIdentity)(void);
 void   (*p_glMatrixMode)(GLenum);
 void   (*p_glOrtho)(GLdouble, GLdouble, GLdouble, GLdouble, GLdouble, GLdouble);
+void   (*p_glPixelStorei)(GLenum, GLint);
 void   (*p_glReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *);
 void   (*p_glRotatef)(GLfloat, GLfloat, GLfloat, GLfloat);
+void   (*p_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *);
 void   (*p_glVertex2f)(GLfloat, GLfloat);
 void   (*p_glViewport)(GLint, GLint, GLsizei, GLsizei);
 
@@ -190,8 +192,10 @@ static void gl_interpose_init(void)
     GL_DLSYM(glLoadIdentity);
     GL_DLSYM(glMatrixMode);
     GL_DLSYM(glOrtho);
+    GL_DLSYM(glPixelStorei);
     GL_DLSYM(glReadPixels);
     GL_DLSYM(glRotatef);
+    GL_DLSYM(glTexImage2D);
     GL_DLSYM(glVertex2f);
     GL_DLSYM(glViewport);
 #undef GL_DLSYM

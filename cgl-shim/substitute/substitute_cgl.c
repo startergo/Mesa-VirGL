@@ -40,6 +40,13 @@ const uint32_t _objc_image_info[2] = { 0, 2 };
 #include <OpenGL/CGLTypes.h>
 #include <OpenGL/CGLCurrent.h>
 #include <OpenGL/OpenGL.h>
+#include <IOSurface/IOSurface.h>
+
+/* Mesa function pointers (defined in cgl_interpose.c, populated by its
+ * constructor via dlsym on libOSMesa). */
+extern void   (*p_glPixelStorei)(GLenum, GLint);
+extern void   (*p_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *);
+extern GLenum (*p_glGetError)(void);
 
 /* Private types not in public headers */
 typedef void *CGLShareGroupObj;
@@ -411,11 +418,23 @@ CGLSetParameter(CGLContextObj ctx, CGLContextParameter pname, const GLint *param
 }
 CGL_FORWARD(CGLSetSurface, CGLError, (CGLContextObj ctx, GLuint read_write, GLuint surface_id, GLenum surface_type, GLint width, GLint height), (ctx, read_write, surface_id, surface_type, width, height))
 CGL_FORWARD(CGLSetVirtualScreen, CGLError, (CGLContextObj ctx, GLint screen), (ctx, screen))
-/* CGLTexImageIOSurface2D: NOT forwarded. Forwarding passes our shim_ctx
- * token where the real CGL expects a CGLContextObj — it dereferences it,
- * which is a crash (or worse) on a struct it doesn't own. Our OSMesa
- * context cannot consume an IOSurface, so report the context as
- * unsupported and let Gecko fall back to its upload path. */
+/* CGLTexImageIOSurface2D: implemented as a CPU upload into the current
+ * OSMesa context. Never forwarded — forwarding passes our shim_ctx
+ * token where real CGL dereferences a CGLContextObj.
+ *
+ * Gecko's mac pixel input path: it renders into an IOSurface and binds
+ * it here. Without this, the compositor's textures stay empty and
+ * everything composites black (observed 2026-08-13: blit visible,
+ * content black). Details that matter:
+ *  - HONOUR the caller's target: Gecko binds rectangle textures
+ *    (GL_TEXTURE_RECTANGLE_ARB) and its shaders use sampler2DRect;
+ *    assuming GL_TEXTURE_2D draws nothing with no GL error.
+ *  - HONOUR format/type: Gecko's surfaces are BGRA with
+ *    GL_UNSIGNED_INT_8_8_8_8_REV.
+ *  - IOSurfaceLock with kIOSurfaceLockReadOnly.
+ * Cost note: this converts Gecko's zero-copy path into a full CPU copy
+ * per texture per frame, on top of the flushBuffer readback — correct
+ * first, optimize later. */
 CGLError
 CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
                        GLsizei width, GLsizei height, GLenum format, GLenum type,
@@ -423,14 +442,45 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
 {
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
+        IOSurfaceRef surf = (IOSurfaceRef)iosurface;
+        if (!surf || plane != 0)
+            return kCGLBadContext;
+
+        if (!OSMesaGetCurrentContext() || !p_glTexImage2D || !p_glPixelStorei) {
+            static int s_noc_log = 0;
+            if (s_noc_log++ < 5)
+                fprintf(stderr, "substitute_cgl: CGLTexImageIOSurface2D: no "
+                        "current OSMesa ctx / fn ptrs — declining\n");
+            return kCGLBadContext;
+        }
+
+        IOReturn kr = IOSurfaceLock(surf, kIOSurfaceLockReadOnly, NULL);
+        void *base = IOSurfaceGetBaseAddress(surf);
+        size_t bpr = IOSurfaceGetBytesPerRow(surf);
+        GLenum glerr = GL_NO_ERROR;
+        if (kr == kIOReturnSuccess && base && width > 0 && height > 0) {
+            size_t bpp = 4;
+            if (format == GL_RGB) bpp = 3;
+            /* else RGBA/BGRA 8-bit → 4 */
+            p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            p_glPixelStorei(GL_UNPACK_ROW_LENGTH,
+                            (GLint)(bpp ? bpr / bpp : bpr));
+            p_glTexImage2D(target, 0, (GLint)internal_format,
+                           width, height, 0, format, type, base);
+            p_glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glerr = p_glGetError();
+            IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
+        }
         static int s_iosf_log = 0;
         if (s_iosf_log < 5) {
             s_iosf_log++;
-            fprintf(stderr, "substitute_cgl: CGLTexImageIOSurface2D on shim "
-                    "ctx=%p %ldx%ld -> kCGLBadContext (IOSurface unsupported)\n",
-                    (void *)ctx, (long)width, (long)height);
+            fprintf(stderr, "substitute_cgl: CGLTexImageIOSurface2D ctx=%p "
+                    "target=0x%x fmt=0x%x type=0x%x %ldx%ld bpr=%lu "
+                    "glErr=0x%x lock=0x%x\n",
+                    (void *)ctx, target, format, type, (long)width,
+                    (long)height, (unsigned long)bpr, glerr, kr);
         }
-        return kCGLBadContext;
+        return (glerr == GL_NO_ERROR) ? kCGLNoError : kCGLBadContext;
     }
     static CGLError (*real)(CGLContextObj, GLenum, GLenum, GLsizei, GLsizei,
                             GLenum, GLenum, void *, GLuint);

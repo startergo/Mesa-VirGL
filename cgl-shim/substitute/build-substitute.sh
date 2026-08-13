@@ -73,6 +73,7 @@ clang "${COMMON_CFLAGS[@]}" \
     -L"$LIBCXX" \
     -framework Cocoa \
     -framework IOKit \
+    -framework IOSurface \
     -framework QuartzCore \
     -lglapi.0 \
     -Wl,-reexport_library,"$SUBST_DIR/libOSMesa.8.dylib" \

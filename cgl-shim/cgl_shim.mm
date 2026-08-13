@@ -334,6 +334,11 @@ static void shim_present(NSOpenGLContext *nsc)
  * now invokes the original).
  * =================================================================== */
 
+/* Forward declaration: defined in the +load section below; the lazy
+ * ChildView swizzle in shim_setView: runs before that point in the
+ * file. */
+static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
+
 @interface NSOpenGLContext (CGLShim)
 - (id)shim_initWithFormat:(NSOpenGLPixelFormat *)fmt shareContext:(NSOpenGLContext *)share;
 + (NSOpenGLContext *)shim_currentContext;
@@ -691,6 +696,33 @@ static void shim_present(NSOpenGLContext *nsc)
         if (view) [view retain];
         objc_assign_strongCast((id)view, (id *)&sc->view);
 
+        /* Lazily swizzle the ACTUAL Gecko view class's drawRect:.
+         * The NSView-level swizzle never runs under Gecko: ChildView
+         * overrides drawRect: and per-class dispatch lets the override
+         * win (observed: drawptr 0, blit no samples, white content
+         * area). The view arriving here IS the Gecko view instance,
+         * so [view class] is the exact class to patch. Only classes
+         * that genuinely override drawRect: (IMP differs from
+         * NSView's) are patched, so a plain NSView from another app
+         * doesn't consume the one-shot. One-time; the runtime locks
+         * method exchange internally. */
+        static int s_childview_done = 0;
+        if (!s_childview_done && view) {
+            Class cv = [view class];
+            Method m = class_getInstanceMethod(cv, @selector(drawRect:));
+            Method base = class_getInstanceMethod([NSView class],
+                                                  @selector(drawRect:));
+            if (m && base &&
+                method_getImplementation(m) != method_getImplementation(base)) {
+                swizzle_method(cv, @selector(drawRect:),
+                               @selector(shim_childViewDrawRect:));
+                s_childview_done = 1;
+                fprintf(stderr, "cgl_shim: drawRect swizzled on %s "
+                        "(Gecko view class, via lazy setView)\n",
+                        class_getName(cv));
+            }
+        }
+
         /* No sizing here. Gecko calls setView: from the COMPOSITOR
          * thread (BasicCompositor::TryToEndRemoteDrawing), so any
          * AppKit call — [view bounds] — can deadlock against the main
@@ -742,9 +774,87 @@ static void shim_present(NSOpenGLContext *nsc)
 @end
 
 /* ===================================================================
- * NSView drawRect swizzle — draws present_buf into the view when
- * the system calls drawRect during the display cycle.
+ * drawRect blit — draws present_buf into a view during the display
+ * cycle. THE ONLY presentation route that works on 10.6: lockFocus
+ * re-enters the run loop (deadlock — architecture-3d.md #2),
+ * dispatch_async+drawInRect, CGContextDrawImage via graphicsPort and
+ * CALayer contents are the other recorded failures. Shared body for
+ * both swizzle targets below.
  * =================================================================== */
+
+static void shim_blit_present_buf(id view)
+{
+    NSData *bufData = objc_getAssociatedObject(view, PRESENT_BUF_KEY);
+    NSDictionary *sizeDict = objc_getAssociatedObject(view, PRESENT_SIZE_KEY);
+    if (!bufData || !sizeDict) return;
+
+    uint64_t t5 = mach_absolute_time();
+    int w = [[sizeDict objectForKey:@"w"] intValue];
+    int h = [[sizeDict objectForKey:@"h"] intValue];
+    const void *buf = [bufData bytes];
+
+    /* Diagnostic: buffer pointer seen by drawRect vs what flushBuffer swapped */
+    {
+        static int s_draw_ptr_log = 0;
+        if (s_draw_ptr_log < 5) {
+            s_draw_ptr_log++;
+            uint32_t *bp = (uint32_t *)buf;
+            fprintf(stderr, "cgl_shim: drawptr[%d] buf=%p[0]=0x%08x\n",
+                    s_draw_ptr_log, (void*)buf, bp ? bp[0] : 0xDEAD);
+        }
+    }
+
+    /* Draw present_buf via NSBitmapImageRep — same pattern as killtest */
+    unsigned char *planes[1] = { (unsigned char *)buf };
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:planes
+                      pixelsWide:w
+                      pixelsHigh:h
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSDeviceRGBColorSpace
+                     bytesPerRow:w * 4
+                    bitsPerPixel:32];
+    if (rep) {
+        /* Row-order flip at draw time: content reaches present_buf
+         * bottom-up (GL origin). OSMesaPixelStore(OSMESA_Y_UP, 0) is
+         * INERT in this Mesa's gallium OSMesa frontend — hash-verified
+         * no-op, image byte-identical with/without (2026-08-13) — so
+         * the flip is absorbed here via CTM. Zero pixel copies. Note
+         * the flip only became visible with real content: solid red
+         * and symmetric triangles are flip-invariant. */
+        [NSGraphicsContext saveGraphicsState];
+        NSAffineTransform *flip = [NSAffineTransform transform];
+        [flip translateXBy:0.0 yBy:NSMaxY([view bounds])];
+        [flip scaleXBy:1.0 yBy:-1.0];
+        [flip concat];
+        [rep drawInRect:[view bounds]
+               fromRect:NSMakeRect(0, 0, w, h)
+              operation:NSCompositeCopy
+               fraction:1.0f
+         respectFlipped:YES
+                  hints:nil];
+        [NSGraphicsContext restoreGraphicsState];
+        [rep release];
+    }
+    uint64_t t6 = mach_absolute_time();
+    shim_timing_record_draw(t6 - t5);
+    /* Diagnostic */
+    static int draw_count = 0;
+    if (draw_count < 3) {
+        fprintf(stderr, "cgl_shim: drawRect[%d] %dx%d pixel RGBA(%d,%d,%d,%d)\n",
+                draw_count, w, h,
+                ((unsigned char *)buf)[0], ((unsigned char *)buf)[1],
+                ((unsigned char *)buf)[2], ((unsigned char *)buf)[3]);
+        draw_count++;
+    }
+}
+
+/* --- Target 1: NSView-level swizzle (covers non-Gecko apps whose
+ * views don't override drawRect:). Never fires for Gecko's ChildView
+ * because per-class dispatch lets the override win. --- */
 
 @interface NSView (CGLShimDraw)
 - (void)shim_drawRect:(NSRect)dirtyRect;
@@ -754,63 +864,38 @@ static void shim_present(NSOpenGLContext *nsc)
 
 - (void)shim_drawRect:(NSRect)dirtyRect
 {
-    /* Check if this view has a present buffer (only shim-attached views do). */
-    NSData *bufData = objc_getAssociatedObject(self, PRESENT_BUF_KEY);
-    NSDictionary *sizeDict = objc_getAssociatedObject(self, PRESENT_SIZE_KEY);
-    if (bufData && sizeDict) {
-        uint64_t t5 = mach_absolute_time();
-        int w = [[sizeDict objectForKey:@"w"] intValue];
-        int h = [[sizeDict objectForKey:@"h"] intValue];
-        const void *buf = [bufData bytes];
-
-        /* Diagnostic: buffer pointer seen by drawRect vs what flushBuffer swapped */
-        {
-            static int s_draw_ptr_log = 0;
-            if (s_draw_ptr_log < 5) {
-                s_draw_ptr_log++;
-                uint32_t *bp = (uint32_t *)buf;
-                fprintf(stderr, "cgl_shim: drawptr[%d] buf=%p[0]=0x%08x\n",
-                        s_draw_ptr_log, (void*)buf, bp ? bp[0] : 0xDEAD);
-            }
-        }
-
-        /* Draw present_buf via NSBitmapImageRep — same pattern as killtest */
-        unsigned char *planes[1] = { (unsigned char *)buf };
-        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
-            initWithBitmapDataPlanes:planes
-                          pixelsWide:w
-                          pixelsHigh:h
-                       bitsPerSample:8
-                     samplesPerPixel:4
-                            hasAlpha:YES
-                            isPlanar:NO
-                      colorSpaceName:NSDeviceRGBColorSpace
-                         bytesPerRow:w * 4
-                        bitsPerPixel:32];
-        if (rep) {
-            [rep drawInRect:[self bounds]
-                   fromRect:NSMakeRect(0, 0, w, h)
-                  operation:NSCompositeCopy
-                   fraction:1.0f
-             respectFlipped:YES
-                      hints:nil];
-            [rep release];
-        }
-        uint64_t t6 = mach_absolute_time();
-        shim_timing_record_draw(t6 - t5);
-        /* Diagnostic */
-        static int draw_count = 0;
-        if (draw_count < 3) {
-            fprintf(stderr, "cgl_shim: drawRect[%d] %dx%d pixel RGBA(%d,%d,%d,%d)\n",
-                    draw_count, w, h,
-                    ((unsigned char *)buf)[0], ((unsigned char *)buf)[1],
-                    ((unsigned char *)buf)[2], ((unsigned char *)buf)[3]);
-            draw_count++;
-        }
-    }
+    shim_blit_present_buf(self);
 
     /* Call original drawRect for non-shim views */
     [self shim_drawRect:dirtyRect];
+}
+
+@end
+
+/* --- Target 2: Gecko's ChildView class, resolved lazily.
+ * Method swizzling is per-class: patching NSView does nothing when
+ * ChildView overrides drawRect: — Gecko's implementation runs and
+ * ours never fires (observed: drawptr 0, blit no samples, window
+ * content area white). The view passed to -setView: IS the Gecko
+ * view instance, so its class is the exact class to patch. Not done
+ * at +load: XUL isn't mapped when this framework initializes. --- */
+
+@interface NSObject (CGLShimChildView)
+- (void)shim_childViewDrawRect:(NSRect)dirtyRect;
+@end
+
+@implementation NSObject (CGLShimChildView)
+
+- (void)shim_childViewDrawRect:(NSRect)dirtyRect
+{
+    /* Call through FIRST: Gecko's implementation drives the compositor
+     * sync (ChildView drawRect → PaintWindow → SendFlushRendering)
+     * that produces fresh present_buf frames — keep that. Then blit
+     * our pixels over whatever it left on screen (presently nothing:
+     * its IOSurface present fails with kCGLBadContext). */
+    [self shim_childViewDrawRect:dirtyRect];  /* original */
+
+    shim_blit_present_buf(self);
 }
 
 @end
