@@ -20,6 +20,18 @@
 #include <dlfcn.h>
 #include <pthread.h>
 
+/* ObjC GC support marker. System Preferences (and other GC-required apps
+ * on 10.6) abort if any loaded image lacks __objc_image_info with the
+ * OBJC_IMAGE_SUPPORTS_GC flag. The cross-compiler on Apple Silicon can't
+ * emit -fobjc-gc (deprecated post-10.8), so we inject the section
+ * directly. The ObjC runtime finds it during image scanning.
+ *
+ * Format: version (uint32) + flags (uint32).
+ * Bit 1 (0x2) = OBJC_IMAGE_SUPPORTS_GC. */
+/* ObjC GC support marker. */
+__attribute__((used, section("__DATA,__objc_imageinfo")))
+const uint32_t _objc_image_info[2] = { 0, 2 };
+
 /* Mesa headers — paired with Mesa's library, not Apple's GL */
 #include <GL/gl.h>
 #include <GL/osmesa.h>

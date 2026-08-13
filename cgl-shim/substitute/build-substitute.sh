@@ -81,6 +81,19 @@ clang "${COMMON_CFLAGS[@]}" \
     -Wl,-rpath,@loader_path/../../.. \
     -Wl,-not_for_dyld_shared_cache
 
+# Patch __objc_imageinfo flags for GC compatibility. The cross-compiler
+# on Apple Silicon can't emit -fobjc-gc (deprecated post-10.8). The
+# section attribute in substitute_cgl.c creates the section but zeroes
+# the flags. Post-build patch sets flags to OBJC_IMAGE_SUPPORTS_GC (2)
+# so GC-required apps (System Preferences, others) accept the image.
+OBJC_INFO_OFF=$(otool -l "$OUTPUT" 2>/dev/null | awk '/sectname __objc_imageinfo/{found=1} found && /^ *offset/{print $2; exit}')
+if [ -n "$OBJC_INFO_OFF" ]; then
+    printf '\x02\x00\x00\x00' | dd of="$OUTPUT" bs=1 seek=$((OBJC_INFO_OFF + 4)) conv=notrunc 2>/dev/null
+    echo "    GC flag patched at offset $((OBJC_INFO_OFF + 4))"
+else
+    echo "WARNING: __objc_imageinfo section not found — GC apps will reject this image"
+fi
+
 # ---------------------------------------------------------------- verify
 echo "==> verifying $OUTPUT"
 file "$OUTPUT" | grep -q 'x86_64' || { echo "ERROR: not x86_64"; exit 1; }
