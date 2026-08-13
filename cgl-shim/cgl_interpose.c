@@ -280,7 +280,16 @@ static void diag_glViewport(GLint a, GLint b, GLsizei c, GLsizei d) {
     if (o) o(a,b,c,d);
 }
 
-/* --- __DATA,__interpose section --- */
+/* --- __DATA,__interpose section ---
+ *
+ * EXCLUDED from the substitute framework build. In the substitute model,
+ * we ARE OpenGL.framework — interpose entries would replace gl* bindings
+ * in ALL images (AppKit, QuartzCore, etc.) with ip_gl* stubs that check
+ * OSMesaGetCurrentContext(). For AppKit's own GL (window compositing),
+ * there's no OSMesa context current → RTLD_NEXT → NULL → no-op.
+ * Windows stop rendering. The substitute doesn't need interposition:
+ * gl* resolves to Mesa via -reexport_library. */
+#ifndef SUBSTITUTE_FRAMEWORK
 __attribute__((used))
 static const struct { const void *replacement; const void *original; }
 shim_interpose_entries[] __attribute__((section("__DATA,__interpose"))) = {
@@ -309,3 +318,4 @@ shim_interpose_entries[] __attribute__((section("__DATA,__interpose"))) = {
     { (const void *)ip_glVertex2f,        (const void *)glVertex2f },
     { (const void *)diag_glViewport,      (const void *)glViewport },
 };
+#endif /* !SUBSTITUTE_FRAMEWORK */

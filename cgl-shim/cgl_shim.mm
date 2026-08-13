@@ -29,10 +29,15 @@
 
 /* Probe target: libglapi export that returns the current thread's
  * _glapi_tls_Dispatch value. Used by dispcheck[shim] in flushBuffer to
- * compare against the interpose path's pointer (see diag_glViewport). */
-extern "C" const void *_glapi_get_dispatch(void);
-extern "C" const void *_glapi_get_context(void);
-extern "C" int _glapi_get_dispatch_table_size(void);
+ * compare against the interpose path's pointer (see diag_glViewport).
+ * extern "C" guarded so the same source compiles as both .mm (interpose
+ * build) and .m (substitute framework build). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+const void *_glapi_get_dispatch(void);
+const void *_glapi_get_context(void);
+int _glapi_get_dispatch_table_size(void);
 
 /* Mesa function pointers (defined in cgl_interpose.c, set by its
  * __attribute__((constructor)) gl_interpose_init). cgl_shim's own gl*
@@ -41,13 +46,14 @@ extern "C" int _glapi_get_dispatch_table_size(void);
  * cgl_shim.mm goes to Apple's GL, which has no current context. To
  * reach Mesa, we call through these p_* pointers, which were resolved
  * via dlsym(libOSMesa.8.dylib). */
-extern "C" {
 extern void   (*p_glFinish)(void);
 extern GLenum (*p_glGetError)(void);
 extern void   (*p_glGetIntegerv)(GLenum, GLint *);
 extern const GLubyte *(*p_glGetString)(GLenum);
 extern void   (*p_glReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *);
+#ifdef __cplusplus
 }
+#endif
 
 /* --- TLS for +currentContext via pthread_key (not __thread — ObjC
  * pointers don't work with -femulated-tls on this target) --- */
