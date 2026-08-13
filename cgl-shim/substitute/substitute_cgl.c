@@ -472,13 +472,20 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
         }
         static int s_iosf_log = 0;
-        if (s_iosf_log < 5) {
-            s_iosf_log++;
-            fprintf(stderr, "substitute_cgl: CGLTexImageIOSurface2D ctx=%p "
+        static long s_iosf_calls = 0;
+        s_iosf_calls++;
+        /* Log first 5 small calls unconditionally; every call for large
+         * surfaces (w>=1000) — the main-window content surface must not
+         * hide behind the small-call cap (instrument error 2026-08-13:
+         * "no window-sized upload" was concluded from a capped log). */
+        if (s_iosf_log < 5 || width >= 1000) {
+            if (s_iosf_log < 5) s_iosf_log++;
+            fprintf(stderr, "substitute_cgl: IOSurface2D #%ld ctx=%p "
                     "target=0x%x fmt=0x%x type=0x%x %ldx%ld bpr=%lu "
                     "glErr=0x%x lock=0x%x\n",
-                    (void *)ctx, target, format, type, (long)width,
-                    (long)height, (unsigned long)bpr, glerr, kr);
+                    s_iosf_calls, (void *)ctx, target, format, type,
+                    (long)width, (long)height, (unsigned long)bpr,
+                    glerr, kr);
         }
         return (glerr == GL_NO_ERROR) ? kCGLNoError : kCGLBadContext;
     }
