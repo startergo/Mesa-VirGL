@@ -18,6 +18,7 @@
 #import <OpenGL/OpenGL.h>
 #import <QuartzCore/QuartzCore.h>
 #include <objc/runtime.h>
+#include <objc/objc-auto.h>
 #include <GL/gl.h>
 #include <GL/osmesa.h>
 #include <pthread.h>
@@ -394,6 +395,7 @@ static void shim_present(NSOpenGLContext *nsc)
                 entries ? (void*)entries[3] : (void*)0);
     }
     pthread_mutex_init(&sc->lock, NULL);
+    pthread_mutex_init(&sc->cgl_lock, NULL);
     sc->last_view_w = -1;
     sc->last_view_h = -1;
 
@@ -463,23 +465,32 @@ static void shim_present(NSOpenGLContext *nsc)
         }
     }
 
-    /* --- Resize detection (design problem #2) ---
-     * Gecko doesn't use NSOpenGLView, so -update may never fire.
-     * Check view bounds on every flushBuffer and reallocate if changed. */
-    NSView *view = (NSView *)sc->view;
-    if (view) {
-        NSRect bounds = [view bounds];
-        int vw = (int)bounds.size.width;
-        int vh = (int)bounds.size.height;
-        if (vw > 0 && vh > 0 && (vw != sc->last_view_w || vh != sc->last_view_h)) {
-            pthread_mutex_lock(&sc->lock);
-            free_buffers(sc);
-            alloc_buffers(sc, vw, vh);
-            OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE, vw, vh);
-            sc->last_view_w = vw;
-            sc->last_view_h = vh;
-            pthread_mutex_unlock(&sc->lock);
-        }
+    /* --- Resize detection (design problem #2, revised 2026-08-13) ---
+     * Gecko doesn't use NSOpenGLView, so -update may never fire. The
+     * previous approach queried [view bounds] here — but flushBuffer
+     * (and setView:) run on Gecko's COMPOSITOR thread, and AppKit
+     * geometry calls off-main deadlock against the main thread's
+     * display cycle: main holds the AppKit display path and waits in
+     * PCompositorBridgeChild::SendFlushRendering for the compositor,
+     * while the compositor blocks in [view bounds] inside this shim.
+     * Observed 2026-08-13: both threads parked 30+ minutes (sample of
+     * pid 5326 — Compositor thread inside shim_setView:+221, main
+     * inside _recursiveDisplayAllDirtyWithLockFocus → SendFlushRendering).
+     * Fix: take the drawable size from the renderer's own viewport —
+     * a thread-local GL query with no AppKit involvement, correct by
+     * construction because glViewport is how the app tells GL the
+     * drawable size. If no context is current, vp stays 0 and the
+     * check safely skips. */
+    GLint vp_rs[4] = {0, 0, 0, 0};
+    p_glGetIntegerv(GL_VIEWPORT, vp_rs);
+    if (vp_rs[2] > 0 && vp_rs[3] > 0 &&
+        (vp_rs[2] != sc->width || vp_rs[3] != sc->height)) {
+        pthread_mutex_lock(&sc->lock);
+        free_buffers(sc);
+        alloc_buffers(sc, vp_rs[2], vp_rs[3]);
+        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
+                          GL_UNSIGNED_BYTE, vp_rs[2], vp_rs[3]);
+        pthread_mutex_unlock(&sc->lock);
     }
 
     /* --- Compositor-thread marshalling (design problem #1) --- */
@@ -640,27 +651,27 @@ static void shim_present(NSOpenGLContext *nsc)
 {
     struct shim_ctx *sc = get_shim_ctx(self);
     if (sc) {
-        /* Retain new view, release old. 10.6 has no zeroing weak refs. */
+        /* Retain new view, release old. 10.6 has no zeroing weak refs.
+         * Store through the GC write barrier: this image declares ObjC
+         * GC support (__objc_imageinfo), so in a GC process (e.g. System
+         * Preferences) retain/release are no-ops and a bare store into
+         * this calloc'd (non-collectable) struct is invisible to the
+         * collector — the view could be collected while we still hold
+         * the pointer. objc_assign_strongCast makes the location a
+         * scanned reference; with GC off it is a plain store
+         * (objc-auto.h). */
         if (sc->view) [(NSView *)sc->view release];
         if (view) [view retain];
-        sc->view = view;
+        objc_assign_strongCast((id)view, (id *)&sc->view);
 
-        /* Allocate buffer at view size immediately if valid. */
-        if (view) {
-            NSRect bounds = [view bounds];
-            int vw = (int)bounds.size.width;
-            int vh = (int)bounds.size.height;
-            if (vw > 0 && vh > 0) {
-                pthread_mutex_lock(&sc->lock);
-                free_buffers(sc);
-                alloc_buffers(sc, vw, vh);
-                OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                                  GL_UNSIGNED_BYTE, vw, vh);
-                sc->last_view_w = vw;
-                sc->last_view_h = vh;
-                pthread_mutex_unlock(&sc->lock);
-            }
-        }
+        /* No sizing here. Gecko calls setView: from the COMPOSITOR
+         * thread (BasicCompositor::TryToEndRemoteDrawing), so any
+         * AppKit call — [view bounds] — can deadlock against the main
+         * thread's display cycle (see flushBuffer's resize note for
+         * the observed ABBA). Buffer sizing is handled entirely by
+         * the viewport check at the top of flushBuffer, which runs on
+         * the rendering thread with the context current. retain/
+         * release are refcount-atomic and safe off-main. */
     } else {
         [self shim_setView:view];  /* original */
     }
@@ -670,25 +681,11 @@ static void shim_present(NSOpenGLContext *nsc)
 {
     struct shim_ctx *sc = get_shim_ctx(self);
     if (sc) {
-        /* -update is called by NSOpenGLView on resize. For shim contexts,
-         * realloc at current view size. Gecko may never call this — the
-         * bounds-check in -flushBuffer is the primary resize trigger. */
-        NSView *view = (NSView *)sc->view;
-        if (view) {
-            NSRect bounds = [view bounds];
-            int vw = (int)bounds.size.width;
-            int vh = (int)bounds.size.height;
-            if (vw > 0 && vh > 0) {
-                pthread_mutex_lock(&sc->lock);
-                free_buffers(sc);
-                alloc_buffers(sc, vw, vh);
-                OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                                  GL_UNSIGNED_BYTE, vw, vh);
-                sc->last_view_w = vw;
-                sc->last_view_h = vh;
-                pthread_mutex_unlock(&sc->lock);
-            }
-        }
+        /* No-op for shim contexts. -update fires on the main thread;
+         * calling OSMesaMakeCurrent here would bind the OSMesa context
+         * to the MAIN thread's TLS dispatch, breaking compositor-thread
+         * rendering. Resize is handled entirely by the viewport check
+         * in -flushBuffer, which runs on the rendering thread. */
     } else {
         [self shim_update];  /* original */
     }
@@ -819,6 +816,14 @@ static void swizzle_class_method(Class cls, SEL originalSel, SEL shimSel)
 @implementation CGLShimLoader
 + (void)load
 {
+    /* Before anything can create an OSMesa context: Mesa's driver
+     * selection is a process-global call_once reading GALLIUM_DRIVER,
+     * so this must precede the first OSMesaCreateContextExt in the
+     * process. The +load probe below doubles as the canary: it must
+     * print "virgl", never "(unset)". */
+    if (!getenv("GALLIUM_DRIVER"))
+        setenv("GALLIUM_DRIVER", "virgl", 0);
+
     Class cls = [NSOpenGLContext class];
 
     /* Instance methods */

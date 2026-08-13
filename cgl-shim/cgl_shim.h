@@ -48,8 +48,18 @@ struct shim_ctx {
     void *view;                 /* NSView* (void* to avoid ObjC in C header) */
 
     /* Serialises flush vs present vs resize for this context.
-     * Assumption: one context per view. */
+     * Assumption: one context per view. Internal-only: NEVER returned
+     * to callers as CGLLockContext's backing mutex. */
     pthread_mutex_t lock;
+
+    /* Public CGL lock (CGLLockContext/CGLUnlockContext). MUST be a
+     * separate mutex from `lock`: Gecko calls CGLLockContext around
+     * -flushBuffer on the SAME thread (nsChildView::DoRemoteComposition,
+     * nsChildView.mm CGLLockContext call sites) — one shared non-
+     * recursive mutex self-deadlocks the first flush. Real CGL's lock
+     * serializes caller-side GL usage only; internal shim paths never
+     * take it. */
+    pthread_mutex_t cgl_lock;
 
     /* For bounds-check resize detection in -flushBuffer. */
     int last_view_w;

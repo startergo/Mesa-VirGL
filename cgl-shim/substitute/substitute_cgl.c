@@ -60,6 +60,16 @@ static void *g_real_gl = NULL;
 __attribute__((constructor))
 static void substitute_init(void)
 {
+    /* Must run before any OSMesaCreateContextExt: Mesa's driver choice
+     * is a process-global call_once keyed off GALLIUM_DRIVER. If the
+     * first context is created first, the whole process silently lands
+     * on softpipe (observed in PowerFox: GL_RENDERER "softpipe", GL 3.3,
+     * shaders compile but compositing never reaches first paint under
+     * TCG). The setenv previously sat in CGLCreateContext AFTER the
+     * OSMesaCreateContextExt call — too late for the first context. */
+    if (!getenv("GALLIUM_DRIVER"))
+        setenv("GALLIUM_DRIVER", "virgl", 0);
+
     /* Try several rpath-relative names for the real GL copy */
     const char *paths[] = {
         "@rpath/libOpenGL_real.dylib",
@@ -186,6 +196,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
     sc->render_buf = calloc(1, 4);  /* 1x1 RGBA */
     sc->present_buf = calloc(1, 4);
     pthread_mutex_init(&sc->lock, NULL);
+    pthread_mutex_init(&sc->cgl_lock, NULL);
     sc->last_view_w = -1;
     sc->last_view_h = -1;
 
@@ -285,7 +296,21 @@ CGLLockContext(CGLContextObj ctx)
 {
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
-        pthread_mutex_lock(&sc->lock);
+        /* Uses cgl_lock, NOT sc->lock: Gecko locks the context around
+         * -flushBuffer on the same thread (nsChildView::
+         * DoRemoteComposition), so a shared mutex self-deadlocks the
+         * first flush (observed 2026-08-13: compositor thread parked in
+         * shim_flushBuffer's pthread_mutex_lock while itself holding
+         * the lock via this function). */
+        {
+            static int s_lock_log = 0;
+            if (s_lock_log < 10) {
+                s_lock_log++;
+                fprintf(stderr, "substitute_cgl: CGLLockContext ctx=%p thread=%p\n",
+                        (void *)ctx, (void *)pthread_self());
+            }
+        }
+        pthread_mutex_lock(&sc->cgl_lock);
         return kCGLNoError;
     }
     /* Forward for non-shim contexts */
@@ -300,7 +325,7 @@ CGLUnlockContext(CGLContextObj ctx)
 {
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
-        pthread_mutex_unlock(&sc->lock);
+        pthread_mutex_unlock(&sc->cgl_lock);
         return kCGLNoError;
     }
     static CGLError (*real)(CGLContextObj);
