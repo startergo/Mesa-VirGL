@@ -168,6 +168,24 @@ if [ "$FORCE_LINK" = "1" ]; then
     # dependency chain), meson never adds -framework IOKit. Append it here.
     PATCHED="$PATCHED -framework IOKit"
 
+    # Statically link libc++ instead of re-exporting the dynamic version.
+    # The cross file's link args include -Wl,-reexport_library for libc++,
+    # which produces LC_REEXPORT_DYLIB load commands. When libOSMesa is
+    # re-exported from the substitute OpenGL.framework, dyld processes
+    # the libc++ re-export during framework initialization — before the
+    # host process is fully set up. libc++'s ios_base::Init static
+    # initializer runs too early, calls through a NULL function pointer,
+    # and crashes. Statically linking libc++ into libOSMesa eliminates
+    # the dynamic dependency entirely — no init-order conflict, no
+    # duplicate C++ runtime when loaded into a host app that bundles its
+    # own libc++. Mesa's C++ (GLSL compiler) is entirely internal; the
+    # GL entry points are C. No C++ symbols cross the ABI boundary.
+    LIBCXX_DIR="$(cd "$(dirname "$0")/libcxx/lib" && pwd)"
+    PATCHED=$(printf '%s' "$PATCHED" \
+        | sed "s|-Wl,-reexport_library,[^ ]*libc++.1.dylib|$LIBCXX_DIR/libc++.a|g" \
+        | sed "s|-Wl,-reexport_library,[^ ]*libc++abi.dylib|$LIBCXX_DIR/libc++abi.a|g")
+    PATCHED="$PATCHED -nostdlib++"
+
     ( cd "$BUILD_DIR" && eval "$PATCHED" )
 fi
 
