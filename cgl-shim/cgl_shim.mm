@@ -788,6 +788,27 @@ static void shim_blit_present_buf(id view)
     NSDictionary *sizeDict = objc_getAssociatedObject(view, PRESENT_SIZE_KEY);
     if (!bufData || !sizeDict) return;
 
+    /* Empty-frame guard: when the compositor has no content it clears
+     * to fully transparent (observed RGBA(0,0,0,0) across thousands
+     * of main-window frames). NSCompositeCopy REPLACES, so blitting a
+     * transparent frame paints black over whatever Gecko itself
+     * rendered through its software CGContext path (observed 2026-08-13
+     * as white-then-black: Gecko's white software paint, erased by our
+     * empty blit). Skip the blit and let Gecko's own painting stand. */
+    {
+        uint32_t p0 = ((const uint32_t *)[bufData bytes])[0];
+        if ((p0 & 0xff000000u) == 0) {
+            static int s_empty_skip_log = 0;
+            if (s_empty_skip_log < 5) {
+                s_empty_skip_log++;
+                fprintf(stderr, "cgl_shim: blit-skip[%d] empty frame "
+                        "p0=0x%08x — Gecko's own paint stands\n",
+                        s_empty_skip_log, p0);
+            }
+            return;
+        }
+    }
+
     uint64_t t5 = mach_absolute_time();
     int w = [[sizeDict objectForKey:@"w"] intValue];
     int h = [[sizeDict objectForKey:@"h"] intValue];
