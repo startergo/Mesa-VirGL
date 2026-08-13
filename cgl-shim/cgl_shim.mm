@@ -485,12 +485,26 @@ static void shim_present(NSOpenGLContext *nsc)
     p_glGetIntegerv(GL_VIEWPORT, vp_rs);
     if (vp_rs[2] > 0 && vp_rs[3] > 0 &&
         (vp_rs[2] != sc->width || vp_rs[3] != sc->height)) {
-        pthread_mutex_lock(&sc->lock);
-        free_buffers(sc);
-        alloc_buffers(sc, vp_rs[2], vp_rs[3]);
-        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                          GL_UNSIGNED_BYTE, vp_rs[2], vp_rs[3]);
-        pthread_mutex_unlock(&sc->lock);
+        /* trylock: a full lock here once deadlocked the compositor on a
+         * mutex no live thread held (2026-08-13, gen-3 sample: first
+         * acquisition ever on this sc blocked forever — sc suspected
+         * stale/corrupted). Skipping the resize for one frame is always
+         * recoverable; blocking the compositor is not. */
+        if (pthread_mutex_trylock(&sc->lock) == 0) {
+            free_buffers(sc);
+            alloc_buffers(sc, vp_rs[2], vp_rs[3]);
+            OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
+                              GL_UNSIGNED_BYTE, vp_rs[2], vp_rs[3]);
+            pthread_mutex_unlock(&sc->lock);
+        } else {
+            static int s_rs_skip_log = 0;
+            if (s_rs_skip_log < 5) {
+                s_rs_skip_log++;
+                fprintf(stderr, "cgl_shim: resize-skip[%d] lock busy/odd "
+                        "sc=%p magic=0x%08x thread=%p\n", s_rs_skip_log,
+                        (void *)sc, sc ? sc->magic : 0, (void *)pthread_self());
+            }
+        }
     }
 
     /* --- Compositor-thread marshalling (design problem #1) --- */
@@ -608,7 +622,20 @@ static void shim_present(NSOpenGLContext *nsc)
         }
     }
 
-    pthread_mutex_lock(&sc->lock);
+    /* trylock for the same reason as the resize section: never block the
+     * compositor on this mutex. Busy → drop this frame; the coalescing
+     * flag below ensures a present is still pending or will re-fire on
+     * the next flush. */
+    if (pthread_mutex_trylock(&sc->lock) != 0) {
+        static int s_swap_skip_log = 0;
+        if (s_swap_skip_log < 5) {
+            s_swap_skip_log++;
+            fprintf(stderr, "cgl_shim: swap-skip[%d] lock busy/odd sc=%p "
+                    "magic=0x%08x thread=%p\n", s_swap_skip_log,
+                    (void *)sc, sc ? sc->magic : 0, (void *)pthread_self());
+        }
+        return;
+    }
     /* Swap render and present buffers */
     void *tmp = sc->render_buf;
     sc->render_buf = sc->present_buf;

@@ -411,7 +411,34 @@ CGLSetParameter(CGLContextObj ctx, CGLContextParameter pname, const GLint *param
 }
 CGL_FORWARD(CGLSetSurface, CGLError, (CGLContextObj ctx, GLuint read_write, GLuint surface_id, GLenum surface_type, GLint width, GLint height), (ctx, read_write, surface_id, surface_type, width, height))
 CGL_FORWARD(CGLSetVirtualScreen, CGLError, (CGLContextObj ctx, GLint screen), (ctx, screen))
-CGL_FORWARD(CGLTexImageIOSurface2D, CGLError, (CGLContextObj ctx, GLenum target, GLenum internal_format, GLsizei width, GLsizei height, GLenum format, GLenum type, void *iosurface, GLuint plane), (ctx, target, internal_format, width, height, format, type, iosurface, plane))
+/* CGLTexImageIOSurface2D: NOT forwarded. Forwarding passes our shim_ctx
+ * token where the real CGL expects a CGLContextObj — it dereferences it,
+ * which is a crash (or worse) on a struct it doesn't own. Our OSMesa
+ * context cannot consume an IOSurface, so report the context as
+ * unsupported and let Gecko fall back to its upload path. */
+CGLError
+CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
+                       GLsizei width, GLsizei height, GLenum format, GLenum type,
+                       void *iosurface, GLuint plane)
+{
+    struct shim_ctx *sc = shim_lookup(ctx);
+    if (sc) {
+        static int s_iosf_log = 0;
+        if (s_iosf_log < 5) {
+            s_iosf_log++;
+            fprintf(stderr, "substitute_cgl: CGLTexImageIOSurface2D on shim "
+                    "ctx=%p %ldx%ld -> kCGLBadContext (IOSurface unsupported)\n",
+                    (void *)ctx, (long)width, (long)height);
+        }
+        return kCGLBadContext;
+    }
+    static CGLError (*real)(CGLContextObj, GLenum, GLenum, GLsizei, GLsizei,
+                            GLenum, GLenum, void *, GLuint);
+    if (!real && g_real_gl) real = dlsym(g_real_gl, "CGLTexImageIOSurface2D");
+    if (real) return real(ctx, target, internal_format, width, height,
+                          format, type, iosurface, plane);
+    return kCGLBadContext;
+}
 CGL_FORWARD(CGLTexImagePBuffer, CGLError, (CGLContextObj ctx, CGLPBufferObj pbuffer, GLenum source), (ctx, pbuffer, source))
 CGL_FORWARD(CGLUpdateContext, CGLError, (CGLContextObj ctx), (ctx))
 
