@@ -87,19 +87,52 @@ static inline void set_shim_ctx(NSOpenGLContext *ctx, struct shim_ctx *sc)
 
 /* --- Buffer helpers --- */
 
+/* SHIM_SINGLE_BUF=1 — diagnostic single-buffer mode (2026-08-13).
+ * Gecko's compositor assumes the framebuffer RETAINS the previous
+ * frame: on partial damage it redraws only the damaged quads and
+ * leaves undamaged regions carrying frame N−1. The double-buffer
+ * swap hands it the buffer holding frame N−2 instead, so partial
+ * damage composites two frames' worth of content in one presented
+ * frame (observed: the same uBlock description line rendered twice
+ * at different horizontal offsets, superimposed). Single-buffer
+ * mode points render_buf and present_buf at ONE allocation so
+ * partial damage lands on the last presented frame by construction.
+ * Expected cost: tearing (drawRect may read while the compositor
+ * writes) — that is itself informative, not a defect of the test.
+ * The swap in flushBuffer becomes a no-op when the pointers are
+ * equal, so no other site needs guarding. */
 static void alloc_buffers(struct shim_ctx *sc, int w, int h)
 {
     size_t sz = (size_t)w * (size_t)h * 4;
-    sc->render_buf  = calloc(1, sz);
-    sc->present_buf = calloc(1, sz);
+    static int s_single = -1;
+    if (s_single < 0)
+        s_single = getenv("SHIM_SINGLE_BUF") ? 1 : 0;
+    if (s_single) {
+        sc->render_buf  = calloc(1, sz);
+        sc->present_buf = sc->render_buf;
+        fprintf(stderr, "cgl_shim: SINGLE-BUF mode (SHIM_SINGLE_BUF=1) "
+                "buf=%p %dx%d — expect tearing, not doubling\n",
+                (void *)sc->render_buf, w, h);
+    } else {
+        sc->render_buf  = calloc(1, sz);
+        sc->present_buf = calloc(1, sz);
+    }
     sc->width = w;
     sc->height = h;
 }
 
 static void free_buffers(struct shim_ctx *sc)
 {
-    free(sc->render_buf);   sc->render_buf = NULL;
-    free(sc->present_buf);  sc->present_buf = NULL;
+    /* Single-buffer mode: both pointers alias one allocation — free
+     * once or we'd double-free. */
+    if (sc->render_buf == sc->present_buf) {
+        free(sc->render_buf);
+    } else {
+        free(sc->render_buf);
+        free(sc->present_buf);
+    }
+    sc->render_buf = NULL;
+    sc->present_buf = NULL;
 }
 
 /* --- Performance instrumentation (readback thread) ----------------------------
