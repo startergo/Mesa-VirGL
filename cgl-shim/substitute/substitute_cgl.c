@@ -47,6 +47,7 @@ const uint32_t _objc_image_info[2] = { 0, 2 };
 extern void   (*p_glPixelStorei)(GLenum, GLint);
 extern void   (*p_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *);
 extern GLenum (*p_glGetError)(void);
+extern void   (*p_glGetIntegerv)(GLenum, GLint *);
 
 /* Private types not in public headers */
 typedef void *CGLShareGroupObj;
@@ -462,12 +463,29 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             size_t bpp = 4;
             if (format == GL_RGB) bpp = 3;
             /* else RGBA/BGRA 8-bit → 4 */
+            /* GL_UNPACK_* is CONTEXT-GLOBAL state: values set here
+             * leak into the app's subsequent texture uploads unless
+             * restored (2026-08-13: ALIGNMENT=1 was left installed
+             * after every IOSurface upload, and ROW_LENGTH was reset
+             * to a hardcoded 0 rather than the app's value. Harmless
+             * for 4-byte/texel formats — rows are inherently
+             * 4-aligned — but for sub-4-byte formats (glyph/alpha
+             * atlases) with width%4!=0 the app's alignment-4 row
+             * padding is misread, shifting each successive atlas row
+             * horizontally. Signature: text at progressive horizontal
+             * offsets clipped at consistent x edges; survives
+             * single-buffering because it is texture content, not
+             * buffer content.) */
+            GLint save_align = 4, save_rowlen = 0;
+            p_glGetIntegerv(GL_UNPACK_ALIGNMENT, &save_align);
+            p_glGetIntegerv(GL_UNPACK_ROW_LENGTH, &save_rowlen);
             p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             p_glPixelStorei(GL_UNPACK_ROW_LENGTH,
                             (GLint)(bpp ? bpr / bpp : bpr));
             p_glTexImage2D(target, 0, (GLint)internal_format,
                            width, height, 0, format, type, base);
-            p_glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            p_glPixelStorei(GL_UNPACK_ROW_LENGTH, save_rowlen);
+            p_glPixelStorei(GL_UNPACK_ALIGNMENT, save_align);
             glerr = p_glGetError();
             IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
         }
