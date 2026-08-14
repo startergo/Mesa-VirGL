@@ -118,9 +118,31 @@ ninja -C build-106 -j2
 Produces 913 targets. The OSMesa target links softpipe but not virgl
 (meson only links software rasterizers into OSMesa).
 
-### 4. Force-link virgl into OSMesa (optional)
+### 4. Force-link virgl into OSMesa (mandatory)
 
-To get a dylib that includes the virgl driver + vtest winsys:
+Meson only links software rasterizers into the OSMesa target by design.
+Since `inline_sw_helper.h` references `virgl_iokit_winsys_wrap` (gated on
+`GALLIUM_VIRGL && __APPLE__`), the compiled `osmesa_target.c.o` has an
+undefined reference to it. The meson-generated link command contains zero
+virgl archives, so the ninja link step **fails by design** — it cannot
+resolve the three virgl symbols:
+
+```
+Undefined symbols for architecture x86_64:
+  "_virgl_create_screen", referenced from: _osmesa_create_screen
+  "_virgl_iokit_winsys_wrap", referenced from: _osmesa_create_screen
+  "_virgl_vtest_winsys_wrap", referenced from: _osmesa_create_screen
+```
+
+The force-link step re-runs the recorded link command with all four virgl
+archives force-loaded, plus `-framework IOKit` (libvirgliokit.a calls
+`IOConnectCallMethod` / `IOServiceOpen`; the iokit meson.build declares
+the framework dependency, but since virgl enters via `-force_load` rather
+than through meson's dependency graph, meson never contributes the flag).
+
+The automated script `cross-compat/build-10.6.sh` handles this end-to-end:
+it tolerates the expected ninja link failure, runs the force-link, and
+verifies the result. The equivalent manual commands:
 
 ```sh
 cd build-106
@@ -128,11 +150,23 @@ eval "$(ninja -t commands src/gallium/targets/osmesa/libOSMesa.8.dylib | tail -1
   sed 's|src/gallium/drivers/softpipe/libsoftpipe.a|& \
     -Wl,-force_load,src/gallium/drivers/virgl/libvirgl.a \
     -Wl,-force_load,src/gallium/winsys/virgl/vtest/libvirglvtest.a \
-    -Wl,-force_load,src/gallium/winsys/virgl/common/libvirglcommon.a|')"
+    -Wl,-force_load,src/gallium/winsys/virgl/common/libvirglcommon.a \
+    -Wl,-force_load,src/gallium/winsys/virgl/iokit/libvirgliokit.a|')" \
+  -framework IOKit
 ```
 
 Result: `build-106/src/gallium/targets/osmesa/libOSMesa.8.dylib`
-(~19 MB, Mach-O 64-bit x86_64, zero undefined symbols).
+(~19 MB, Mach-O 64-bit x86_64). Verify with:
+
+```sh
+nm libOSMesa.8.dylib | grep -q virgl_iokit && echo "iokit: present" || echo "iokit: ABSENT"
+```
+
+**The `--no-force-link` flag in build-10.6.sh is a legacy option that predates
+the iokit dispatch path.** With `inline_sw_helper.h` referencing
+`virgl_iokit_winsys_wrap`, the meson link cannot succeed without the
+force-load. `--no-force-link` produces no dylib at all — the ninja link
+fails and there is no fallback.
 
 ## Cross file reference
 
@@ -155,8 +189,11 @@ The cross file (`cross-compat/mesa-cross-10.6.txt`) sets:
 - **libGL.dylib:** not produced. GLX/EGL/GBM all disabled; no CGL
   binding layer exists yet. The CGL shim is the next project.
 - **OSMesa with virgl:** meson doesn't link virgl into the OSMesa
-  target. The force-link step above works but isn't integrated into
-  the build system.
+  target, so the ninja link step fails by design (three undefined virgl
+  symbols from `osmesa_target.c.o`). The force-link step is mandatory,
+  not optional — it resolves those symbols by force-loading the four
+  virgl archives + IOKit framework. Automated by
+  `cross-compat/build-10.6.sh`.
 
 ## Scoping
 
