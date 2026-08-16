@@ -817,6 +817,25 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 
 static void shim_blit_present_buf(id view)
 {
+    /* SHIM_DROP_BLIT (Mesa-VirGL LEDGER, dump-verdict follow-up):
+     * the 2026-08-16 dump showed Gecko's composite CLEAN while the
+     * screen duplicates — the blit is the suspect. Early-return
+     * leaves Gecko's own software paint standing (the same outcome
+     * as the empty-frame guard). Pre-registered: duplicate vanishes
+     * and chrome still renders → blit misplacement confirmed as the
+     * artifact origin; chrome missing → the blit is load-bearing. */
+    {
+        static int s_drop_blit = -1;
+        if (s_drop_blit < 0) {
+            s_drop_blit = (getenv("SHIM_DROP_BLIT") != NULL);
+            if (s_drop_blit)
+                fprintf(stderr, "cgl_shim: DROP_BLIT: skipping all "
+                        "present_buf blits — Gecko's own paint stands\n");
+        }
+        if (s_drop_blit)
+            return;
+    }
+
     NSData *bufData = objc_getAssociatedObject(view, PRESENT_BUF_KEY);
     NSDictionary *sizeDict = objc_getAssociatedObject(view, PRESENT_SIZE_KEY);
     if (!bufData || !sizeDict) return;
@@ -846,6 +865,74 @@ static void shim_blit_present_buf(id view)
     int w = [[sizeDict objectForKey:@"w"] intValue];
     int h = [[sizeDict objectForKey:@"h"] intValue];
     const void *buf = [bufData bytes];
+
+    /* SHIM_DUMP_BUFFER=<n> — the artifact-B discriminator
+     * (Mesa-VirGL LEDGER entry 2, pre-registered before build):
+     * dump the OSMesa buffer immediately before the drawRect blit.
+     *   duplication ALREADY in the buffer → Gecko's compositing
+     *     (wrong-source-rect copy upstream of everything of ours)
+     *   buffer clean, duplication on screen → the blit introduces it
+     * 24-bit BMP, rows written in buffer order — the buffer is
+     * bottom-up (GL origin) and BMP stores rows bottom-up by spec,
+     * so the dump reads screen-upright with no flip. Dumps the
+     * FIRST n non-empty frames (startup IS the artifact page). */
+    {
+        static int s_dump_left = -1, s_dump_idx = 0;
+        if (s_dump_left < 0) {
+            const char *dv = getenv("SHIM_DUMP_BUFFER");
+            s_dump_left = dv ? atoi(dv) : 0;
+            if (s_dump_left > 0)
+                fprintf(stderr, "cgl_shim: BUFFER DUMP ACTIVE "
+                        "(SHIM_DUMP_BUFFER=%d frames)\n", s_dump_left);
+        }
+        if (s_dump_left > 0 && w > 0 && h > 0 && w < 8192 && h < 8192 &&
+            (w >= 1000 || s_dump_idx < 2)) {   /* main-window surfaces
+                                    * must not hide behind small-frame
+                                    * capture — instrument error recorded
+                                    * 2026-08-13 for the upload log; first
+                                    * 2 any-size frames prove the writer */
+            char dpath[64];
+            snprintf(dpath, sizeof dpath, "/tmp/shim_dump_%02d.bmp",
+                     s_dump_idx);
+            FILE *df = fopen(dpath, "wb");
+            if (df) {
+                uint32_t rowsz = ((uint32_t)w * 3 + 3u) & ~3u;
+                uint32_t datasz = rowsz * (uint32_t)h;
+                uint32_t filesz = 54u + datasz;
+                unsigned char hdr[54] = {0};
+                hdr[0] = 'B'; hdr[1] = 'M';
+                *(uint32_t *)&hdr[2] = filesz;
+                *(uint32_t *)&hdr[10] = 54u;
+                *(uint32_t *)&hdr[14] = 40u;      /* BITMAPINFOHEADER */
+                *(int32_t *)&hdr[18] = w;
+                *(int32_t *)&hdr[22] = h;         /* + → bottom-up rows */
+                *(uint16_t *)&hdr[26] = 1u;
+                *(uint16_t *)&hdr[28] = 24u;      /* bpp */
+                *(uint32_t *)&hdr[34] = datasz;
+                fwrite(hdr, 1, 54, df);
+                unsigned char *rowbuf =
+                    (unsigned char *)calloc(1, rowsz);
+                if (rowbuf) {
+                    const unsigned char *src = (const unsigned char *)buf;
+                    for (int y = 0; y < h; y++) {
+                        const unsigned char *srow = src + (size_t)y * w * 4;
+                        for (int x = 0; x < w; x++) {
+                            rowbuf[x * 3 + 0] = srow[x * 4 + 2]; /* B */
+                            rowbuf[x * 3 + 1] = srow[x * 4 + 1]; /* G */
+                            rowbuf[x * 3 + 2] = srow[x * 4 + 0]; /* R */
+                        }
+                        fwrite(rowbuf, 1, rowsz, df);
+                    }
+                    free(rowbuf);
+                }
+                fclose(df);
+                fprintf(stderr, "cgl_shim: buffer dump[%d] %s %dx%d\n",
+                        s_dump_idx, dpath, w, h);
+                s_dump_idx++;
+                s_dump_left--;
+            }
+        }
+    }
 
     /* Diagnostic: buffer pointer seen by drawRect vs what flushBuffer swapped */
     {

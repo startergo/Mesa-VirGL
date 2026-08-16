@@ -441,6 +441,29 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
                        GLsizei width, GLsizei height, GLenum format, GLenum type,
                        void *iosurface, GLuint plane)
 {
+    /* SHIM_DROP_UPLOAD (Mesa-VirGL LEDGER, drop test): early-return
+     * BEFORE any upload — nothing is bound, nothing can be composited
+     * from this path. Pre-registered outcomes:
+     *   desktop unchanged except the duplicate strip VANISHES →
+     *     the upload is redundant; suppression is the fix.
+     *   chrome disappears / goes black → the path is load-bearing;
+     *     the destination must be corrected properly. */
+    {
+        static int s_drop_upload = -1;
+        if (s_drop_upload < 0)
+            s_drop_upload = (getenv("SHIM_DROP_UPLOAD") != NULL);
+        if (s_drop_upload) {
+            static int s_du_log = 0;
+            if (s_du_log < 5) {
+                s_du_log++;
+                fprintf(stderr, "substitute_cgl: DROP_UPLOAD: declining "
+                        "CGLTexImageIOSurface2D %ldx%ld\n",
+                        (long)width, (long)height);
+            }
+            return kCGLNoError;
+        }
+    }
+
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
         IOSurfaceRef surf = (IOSurfaceRef)iosurface;
