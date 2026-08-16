@@ -470,25 +470,52 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
              * source IN PLACE, using the SURFACE'S OWN stride and bpp, so
              * the pattern tests every hop DOWNSTREAM of this write:
              * teximage unpack → virgl encode → winsys transfer → kext →
-             * host → display. Pattern is an 8-colour 8-px checkerboard,
-             * palette[((x>>3)+(y>>3))&7] — pure horizontal bars would be
-             * shear-INVISIBLE (constant-along-x is shift-invariant).
+             * host → display. Two modes:
+             *   SHIM_PATTERN_FILL=1|checker — 8-colour 8-px checkerboard,
+             *     palette[((x>>3)+(y>>3))&7]; at-a-glance triage. NOTE the
+             *     periodicity blind spot: repeats every 16 px, so a
+             *     translation by a multiple of 16 is invisible — and the
+             *     duplication artifact IS a translation. Use =ramp to
+             *     measure.
+             *   SHIM_PATTERN_FILL=ramp — coordinate ramp; every pixel
+             *     encodes its own SOURCE coordinates, so a screenshot
+             *     gives measured offsets, not just a verdict:
+             *       R = x & 0xFF,  G = y & 0xFF,
+             *       B = ((x>>8) & 0x0F) | (((y>>8) & 0x0F) << 4)
+             *     (the B tier exists because R alone repeats every 256 px
+             *     — the same alias one level up as the checkerboard's 16;
+             *     with B, coordinates decode uniquely to 4096²).
+             *     Decoding: x = R + 256*(B & 0xF), y = G + 256*(B >> 4).
              * READ THE RESULT AS (pre-registered):
-             *   staircase/sheared checkerboard → stride fault downstream
-             *     (virgl unpack / transfer box / scatter list pitch)
-             *   clean checkerboard DUPLICATED at destinations → composite
-             *     destinations (Gecko/PixelHostingView drawing twice)
+             *   staircase/shear (R drifting relative to y) → stride fault
+             *     downstream (virgl unpack / transfer box / scatter pitch)
+             *   duplicated regions whose encoded coordinates disagree with
+             *     their screen position → composite destinations, and the
+             *     disagreement IS the measured offset (read R,G,B, decode,
+             *     subtract screen position)
              *   clean and singular → path exonerated; fault is in the
-             *     content — redo with pattern as overlay, not replacement. */
-            static int s_pattern_fill = -1;
-            if (s_pattern_fill < 0) {
-                s_pattern_fill = (getenv("SHIM_PATTERN_FILL") != NULL);
-                if (s_pattern_fill)
+             *     content — redo with pattern as overlay, not replacement.
+             * Channel note: written in the surface's byte order (BGRA
+             * here); if the display chain swaps channel order the constant
+             * tier moves with it — identify channels by structure (one
+             * ramp-along-x, one ramp-along-y, one coarse), not by name. */
+            static int s_pattern_mode = -1;   /* 0=off 1=checker 2=ramp */
+            if (s_pattern_mode < 0) {
+                const char *v = getenv("SHIM_PATTERN_FILL");
+                if (v && (!strcmp(v, "ramp")))
+                    s_pattern_mode = 2;
+                else if (v && *v && strcmp(v, "0"))
+                    s_pattern_mode = 1;
+                else
+                    s_pattern_mode = 0;
+                if (s_pattern_mode)
                     fprintf(stderr, "substitute_cgl: PATTERN FILL ACTIVE "
-                            "(SHIM_PATTERN_FILL) — uploads replaced by "
-                            "checkerboard\n");
+                            "(SHIM_PATTERN_FILL=%s) — uploads replaced by "
+                            "%s\n", v,
+                            s_pattern_mode == 2 ? "coordinate RAMP"
+                                                : "CHECKERBOARD");
             }
-            if (s_pattern_fill) {
+            if (s_pattern_mode) {
                 static const unsigned char pal[8][3] = {
                     {0xff, 0x00, 0x00}, {0x00, 0xff, 0x00},
                     {0x00, 0x00, 0xff}, {0xff, 0xff, 0x00},
@@ -498,10 +525,18 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
                 for (GLsizei y = 0; y < height; y++) {
                     unsigned char *row = (unsigned char *)base + (size_t)y * bpr;
                     for (GLsizei x = 0; x < width; x++) {
-                        const unsigned char *c =
-                            pal[((x >> 3) + (y >> 3)) & 7];
                         unsigned char *px = row + (size_t)x * bpp;
-                        px[0] = c[0]; px[1] = c[1]; px[2] = c[2];
+                        if (s_pattern_mode == 2) {
+                            /* BGRA byte order: B G R */
+                            px[0] = (unsigned char)
+                                ((((x >> 8) & 0x0F)) | ((((y >> 8) & 0x0F)) << 4));
+                            px[1] = (unsigned char)(y & 0xFF);
+                            px[2] = (unsigned char)(x & 0xFF);
+                        } else {
+                            const unsigned char *c =
+                                pal[((x >> 3) + (y >> 3)) & 7];
+                            px[0] = c[0]; px[1] = c[1]; px[2] = c[2];
+                        }
                         if (bpp == 4) px[3] = 0xff;
                     }
                 }
