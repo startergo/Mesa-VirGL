@@ -463,6 +463,50 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             size_t bpp = 4;
             if (format == GL_RGB) bpp = 3;
             /* else RGBA/BGRA 8-bit → 4 */
+
+            /* SHIM_PATTERN_FILL — stride/duplication discriminator for the
+             * PowerFox chrome-artifact class (Mesa-VirGL LEDGER entry 1;
+             * pre-registered before first run). Overwrites the upload
+             * source IN PLACE, using the SURFACE'S OWN stride and bpp, so
+             * the pattern tests every hop DOWNSTREAM of this write:
+             * teximage unpack → virgl encode → winsys transfer → kext →
+             * host → display. Pattern is an 8-colour 8-px checkerboard,
+             * palette[((x>>3)+(y>>3))&7] — pure horizontal bars would be
+             * shear-INVISIBLE (constant-along-x is shift-invariant).
+             * READ THE RESULT AS (pre-registered):
+             *   staircase/sheared checkerboard → stride fault downstream
+             *     (virgl unpack / transfer box / scatter list pitch)
+             *   clean checkerboard DUPLICATED at destinations → composite
+             *     destinations (Gecko/PixelHostingView drawing twice)
+             *   clean and singular → path exonerated; fault is in the
+             *     content — redo with pattern as overlay, not replacement. */
+            static int s_pattern_fill = -1;
+            if (s_pattern_fill < 0) {
+                s_pattern_fill = (getenv("SHIM_PATTERN_FILL") != NULL);
+                if (s_pattern_fill)
+                    fprintf(stderr, "substitute_cgl: PATTERN FILL ACTIVE "
+                            "(SHIM_PATTERN_FILL) — uploads replaced by "
+                            "checkerboard\n");
+            }
+            if (s_pattern_fill) {
+                static const unsigned char pal[8][3] = {
+                    {0xff, 0x00, 0x00}, {0x00, 0xff, 0x00},
+                    {0x00, 0x00, 0xff}, {0xff, 0xff, 0x00},
+                    {0xff, 0x00, 0xff}, {0x00, 0xff, 0xff},
+                    {0xff, 0xff, 0xff}, {0x80, 0x80, 0x80},
+                };
+                for (GLsizei y = 0; y < height; y++) {
+                    unsigned char *row = (unsigned char *)base + (size_t)y * bpr;
+                    for (GLsizei x = 0; x < width; x++) {
+                        const unsigned char *c =
+                            pal[((x >> 3) + (y >> 3)) & 7];
+                        unsigned char *px = row + (size_t)x * bpp;
+                        px[0] = c[0]; px[1] = c[1]; px[2] = c[2];
+                        if (bpp == 4) px[3] = 0xff;
+                    }
+                }
+            }
+
             /* GL_UNPACK_* is CONTEXT-GLOBAL state: values set here
              * leak into the app's subsequent texture uploads unless
              * restored (2026-08-13: ALIGNMENT=1 was left installed
