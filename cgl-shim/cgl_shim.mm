@@ -885,6 +885,17 @@ static void shim_blit_present_buf(id view)
                 fprintf(stderr, "cgl_shim: BUFFER DUMP ACTIVE "
                         "(SHIM_DUMP_BUFFER=%d frames)\n", s_dump_left);
         }
+        /* Trigger-correlated dumping (2026-08-16, after the dump-07
+         * overreach was caught): the artifact is TRANSIENT — it appears
+         * on a URL-bar click — so a startup dump arbitrates nothing.
+         * `touch /tmp/shim_dump_now` arms the next 6 blit dumps; the
+         * flag is consumed on arming. Dump the moment the artifact is
+         * ON SCREEN, then read whether the buffer contains it. */
+        if (s_dump_left == 0 && access("/tmp/shim_dump_now", F_OK) == 0) {
+            unlink("/tmp/shim_dump_now");
+            s_dump_left = 6;
+            fprintf(stderr, "cgl_shim: DUMP ARMED — next 6 blits\n");
+        }
         if (s_dump_left > 0 && w > 0 && h > 0 && w < 8192 && h < 8192 &&
             (w >= 1000 || s_dump_idx < 2)) {   /* main-window surfaces
                                     * must not hide behind small-frame
@@ -942,6 +953,38 @@ static void shim_blit_present_buf(id view)
             uint32_t *bp = (uint32_t *)buf;
             fprintf(stderr, "cgl_shim: drawptr[%d] buf=%p[0]=0x%08x\n",
                     s_draw_ptr_log, (void*)buf, bp ? bp[0] : 0xDEAD);
+        }
+    }
+
+    /* SHIM_LOG_BLITS — double-blit detector (dump verdict: buffer clean,
+     * blit sole content source, screen duplicated → the blit path draws
+     * twice at different destinations). Two swizzles can both reach this
+     * function: shim_childViewDrawRect (Gecko's class) AND the NSView-level
+     * shim_drawRect (whose "never fires for ChildView" claim predates the
+     * ChildView swizzle). Log view class, bounds, and the CTM AT ENTRY —
+     * two consecutive blits with different CTMs is the duplication
+     * mechanism, and the CTM delta IS the measured offset. */
+    {
+        static int s_log_blits = -1;
+        static int s_blit_seq = 0;
+        if (s_log_blits < 0)
+            s_log_blits = (getenv("SHIM_LOG_BLITS") != NULL);
+        if (s_log_blits) {
+            NSGraphicsContext *gctx = [NSGraphicsContext currentContext];
+            double a = 0, b = 0, c = 0, d = 0, tx = 0, ty = 0;
+            if (gctx) {
+                CGAffineTransform t =
+                    CGContextGetCTM((CGContextRef)[gctx graphicsPort]);
+                a = t.a; b = t.b; c = t.c; d = t.d; tx = t.tx; ty = t.ty;
+            }
+            NSRect vb = [view bounds];
+            fprintf(stderr, "cgl_shim: BLIT[%d] view=%s bounds=(%.1f,%.1f "
+                    "%.1fx%.1f) ctm=[%.2f %.2f %.2f %.2f %.1f %.1f]%s\n",
+                    s_blit_seq, class_getName([view class]),
+                    vb.origin.x, vb.origin.y, vb.size.width, vb.size.height,
+                    a, b, c, d, tx, ty,
+                    gctx ? "" : " NO-CTX");
+            s_blit_seq++;
         }
     }
 
