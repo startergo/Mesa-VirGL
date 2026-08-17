@@ -60,6 +60,24 @@ softpipe and virgl ⇒ the fault is downstream of Mesa (winsys / kext /
 host); differs ⇒ the fault is in Mesa's state tracker or the virgl
 encoder. Every pixel-correctness investigation starts here.
 
+**flushBuffer owns the viewport-driven resize — every alternate
+present path inherits it (2026-08-17, the 1x1 lesson).**
+CGLCreateContext allocates a 1x1 buffer; the resize to real size
+lives in flushBuffer's viewport check. An app that never calls
+flushBuffer (the NSOpenGLView idiom, where AppKit flushes through
+private wrappers) therefore renders into a one-pixel buffer and
+everything clips — the presented pixel was REAL, the frame was
+1x1. Any new present path (drawRect-as-flush, flush-as-present,
+future idioms) must resize before the app draws. Same family as
+the pixel-store lesson: flushBuffer's responsibilities travel
+with whoever presents.
+
+**Guards that decline silently are invisible until asked
+(two instances: src=0 on the flush rung; installation ≠ firing
+on the drawRect swizzle — the blit early-returns without
+present_buf and a firing swizzle logs nothing). When a gate's
+negative path matters, log it.**
+
 **Pixel-store state is context-global** (`substitute_cgl.c:466-488`).
 `GL_UNPACK_ALIGNMENT` / `GL_UNPACK_ROW_LENGTH` set for an internal upload
 leak into the app's next texture upload unless saved/restored. The units
