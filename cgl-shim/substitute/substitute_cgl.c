@@ -19,6 +19,8 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <pthread.h>
+#include <stdarg.h>
+#include <unistd.h>
 
 /* ObjC GC support marker. System Preferences (and other GC-required apps
  * on 10.6) abort if any loaded image lacks __objc_image_info with the
@@ -166,6 +168,166 @@ void glClear(GLbitfield mask) {
      * no-context calls without crashing. */
     extern void (*p_glClear)(GLbitfield);
     if (p_glClear) p_glClear(mask);
+}
+
+/* -----------------------------------------------------------------------
+ * THE WALK INSTRUMENT (Mesa-VirGL LEDGER entry 18; scissor falsified
+ * — Gecko makes zero glScissor calls; FMTX falsified — transforms are
+ * shader uniforms. Source read of Gecko 52's CompositorOGL/OGLShaderProgram
+ * established the exact carriers of the destination data:
+ *   SetLayerRects   → glUniform4fv(loc, 4, 16 floats)  DESTINATION rects
+ *   SetTextureRects → glUniform4fv(loc, 4, 16 floats)  SOURCE rects
+ *   uMatrixProj     → glUniformMatrix4fv               transform
+ *   RenderTargetOffset → glUniform2f                   render offset
+ *   draws           → glDrawArrays (TRIANGLES, 6*quads)
+ *   textures        → glBindTexture
+ * Each wrapper forwards to Mesa (lazy dlsym — the glScissor wrapper
+ * pattern, proven live 2026-08-17) and logs under SHIM_WALK_LOG=1.
+ *
+ * NO value dedup by design: repetition is the thing being measured.
+ * A total-line cap (WALK_CAP) bounds the file; the cap logs itself.
+ *
+ * PRE-REGISTERED DECODE (double-tab + duplicated grow-box, both via
+ * RectTextureImage::Draw — MaybeDrawTitlebar / mResizerImage):
+ *   1. same texture/source-rects, DIFFERENT LayerRects across two
+ *      draws → destination offset measured in Gecko's quad data.
+ *   2. identical LayerRects, different MatrixProj/RenderTargetOffset
+ *      → transform-side offset.
+ *   3. two draws with IDENTICAL texture+rects+matrices → Gecko issued
+ *      the same draw twice (duplicate layer); shim-side EXHAUSTED.
+ *   4. duplicate's LayerRects == the widget's PREVIOUS rect (visible
+ *      as history: rect N-1 vs N) → STALE-DESTINATION redraw — ties
+ *      to the entry-9 CGL contract (DoubleBuffer without BackingStore;
+ *      undefined-after-swap on real 10.6, ever-persistent here) and
+ *      the bounded ten-click verdict (only the last position survives).
+ *      Direction check: strip duplicate was DOWN by its height;
+ *      grow-box duplicate observed UP-AND-LEFT — consistent with
+ *      "each duplicate at that widget's own old rect", NOT one shared
+ *      translation.
+ *
+ * Export requirement identical to the GLU shim: without
+ * -Wl,-exported_symbol these never fire (installation ≠ firing class).
+ * ----------------------------------------------------------------------- */
+static int walk_log_on(void)
+{
+    /* Master arm (env) AND a runtime window gate (marker file): the
+     * first build logged unconditionally under the env and burned the
+     * 100k cap during STARTUP (~hundreds of lines per composite) —
+     * long before the artifact window. Now: SHIM_WALK_LOG=1 arms the
+     * instrument, and logging runs only while /tmp/walk_on exists, so
+     * the capture is windowed to exactly the trigger (touch/rm over
+     * ssh; no relaunch needed). access() per call is cheap next to a
+     * composite. */
+    static int s_armed = -1;
+    static int s_banner = 0;
+    if (s_armed < 0)
+        s_armed = (getenv("SHIM_WALK_LOG") != NULL);
+    if (!s_armed) return 0;
+    int window = (access("/tmp/walk_on", F_OK) == 0);
+    if (window && !s_banner) {
+        s_banner = 1;
+        fprintf(stderr, "substitute_cgl: WALK INSTRUMENT ACTIVE "
+                "(SHIM_WALK_LOG=1; window opened — /tmp/walk_on seen)\n");
+    }
+    return window;
+}
+
+#define WALK_CAP 100000
+static unsigned long g_walk_lines = 0;
+static void walk_line(const char *fmt, ...)
+{
+    if (g_walk_lines >= WALK_CAP) return;
+    if (g_walk_lines == WALK_CAP - 1) {
+        g_walk_lines++;
+        fprintf(stderr, "WALK[%lu] CAP REACHED — logging stops\n",
+                g_walk_lines);
+        return;
+    }
+    g_walk_lines++;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
+static void *walk_mesa_fn(const char *name)
+{
+    extern void *g_mesa;
+    return g_mesa ? dlsym(g_mesa, name) : NULL;
+}
+
+void glUniform4fv(GLint location, GLsizei count, const GLfloat *value)
+{
+    if (walk_log_on()) {
+        if (count == 4) {
+            /* LayerRects / TextureRects: 4 rects, each x,y,w,h */
+            walk_line("WALK[%lu] U4fv loc=%d rects: "
+                      "(%.1f,%.1f %.1fx%.1f) (%.1f,%.1f %.1fx%.1f) "
+                      "(%.1f,%.1f %.1fx%.1f) (%.1f,%.1f %.1fx%.1f)\n",
+                      g_walk_lines, (int)location,
+                      value[0], value[1], value[2], value[3],
+                      value[4], value[5], value[6], value[7],
+                      value[8], value[9], value[10], value[11],
+                      value[12], value[13], value[14], value[15]);
+        } else {
+            walk_line("WALK[%lu] U4fv loc=%d count=%d v0..3=%.1f,%.1f,%.1f,%.1f\n",
+                      g_walk_lines, (int)location, (int)count,
+                      value[0], value[1], value[2], value[3]);
+        }
+    }
+    static void (*fn)(GLint, GLsizei, const GLfloat *);
+    if (!fn) fn = (void (*)(GLint, GLsizei, const GLfloat *))
+        walk_mesa_fn("glUniform4fv");
+    if (fn) fn(location, count, value);
+}
+
+void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose,
+                        const GLfloat *value)
+{
+    if (walk_log_on()) {
+        walk_line("WALK[%lu] UMat loc=%d t=%d "
+                  "row0=[%.2f %.2f %.2f %.2f] T=[%.2f %.2f %.2f %.2f]\n",
+                  g_walk_lines, (int)location, transpose ? 1 : 0,
+                  value[0], value[1], value[2], value[3],
+                  value[12], value[13], value[14], value[15]);
+    }
+    static void (*fn)(GLint, GLsizei, GLboolean, const GLfloat *);
+    if (!fn) fn = (void (*)(GLint, GLsizei, GLboolean, const GLfloat *))
+        walk_mesa_fn("glUniformMatrix4fv");
+    if (fn) fn(location, count, transpose, value);
+}
+
+void glUniform2f(GLint location, GLfloat x, GLfloat y)
+{
+    if (walk_log_on())
+        walk_line("WALK[%lu] U2f loc=%d (%.1f,%.1f)\n",
+                  g_walk_lines, (int)location, x, y);
+    static void (*fn)(GLint, GLfloat, GLfloat);
+    if (!fn) fn = (void (*)(GLint, GLfloat, GLfloat))
+        walk_mesa_fn("glUniform2f");
+    if (fn) fn(location, x, y);
+}
+
+void glDrawArrays(GLenum mode, GLint first, GLsizei count)
+{
+    if (walk_log_on())
+        walk_line("WALK[%lu] DRAW mode=0x%x first=%d count=%d\n",
+                  g_walk_lines, (unsigned)mode, (int)first, (int)count);
+    static void (*fn)(GLenum, GLint, GLsizei);
+    if (!fn) fn = (void (*)(GLenum, GLint, GLsizei))
+        walk_mesa_fn("glDrawArrays");
+    if (fn) fn(mode, first, count);
+}
+
+void glBindTexture(GLenum target, GLuint texture)
+{
+    if (walk_log_on())
+        walk_line("WALK[%lu] BIND tex=%u (target 0x%x)\n",
+                  g_walk_lines, (unsigned)texture, (unsigned)target);
+    static void (*fn)(GLenum, GLuint);
+    if (!fn) fn = (void (*)(GLenum, GLuint))
+        walk_mesa_fn("glBindTexture");
+    if (fn) fn(target, texture);
 }
 
 /* Pixel format: use a static token. XUL calls CGLChoosePixelFormat then

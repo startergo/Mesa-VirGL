@@ -126,6 +126,54 @@ reproduces the cliff? Compare wall-vs-parts gap at the transition.**
   so the shim stats blocks are now the dominant per-frame logging and
   the msgbuf no longer wraps.
 
+**THE WALK INSTRUMENT — built, run, and the draw-stream space CLOSED
+(2026-08-17, late evening).** Source read of Gecko 52 established the
+carriers (SetLayerRects/SetTextureRects → glUniform4fv 4×vec4;
+uMatrixProj → glUniformMatrix4fv; RenderTargetOffset → glUniform2f;
+draws via glDrawArrays; textures via glBindTexture). Five wrappers
+defined in substitute_cgl.c and force-exported; env master arm
+SHIM_WALK_LOG=1 plus a RUNTIME WINDOW (/tmp/walk_on marker — the first
+build logged unconditionally and burned the 100k cap during startup).
+Run: capture window open through the github.com navigation (20,032
+draws; 10,879 with layer+texture rect pairs; layer uniform always
+loc=1). DECODE:
+- Same texture-source drawn at >1 destination: **ZERO** — the
+  destination-walk and transform hypotheses are falsified in the
+  quad data (outcomes 1/2 dead).
+- Grow box (15×15): 111 draws, ONE destination ever (1476,895) —
+  yet the screen shows it duplicated up-and-left. The ghost is NOT
+  DRAWN in the current stream.
+- Titlebar: drawn EVERY frame at (0,0 1491×79) — full top coverage,
+  yet a black band + ghost strip sit inside that region.
+- Conclusion: the duplication lives BELOW the draw stream — stale
+  content inside the snapshot TEXTURE (one draw per frame of a
+  texture whose content carries [black band][ghost strip][current
+  strip]) or old pixels persisting below the draw (entry-9 contract:
+  DoubleBuffer-without-BackingStore vs our ever-persistent buffer).
+  Outcome 3 (double-draw) also dead — no within-frame repeats.
+- **Next discriminator (pre-registered): the pattern-fill run on the
+  upload path** — ghost band shows checkerboard → duplication is IN
+  the texture content (upload-side, RectTextureImage snapshot stale);
+  stays black under pattern fill → below the texture path (buffer
+  persistence). Same run answers the black band (drawn-and-covered vs
+  never-uploaded).
+- Third symptom recorded: black band above the ghost strip (absence,
+  not displacement) — user's vacated-region reading is consistent
+  with the persistence family; band-vs-ghost growth correlation is
+  directly checkable in the next run.
+
+**SEPARATE ITEM (kept apart from the walk — evidence does not connect
+them): missing glyphs on github.com.** Page loads (HTTPS, lock,
+scrollbar, shapes/gradients/layout correct) but text is nearly absent:
+nav dropdown arrows bare, hero headline a single "H", empty search
+field/buttons. Chrome + system-font pages (start page, google.com)
+rendered text fine → suspicion: web-font path. STRIKING resemblance to
+the FIXED 2026-08-13 pixel-store bug ("glyph atlases at progressive
+offsets" — ROW_LENGTH reset bug; single-"H" = first-glyph-survives
+signature). User's discriminators queued: (a) no-web-font site; (b)
+layers.acceleration.disabled=true — glyphs appear on software
+compositor → GL path; still missing → font loading/rasterisation.
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead

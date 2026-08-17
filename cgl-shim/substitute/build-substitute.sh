@@ -88,6 +88,11 @@ clang "${COMMON_CFLAGS[@]}" \
     -Wl,-exported_symbol,_gluLookAt \
     -Wl,-exported_symbol,_gluOrtho2D \
     -Wl,-exported_symbol,_gluPickMatrix \
+    -Wl,-exported_symbol,_glUniform4fv \
+    -Wl,-exported_symbol,_glUniformMatrix4fv \
+    -Wl,-exported_symbol,_glUniform2f \
+    -Wl,-exported_symbol,_glDrawArrays \
+    -Wl,-exported_symbol,_glBindTexture \
     -Wl,-reexport_library,"$SUBST_DIR/libOSMesa.8.dylib" \
     -Wl,-reexport_library,"$REAL_GL" \
     -Wl,-rpath,@loader_path \
