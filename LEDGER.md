@@ -83,7 +83,14 @@ against our virgl-on-host-GPU GL). Negative control built in:
 **Landing verified:** `PIXFMT_STRIP[1] dropped NSOpenGLPFAAccelerated
 from 3-attr list` (Gecko's exact list), zero FEATURE_FAILURE, ~3900
 frames, renderer=virgl throughout, **user verdict "GL composited
-chrome."** Negative control NOT yet exercised (queued).
+chrome."** Negative control EXERCISED same evening (4-vCPU boot, same
+profile, one-variable relaunch): `SHIM_KEEP_ACCEL_ATTR=1` → zero
+PIXFMT_STRIP lines, `FEATURE_FAILURE_OPENGL_CREATE_CONTEXT` at t=12.1,
+CGL_FWD=0, view-path-only frames, **user visual: black** — the
+pre-fix symptom, reproduced on demand. Recovery relaunch without the
+env: PIXFMT_STRIP fired, zero FEATURE_FAILURE, ~1470 frames composited.
+**The strip is load-bearing; the only variable between black and
+GL-composited is that env var.**
 
 **New frontier — typing-burst congestion collapse (unattributed):**
 after ~3500 healthy frames (~300 ms wall each), a typing burst hit and
