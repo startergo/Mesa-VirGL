@@ -49,6 +49,7 @@ int _glapi_get_dispatch_table_size(void);
  * via dlsym(libOSMesa.8.dylib). */
 extern void   (*p_glFinish)(void);
 extern GLenum (*p_glGetError)(void);
+extern void   (*p_glGetFloatv)(GLenum, GLfloat *);
 extern void   (*p_glGetIntegerv)(GLenum, GLint *);
 extern const GLubyte *(*p_glGetString)(GLenum);
 extern void   (*p_glReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *);
@@ -687,6 +688,42 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     void *tmp = sc->render_buf;
     sc->render_buf = sc->present_buf;
     sc->present_buf = tmp;
+    /* FMTX probe at COMPOSITE time (LEDGER entry 7): URL-bar clicks
+     * fire NO new uploads, so the upload-site MTX probe never samples
+     * artifact frames. Sample HERE — every flushBuffer, the state Gecko
+     * leaves at frame end. Discriminator (pre-registered): a translation
+     * component growing by ~h per click = accumulating GL state (shim's
+     * to save/restore); identity every frame = accumulation is inside
+     * Gecko's own draw loop, shim exonerated. */
+    if (p_glGetFloatv && p_glGetIntegerv) {
+        /* Log on CHANGE only (cap redesign after 80 identity startup
+         * frames exhausted the first cap): identity-forever prints one
+         * line; a walking translation prints each step. */
+        static GLfloat s_last[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
+        static long s_fmtx_count = 0, s_fmtx_changes = 0;
+        s_fmtx_count++;
+        GLfloat mv[16], pr[16];
+        GLint fmode = 0;
+        p_glGetFloatv(GL_MODELVIEW_MATRIX, mv);
+        p_glGetFloatv(GL_PROJECTION_MATRIX, pr);
+        p_glGetIntegerv(GL_MATRIX_MODE, &fmode);
+        GLfloat cur[8] = {mv[12], mv[13], mv[14], mv[15],
+                          pr[12], pr[13], pr[14], pr[15]};
+        int changed = (s_last[0] < 0);
+        for (int i = 0; i < 8; i++)
+            if (cur[i] != s_last[i]) changed = 1;
+        if (changed) {
+            s_fmtx_changes++;
+            for (int i = 0; i < 8; i++) s_last[i] = cur[i];
+            fprintf(stderr, "cgl_shim: FMTX[change#%ld frame#%ld] "
+                    "mode=%u mv_t=[%.1f %.1f %.1f %.1f] "
+                    "pr_t=[%.1f %.1f %.1f %.1f]\n",
+                    s_fmtx_changes, s_fmtx_count, (unsigned)fmode,
+                    cur[0], cur[1], cur[2], cur[3],
+                    cur[4], cur[5], cur[6], cur[7]);
+        }
+    }
+
     /* Re-bind context to new render buffer.
      * THE correctness-critical step: without this, subsequent rendering
      * writes into the buffer the main thread is reading. */

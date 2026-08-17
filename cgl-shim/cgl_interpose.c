@@ -157,6 +157,7 @@ void   (*p_glDisable)(GLenum);
 void   (*p_glEnd)(void);
 void   (*p_glFinish)(void);
 GLenum (*p_glGetError)(void);
+void   (*p_glGetFloatv)(GLenum, GLfloat *);
 void   (*p_glGetIntegerv)(GLenum, GLint *);
 const GLubyte *(*p_glGetString)(GLenum);
 void   (*p_glLoadIdentity)(void);
@@ -187,6 +188,7 @@ static void gl_interpose_init(void)
     GL_DLSYM(glEnd);
     GL_DLSYM(glFinish);
     GL_DLSYM(glGetError);
+    GL_DLSYM(glGetFloatv);
     GL_DLSYM(glGetIntegerv);
     GL_DLSYM(glGetString);
     GL_DLSYM(glLoadIdentity);

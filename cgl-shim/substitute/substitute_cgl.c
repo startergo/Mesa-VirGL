@@ -46,6 +46,7 @@ const uint32_t _objc_image_info[2] = { 0, 2 };
  * constructor via dlsym on libOSMesa). */
 extern void   (*p_glPixelStorei)(GLenum, GLint);
 extern void   (*p_glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *);
+extern void   (*p_glGetFloatv)(GLenum, GLfloat *);
 extern GLenum (*p_glGetError)(void);
 extern void   (*p_glGetIntegerv)(GLenum, GLint *);
 
@@ -529,6 +530,34 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
         IOSurfaceRef surf = (IOSurfaceRef)iosurface;
         if (!surf || plane != 0)
             return kCGLBadContext;
+
+        /* MATRIX-ACCUMULATION PROBE (LEDGER entry 7, pre-registered):
+         * N clicks → N+1 copies at 0,h,2h = a repeated translation
+         * composing across frames — GL state persisting that Gecko
+         * believes it resets. Leading suspect: matrix-management calls
+         * (push/pop/loadidentity) no-op'ing outside the wrapper set
+         * while transforms reach Mesa. Log the matrix stacks at each
+         * upload; a translation component growing by ~h per call is
+         * the whole answer. */
+        if (p_glGetFloatv && p_glGetIntegerv) {
+            static int s_mtx_log = 0;
+            if (s_mtx_log < 24) {
+                s_mtx_log++;
+                GLfloat mv[16], pr[16];
+                GLint mode = 0, vp[4] = {0, 0, 0, 0};
+                p_glGetFloatv(GL_MODELVIEW_MATRIX, mv);
+                p_glGetFloatv(GL_PROJECTION_MATRIX, pr);
+                p_glGetIntegerv(GL_MATRIX_MODE, &mode);
+                p_glGetIntegerv(GL_VIEWPORT, vp);
+                fprintf(stderr, "substitute_cgl: MTX[%d] mode=%u "
+                        "mv=[%.1f %.1f %.1f %.1f] pr=[%.1f %.1f %.1f %.1f] "
+                        "vp=%d,%d %dx%d\n",
+                        s_mtx_log, (unsigned)mode,
+                        mv[12], mv[13], mv[14], mv[15],
+                        pr[12], pr[13], pr[14], pr[15],
+                        vp[0], vp[1], vp[2], vp[3]);
+            }
+        }
 
         if (!OSMesaGetCurrentContext() || !p_glTexImage2D || !p_glPixelStorei) {
             static int s_noc_log = 0;

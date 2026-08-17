@@ -15,7 +15,59 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-16 (google.com renders through the full stack; colors CLOSED; artifact ACCUMULATES (triplicate on 2nd click); black rectangles new; pattern-fill discriminator pre-registered)
+Last updated: 2026-08-16 (MATRIX DISCRIMINATOR: identity across artifact frames — accumulation is inside Gecko's draw loop, shim exonerated; page-content artifact NOT closed — timeline correction; next unit: powerfox-browser compositor)
+
+---
+
+## 2026-08-16 (entry 7) — FMTX verdict: Gecko's draw loop; shim exonerated on every instrumentable axis
+
+**The matrix discriminator (change-gated probe at flushBuffer, frame
+end): after three URL-bar clicks with the chrome strip duplicated on
+screen, the log holds exactly ONE line — identity, every frame,
+artifact frames included. Zero foreign/kCGLBadContext activity.**
+Per the pre-registration: the accumulation is INSIDE GECKO'S OWN
+DRAW LOOP. The shim's GL state is exonerated — a persistent
+accumulating matrix would survive to frame end by construction
+(persistence was the mechanism); identity-at-frame-end kills it.
+Caveat: a translation applied and popped WITHIN a frame would not
+show at frame end — but that cannot produce cross-FRAME
+accumulation, which is the observed signature (N clicks → N+1
+copies persisting until full repaint).
+
+**Page-content artifact — TIMELINE CORRECTION (the hopeful
+attribution does not hold):** the "fixed by the forward" reading
+fails both confirmations:
+- Build timeline: session-restore duplication = pf7 (28de34cf,
+  PRE-forward); google.com search-box duplication + black rects =
+  pf8 (7a53ce73 = 8e13519, the forward ALREADY IN); current clean
+  page = pf12 (d9e0e568, logging-only delta from pf8). Page
+  duplication existed BOTH pre- and post-forward, and pf8→pf12
+  contains no functional change.
+- kCGLBadContext: zero now — but also zero in pf8 WHILE google.com
+  duplicated (entry 5's branch 3: the rejection path was never
+  exercised; it caused nothing observed).
+**The page-content artifact is INTERMITTENT/state-dependent, NOT
+closed.** What IS established: a proper before/after on identical
+content (same session-restore page, same trigger clicks) drawing
+clean — intermittency is real, not screenshot noise.
+
+**Chrome strip: persists on EVERY build (pf7→pf12); now a
+Gecko-side question.** The shim/transport is exonerated on every
+axis we can instrument: upload path (pattern-fill: clean, singular),
+readback (pattern + dumps), blit (drop-blit sole-drawer + CTM log:
+single view, single CTM, no double-fire), GL state (this entry),
+CGL policy (forward correct, unexercised), geometry coherence
+(bounds = buffer = viewport).
+
+**NEXT UNIT — powerfox-browser source (read-only reference at
+~/powerfox-browser): the strip's draw path.** Signature to hunt:
+on toolbar invalidation, a quad/layer/effect ADDED per damage
+event and not retired — accumulating draw list (0, h, 2h stacking,
+cleared by full repaint). Candidates: the toolbar's surface layer
+compositing (surface → texture → compositor quad bookkeeping),
+damage-region → destination-offset arithmetic, layer retention
+across invalidations. The one-upload-two-draws fact (entries 4/6)
+constrains it: same texture, successive draws at h-multiples.
 
 ---
 
