@@ -15,6 +15,64 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-17 (entry 16: drawRect-as-flush-point LANDED FOR THE CLASS — full-frame present proven (1680x1050, real content); the 1x1 lesson; Flurry exits after one frame — animateOneFrame lead; user roadmap recorded: walk measurement → drawRect fix (DONE) → GA CFPlugIn)
+
+---
+
+## 2026-08-17 (entry 16) — drawRect-as-flush-point: landed for the class, proven with a full frame
+
+**Diagnosis chain (user's NSOpenGLView theory, confirmed):** zero
+CGLGetCurrentContext + zero flushes = the app doesn't present;
+AppKit does, via private __NS_CGL* wrappers interposition can't
+reach. AppleFlurryOpenGLView is the idiom's instance here. The
+swizzle was already installed on that class; a firing probe
+proved it FIRES (one line added; installation ≠ firing had been
+invisible — the blit early-returns silently without present_buf).
+
+**The fix (env-gated SHIM_DRAWRECT_PRESENT, armed at setView by
+associating the shim_ctx on the view):** resize to view bounds
+BEFORE the app's drawRect (main thread — AppKit safe), call the
+original (app draws GL), then flushBuffer-equivalent (readback +
+swap + rebind) and the existing blit. Covers the whole
+NSOpenGLView idiom — a large class of era apps, not Flurry
+specifically (user: universal-driver work, do it for the class).
+
+**THE 1x1 LESSON (first run after landing):** presented frame was
+`drawRect[0] 1x1` — flushBuffer owns the viewport-driven resize;
+apps that never flushBuffer stay at CGLCreateContext's initial
+1x1 allocation and everything clips to one pixel (presented pixel
+was REAL — 0xff000000 — proving content in a one-pixel frame).
+The pre-draw resize fixed it: second run shows `resized to
+1680x1050` then `drawRect[0] 1680x1050 pixel RGBA(0,0,0,255)` —
+**a full-frame present of real content. The idiom works end to
+end.**
+
+**Flurry's remaining quirk (named, not chased):** the engine
+exits after that one frame. ScreenSaver apps animate via
+-animateOneFrame (a timer calling the SAVER, drawing outside
+drawRect into the current context) — those draws land in our
+render_buf with no present until a drawRect that never comes, and
+the engine terminates (~90s, cause unattributed). NEXT
+PRESENTATION ITEM: present on animate too (hook -animateOneFrame
+or a frame-timer), same machinery. ALSO noted: one non-
+deterministic early AppKit exception (`setObject:forKey: nil
+key`, Terminating) on an identical relaunch — environmental
+variance, not the build (the re-run of the same binary worked);
+unexplained, watch for recurrence.
+
+**User roadmap (recorded verbatim in intent):** (1) finish the
+WALK measurement (render-offset/scissor log — last shim-side
+question on the chrome artifact); (2) land drawRect-as-flush —
+DONE this entry, for the class; (3) the GA CFPlugIn — connects
+the two halves: apps attach to the accelerator, the shim presents
+into a real CGS surface WindowServer composites instead of
+readback+blit; builds on the working surface path; the
+architectural answer to presentation. GLD stays optional
+(integration, not capability — Mesa already gives GL 2.1).
+Presentation is the unfinished service of the three (winsys done,
+loader done) — every remaining problem is presentation.
+
+---
 Last updated: 2026-08-17 (entry 15: Flurry CGL census — CGLFlushDrawable FALSIFIED (zero calls); present path is neither -flushBuffer nor CGLFlushDrawable; single-buffered/-flush or CVDisplayLink queued; direct-CGL present hook landed as infrastructure)
 
 ---

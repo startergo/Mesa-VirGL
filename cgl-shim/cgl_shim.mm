@@ -332,8 +332,10 @@ static void shim_timing_record_draw(uint64_t blit_ticks)
 /* Associated object key for present_buf on the view (for drawRect swizzle) */
 static char kPresentBufKey;
 static char kPresentSizeKey;
+static char kScKey;
 #define PRESENT_BUF_KEY (&kPresentBufKey)
 #define PRESENT_SIZE_KEY (&kPresentSizeKey)
+#define SC_KEY (&kScKey)
 
 static void shim_present(NSOpenGLContext *nsc){
     struct shim_ctx *sc = get_shim_ctx(nsc);
@@ -899,6 +901,20 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         if (view) [view retain];
         objc_assign_strongCast((id)view, (id *)&sc->view);
 
+        /* NSOpenGLView-idiom support (LEDGER entry 16): associate the
+         * shim_ctx on the view so the drawRect swizzle can present on
+         * return from the app's draw — the idiom where AppKit flushes
+         * through private __NS_CGL* wrappers our swizzles cannot see.
+         * Gated by SHIM_DRAWRECT_PRESENT while experimental. */
+        if (getenv("SHIM_DRAWRECT_PRESENT")) {
+            objc_setAssociatedObject(view, SC_KEY,
+                [NSValue valueWithPointer:(void *)sc],
+                OBJC_ASSOCIATION_RETAIN);
+            fprintf(stderr, "cgl_shim: DRAWRECT_PRESENT armed for view "
+                    "class %s sc=%p\n", class_getName([view class]),
+                    (void *)sc);
+        }
+
         /* Lazily swizzle the ACTUAL Gecko view class's drawRect:.
          * The NSView-level swizzle never runs under Gecko: ChildView
          * overrides drawRect: and per-class dispatch lets the override
@@ -1242,12 +1258,99 @@ static void shim_blit_present_buf(id view)
 
 - (void)shim_childViewDrawRect:(NSRect)dirtyRect
 {
-    /* Call through FIRST: Gecko's implementation drives the compositor
-     * sync (ChildView drawRect → PaintWindow → SendFlushRendering)
-     * that produces fresh present_buf frames — keep that. Then blit
-     * our pixels over whatever it left on screen (presently nothing:
-     * its IOSurface present fails with kCGLBadContext). */
-    [self shim_childViewDrawRect:dirtyRect];  /* original */
+    /* FIRING probe (LEDGER entry 16): installation was proven
+     * ("drawRect swizzled on <class>"), firing never was — the blit
+     * below early-returns silently when no present_buf exists, so a
+     * firing swizzle is invisible. If this logs for
+     * AppleFlurryOpenGLView, the app-drawRect-as-flush-point hook is
+     * already in place. */
+    {
+        static int s_cvd_log = 0;
+        if (s_cvd_log < 10) {
+            s_cvd_log++;
+            fprintf(stderr, "cgl_shim: drawRect FIRED on %s\n",
+                    class_getName([self class]));
+        }
+    }
+
+    /* NSOpenGLView-idiom flush point (entry 16): the app drew its GL
+     * IN drawRect and expects AppKit's private flush — which never
+     * reaches us. Do the flushBuffer-equivalent here: readback + swap
+     * (cgl_shim_present_from_cgl, minus its setNeedsDisplay — we are
+     * already in drawRect), then the blit below presents. Gated by
+     * SHIM_DRAWRECT_PRESENT (setView arms the association only then). */
+    {
+        NSValue *scv = objc_getAssociatedObject(self, SC_KEY);
+        if (scv) {
+            struct shim_ctx *sc0 =
+                (struct shim_ctx *)[scv pointerValue];
+            /* RESIZE BEFORE THE APP DRAWS (entry 16, the 1x1 lesson:
+             * flushBuffer owns the viewport-driven resize; apps that
+             * never flushBuffer stay at the initial 1x1 allocation and
+             * everything clips to one pixel — observed: drawRect[0]
+             * 1x1, presented pixel real but frame one pixel). We are
+             * on the main thread inside drawRect — AppKit is safe. */
+            NSView *selfView = (NSView *)self;
+            NSRect b = [selfView bounds];
+            if (sc0 && (sc0->width != (int)b.size.width ||
+                        sc0->height != (int)b.size.height) &&
+                pthread_mutex_trylock(&sc0->lock) == 0) {
+                free_buffers(sc0);
+                alloc_buffers(sc0, (int)b.size.width, (int)b.size.height);
+                if (sc0->osmesa_ctx && sc0->render_buf)
+                    OSMesaMakeCurrent(sc0->osmesa_ctx, sc0->render_buf,
+                                      GL_UNSIGNED_BYTE, sc0->width,
+                                      sc0->height);
+                pthread_mutex_unlock(&sc0->lock);
+                fprintf(stderr, "cgl_shim: DRAWRECT_PRESENT resized to "
+                        "%dx%d\n", sc0->width, sc0->height);
+            }
+        }
+    }
+
+    [self shim_childViewDrawRect:dirtyRect];  /* original — app draws GL */
+
+    {
+        NSValue *scv = objc_getAssociatedObject(self, SC_KEY);
+        if (scv) {
+            struct shim_ctx *sc =
+                (struct shim_ctx *)[scv pointerValue];
+            if (sc && sc->present_buf) {
+                if (sc->osmesa_ctx && sc->render_buf) {
+                    OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
+                                      GL_UNSIGNED_BYTE, sc->width,
+                                      sc->height);
+                    substitute_cgl_tls_set((CGLContextObj)sc);
+                }
+                if (p_glFinish) p_glFinish();
+                if (p_glReadPixels && sc->render_buf &&
+                    sc->width > 0 && sc->height > 0)
+                    p_glReadPixels(0, 0, sc->width, sc->height,
+                                   GL_RGBA, GL_UNSIGNED_BYTE,
+                                   sc->render_buf);
+                void *tmp = sc->render_buf;
+                sc->render_buf = sc->present_buf;
+                sc->present_buf = tmp;
+                if (sc->osmesa_ctx && sc->render_buf)
+                    OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
+                                      GL_UNSIGNED_BYTE, sc->width,
+                                      sc->height);
+                /* store for the blit below (same as shim_present) */
+                NSData *bufData =
+                    [NSData dataWithBytesNoCopy:sc->present_buf
+                        length:(NSUInteger)(sc->width * sc->height * 4)
+                        freeWhenDone:NO];
+                NSDictionary *sizeDict =
+                    [NSDictionary dictionaryWithObjectsAndKeys:
+                        [NSNumber numberWithInt:sc->width], @"w",
+                        [NSNumber numberWithInt:sc->height], @"h", nil];
+                objc_setAssociatedObject(self, PRESENT_BUF_KEY,
+                                         bufData, OBJC_ASSOCIATION_RETAIN);
+                objc_setAssociatedObject(self, PRESENT_SIZE_KEY,
+                                         sizeDict, OBJC_ASSOCIATION_RETAIN);
+            }
+        }
+    }
 
     shim_blit_present_buf(self);
 }
