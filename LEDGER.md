@@ -15,7 +15,66 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-16 (entry 8: FIFTH CONFOUND recorded — intermittency needs run counts; buffer-persistence discriminator BUILT (SHIM_CLEAR_FRAME), pre-registered; persistence model now explains every observation)
+Last updated: 2026-08-16 (entry 9: CLEAR_FRAME RUN — magenta everywhere, clicks painted nothing; THE CONTRACT FOUND: Gecko requests DoubleBuffer WITHOUT BackingStore — back buffer undefined-after-swap by Apple semantics; our ever-persistent buffer converts stray draws into permanent artifacts; fix defined by contract, one keyboard test decides safety)
+
+---
+
+## 2026-08-16 (entry 9) — clear-frame run: magenta everywhere; the CGL contract found in Gecko source; session close
+
+**SHIM_CLEAR_FRAME run (63d1ccd6):** banner active; startup diag
+showed real content flowing early (readbacks returning page gray
+0xffe8e8e8); then the screen AND the buffers went 100% magenta
+(mean B=255,G=0,R=255; zero non-magenta rows across 11 armed
+dumps) — the user's blind URL-bar clicks painted NOTHING over the
+clear (they could not see the window; position-guessing). Two
+readings recorded: (a) Gecko composited nothing further because
+no damage event landed (idle/no valid input) — consistent with
+damage-driven compositing; (b) compositing stopped when the
+cleared buffer broke an assumption. INCONCLUSIVE on the
+per-click-draw detail. Conclusive part: screen content is NOT
+rebuilt from scratch per frame in this configuration.
+
+**THE CONTRACT (read from powerfox-browser source, not inferred):
+GLContextProviderCGL.mm:194-209 — the double-buffered context
+requests NSOpenGLPFADoubleBuffer and NOT NSOpenGLPFABackingStore.**
+Apple semantics: without the backing-store attribute the back
+buffer is UNDEFINED after swap. Gecko works on real hardware
+under those rules.
+
+**The artifact's mechanism, now defined by contract:** our shim
+provides an EVER-PERSISTENT back buffer — stricter than the
+contract requires — which converts one-frame stray draws
+(invisible on real hardware: wiped or arbitrary at next swap)
+into PERMANENT visible artifacts. The accumulating strips are
+that class: drawn once per click at walked positions, never
+discarded. No accumulating draw LIST exists in Gecko (consistent
+with FMTX identity, entry 7); the accumulation lived in OUR
+buffer semantics all along.
+
+**Fix direction (defined by the contract, safety TBD by one
+measurement):** emulate the requested semantics — present and
+leave the back buffer undefined (cleared). The magenta experiment
+WAS exactly that semantic, and Gecko's response suggests
+10.6-era Apple hardware may have RETAINED back-buffer contents
+in practice (undefined ≠ discarded — Gecko may effectively rely
+on persistence that real 10.6 CGL happened to provide). THE
+DECIDING TEST (one keypress, no build): with a clear-frame run
+up, press Cmd+L and TYPE — keyboard input reaches the focused
+browser regardless of screen state, guaranteeing damage.
+Content repaints over magenta ⇒ full-redraw-on-damage ⇒
+swap-discard emulation is SAFE and is the fix (clear to
+background, not magenta). Nothing repaints ⇒ Gecko depends on
+de-facto persistence ⇒ fix must instead target the stray draws
+themselves (find them in Gecko's toolbar repaint path with the
+one-draw-per-click fact).
+
+**Session state at close:** Mesa-VirGL at 756325d0; guest running
+the clear-frame build (magenta, pid 3101); every instrument
+landed and recorded (pattern-fill both modes, drop-upload,
+drop-blit, blit log, buffer dumps + flag arming, FMTX, matrix
+probes, clear-frame, numeric BMP reader at /tmp/bmpread.py);
+shim exonerated on every axis except buffer semantics — which
+turns out to be the artifact.
 
 ---
 
