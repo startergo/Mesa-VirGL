@@ -68,6 +68,33 @@ de-facto persistence ⇒ fix must instead target the stray draws
 themselves (find them in Gecko's toolbar repaint path with the
 one-draw-per-click fact).
 
+**User refinement at close — the artifact needs TWO separable
+ingredients, only one accounted for:**
+1. **The WALK: destination moves by h per repaint — UNEXPLAINED.**
+   Pure persistence of a stationary stray gives ONE extra copy in
+   one place, however many frames pass; observed is one NEW copy
+   per click at 0, h, 2h.
+2. **The PERSISTENCE: buffer never discards — accounted for**
+   (entry 9's contract finding).
+Fix only 2 → single misplaced strip remains. Fix only 1 → correct
+strip redrawn in place, invisible. BOTH needed. The walk needs
+finding either way.
+
+**Tension with the magenta result, to resolve before banking the
+contract story:** if Gecko truly treated the back buffer as
+undefined-after-swap it would redraw the full window each frame —
+and the magenta would have been overwritten. It wasn't → Gecko
+relies on persistence for undamaged regions (de-facto, whatever
+the pixel format says), OR the strip comes from a path outside
+the GL composite. FIRST QUESTION of the source session: does
+Gecko's Mac compositor redraw the full window per composite, or
+scissor to damage and rely on the rest surviving? (First grep:
+CompositorOGL uses per-QUAD clip scissors (:608,:1044), not a
+frame-level damage scissor — the Render-path traversal read
+decides.) The answer chooses the fix side: shim-side (emulate
+discard) vs Gecko-side (find the walk). The walk is the target
+either way.
+
 **Session state at close:** Mesa-VirGL at 756325d0; guest running
 the clear-frame build (magenta, pid 3101); every instrument
 landed and recorded (pattern-fill both modes, drop-upload,
