@@ -15,6 +15,49 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-16 (entry 10: Cmd+L/open test RUN — post-navigation frames pure magenta, but CONFOUNDED by uncharacterized virgl readback semantics; corner-stamp instrument pre-registered; compositor question returns to the source read)
+
+---
+
+## 2026-08-16 (entry 10) — the Cmd+L test run: INCONCLUSIVE, new confound named; readback semantics is the next instrument
+
+**Run:** `open -a PowerFox http://example.com/` used as the
+damage trigger (stronger than Cmd+L; ssh cannot inject keys).
+First attempt VOIDED: the running magenta instance was
+Apple-Event-unresponsive, so `open` RELAUNCHED the app without
+the shim env (operational datum: check pid before trusting a
+forwarded event). Redone cleanly: fresh shim instance
+(SHIM_CLEAR_FRAME=1, pid 5181, pf14.log), settled, URL
+forwarded — same process, frames flowed (6 armed dumps).
+
+**Result: post-navigation frames are PURE MAGENTA (910/910
+rows).** But NOT interpretable as "Gecko does not repaint":
+- Startup diagnostics under the SAME clear show readbacks
+  DELIVERING content (preswap render[0]=0xffffffff opaque white,
+  pf14) — the readback path works with the clear active, early.
+- Late frames pure magenta ⇒ somewhere between, readbacks
+  stopped delivering host content into the guest buffer — OR
+  Gecko genuinely stopped compositing. Distinguisher missing:
+  **the virgl OSMesa readback semantics are UNCHARACTERIZED**
+  (full-frame TRANSFER_FROM_HOST per call vs dirty-region
+  transfers + guest-buffer passthrough — the latter feeds my own
+  clear back for undamaged regions by construction).
+
+**NEXT INSTRUMENT (pre-registered, one build): corner-stamp the
+guest render_buf with a known pattern immediately before
+p_glReadPixels; after the readback, check whether the stamp
+survives in undamaged corners.** Survives ⇒ readback is
+dirty-region/guest-passthrough (and the magenta experiment
+measured the readback, not Gecko — persistence conclusion needs
+redo); Overwritten ⇒ full-frame transfer (and the magenta WAS
+Gecko's behavior: no repaint on damage ⇒ de-facto persistence
+dependence ⇒ shim-side discard emulation unsafe).
+
+**The compositor question (full-window vs damage-scissored
+redraw) returns to the powerfox-browser source read — unaffected
+by this confound. The walk remains the standing target.**
+
+---
 Last updated: 2026-08-16 (entry 9: CLEAR_FRAME RUN — magenta everywhere, clicks painted nothing; THE CONTRACT FOUND: Gecko requests DoubleBuffer WITHOUT BackingStore — back buffer undefined-after-swap by Apple semantics; our ever-persistent buffer converts stray draws into permanent artifacts; fix defined by contract, one keyboard test decides safety)
 
 ---
