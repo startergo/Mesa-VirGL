@@ -630,6 +630,35 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     p_glFinish();  /* flush Mesa's command queue to the host */
     g_timing.t2 = mach_absolute_time();
 
+    /* CORNER-STAMP instrument (LEDGER entry 10, pre-registered):
+     * stamp varying magic values into the 4 corner blocks of the GUEST
+     * render_buf immediately before glReadPixels, read them back
+     * immediately after. SURVIVES ⇒ the readback is dirty-region /
+     * guest-passthrough (undamaged regions are NOT overwritten with
+     * host content — and the SHIM_CLEAR_FRAME magenta experiment
+     * measured the readback, not Gecko; persistence conclusion needs
+     * redo). OVERWRITTEN ⇒ full-frame host transfer per readback
+     * (and the magenta WAS Gecko's behavior). */
+    static long s_stamp_frame = 0;
+    static int s_stamp_log = 0;
+    uint32_t stamp_val = 0;
+    uint32_t post[4] = {0, 0, 0, 0};
+    int stamp_ok = (sc->render_buf && sc->width >= 16 && sc->height >= 16);
+    if (stamp_ok) {
+        s_stamp_frame++;
+        stamp_val = 0xCAFE0000u | ((uint32_t)s_stamp_frame & 0xFFFFu);
+        uint32_t *b = (uint32_t *)sc->render_buf;
+        int W = sc->width, H = sc->height;
+        for (int dy = 0; dy < 8; dy++) {
+            for (int dx = 0; dx < 8; dx++) {
+                b[(size_t)dy * W + dx] = stamp_val;                 /* TL */
+                b[(size_t)dy * W + (W - 8 + dx)] = stamp_val;       /* TR */
+                b[(size_t)(H - 8 + dy) * W + dx] = stamp_val;       /* BL */
+                b[(size_t)(H - 8 + dy) * W + (W - 8 + dx)] = stamp_val; /* BR */
+            }
+        }
+    }
+
     /* Force readback from host GPU to guest buffer. virgl renders on the
      * host; the guest-side OSMesa buffer only gets the pixels when a
      * TRANSFER_FROM_HOST_3D fires. softpipe renders directly into the
@@ -637,6 +666,24 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * zero-filled and the window shows white. */
     p_glReadPixels(0, 0, sc->width, sc->height, GL_RGBA, GL_UNSIGNED_BYTE,
                    sc->render_buf);
+
+    if (stamp_ok) {
+        uint32_t *b = (uint32_t *)sc->render_buf;
+        int W = sc->width, H = sc->height;
+        post[0] = b[0];
+        post[1] = b[W - 1];
+        post[2] = b[(size_t)(H - 1) * W];
+        post[3] = b[(size_t)(H - 1) * W + (W - 1)];
+        int surv = 0;
+        for (int i = 0; i < 4; i++) if (post[i] == stamp_val) surv++;
+        if (s_stamp_log < 30) {
+            s_stamp_log++;
+            fprintf(stderr, "cgl_shim: STAMP[%ld] val=0x%08x post="
+                    "[0x%08x 0x%08x 0x%08x 0x%08x] survived=%d/4\n",
+                    s_stamp_frame, stamp_val,
+                    post[0], post[1], post[2], post[3], surv);
+        }
+    }
     g_timing.t3 = mach_absolute_time();
 
     /* Diagnostic: scratch readback with sentinels + error check.

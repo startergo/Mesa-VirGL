@@ -15,6 +15,54 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-16 (entry 11: CORNER-STAMP RUN — readback is FULL-FRAME host transfer, 0/4 survival every frame; magenta was Gecko's behavior; persistence ingredient relocated HOST-side — the virgl framebuffer never discards)
+
+---
+
+## 2026-08-16 (entry 11) — corner-stamp run: readback = full-frame; persistence is HOST-side
+
+**Instrument (fc27bee1, normal run, no clear):** varying magic
+stamped into 4 corner 8×8 blocks of guest render_buf immediately
+before p_glReadPixels; same corners read immediately after.
+**Result: survived=0/4 in ALL 12 startup frames** — post values
+are host content (0xffffffff page white top corners,
+0x00000000 transparent bottom), never the stamp.
+
+**Verdict per entry 10's pre-registration: OVERWRITTEN ⇒ the
+readback is a FULL-FRAME host→guest transfer per call.** No
+guest-passthrough, no dirty-region retention in the readback
+path. Therefore:
+
+1. The SHIM_CLEAR_FRAME magenta experiment WAS measuring Gecko's
+   behavior (not a readback artifact) — **Gecko does not
+   full-redraw the window on damage; it relies on prior frame
+   content surviving** (de-facto persistence dependence, tension
+   with the no-BackingStore pixel format now RESOLVED in
+   Gecko's favor-in-practice).
+2. **The persistence ingredient of the artifact lives HOST-side:
+   the virgl framebuffer is a single ever-accumulating target
+   with no swap-discard.** Guest buffers were never the keepers —
+   readbacks faithfully return the accumulated host framebuffer.
+   (How the guest-side magenta reached the host in the clear run
+   — bind-time guest→host upload of the backing is the leading
+   candidate — remains unverified; noted, not load-bearing for
+   the verdict.)
+
+**Consequences:** shim-side discard emulation is UNSAFE (Gecko
+depends on persistence — magenta proved it breaks). The fix must
+target the stray draws themselves: Gecko-side, both ingredients
+in Gecko's court after all — the WALK (unexplained) and the
+stray one-frame draws (harmless under real 10.6 CGL de-facto
+persistence? — on real 10.6 hardware the artifact evidently does
+not occur, so whatever produces the strays here differs from
+real-hardware conditions; the compositor source read remains the
+avenue).
+
+**Standing questions unchanged: the walk; full-window vs
+damage-scissored composite (source read); why real hardware
+shows no strays.**
+
+---
 Last updated: 2026-08-16 (entry 10: Cmd+L/open test RUN — post-navigation frames pure magenta, but CONFOUNDED by uncharacterized virgl readback semantics; corner-stamp instrument pre-registered; compositor question returns to the source read)
 
 ---
