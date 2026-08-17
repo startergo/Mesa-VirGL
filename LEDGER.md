@@ -58,9 +58,19 @@ not occur, so whatever produces the strays here differs from
 real-hardware conditions; the compositor source read remains the
 avenue).
 
-**Standing questions unchanged: the walk; full-window vs
-damage-scissored composite (source read); why real hardware
-shows no strays.**
+**Standing questions: the walk; full-window vs
+damage-scissored composite (source read).** CORRECTION (user,
+session close): the earlier phrasing "why real hardware shows no
+strays" framed the wrong comparison. PowerFox works PERFECTLY on
+a real-hardware Mac mini — running Apple's REAL OpenGL/CGL on a
+real GPU; the substitute/Mesa/virgl stack is not in that path at
+all. It exists BECAUSE the UTM/VM guest has no GPU. So the
+question is not "why does Gecko misbehave here and not there" —
+Gecko's code is constant. It is: **which of OUR emulated-CGL
+behaviors diverges from real CGL to create the conditions (the
+walk, the strays) that Gecko's identical code produces under
+them.** The comparison class is our-semantics vs real-CGL-
+semantics, end to end.
 
 ---
 Last updated: 2026-08-16 (entry 10: Cmd+L/open test RUN — post-navigation frames pure magenta, but CONFOUNDED by uncharacterized virgl readback semantics; corner-stamp instrument pre-registered; compositor question returns to the source read)
