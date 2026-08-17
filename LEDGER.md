@@ -100,6 +100,25 @@ collapse triggered by input burst on a busy host. Pre-registered next:
 quiet host; relaunch; idle stays healthy?; small typing burst
 reproduces the cliff? Compare wall-vs-parts gap at the transition.**
 
+**Frontier RESOLVED same evening (pre-registration outcomes):**
+- A relaunch under host load ~20 degraded from its FIRST frames with
+  zero typing (wall 1.3-2.9 s throughout) → the degraded regime is
+  host-load-driven; the typing correlation in the first run was
+  concurrent, not causal.
+- Typing on the degraded baseline produced a TRANSIENT U-state wedge
+  (~1-2 min, self-recovering, no crash) — not a terminal deadlock.
+- **VM reconfigured to 4 vCPUs (SMP axis opened): compositing at wall
+  159-165 ms mean, max 214-225 ms, WITH host at load ~20 — and typing
+  during the window produced NO wedge. The congestion/wedge class is
+  1-vCPU starvation, closed by SMP.** Best quiet-host figure observed
+  earlier in the evening: 133-238 ms mean (min 64 ms).
+- Related host-starvation face: UTM's NAT forward path wedged
+  (guest→internet 100% loss while host clean); reset by VM restart.
+- Kext-side IOLog gate landed same evening (VMQemuVGA 36f8f97) —
+  kernel.log under compositing 1.3 MB/min → 0.95 KB/min (~1400×),
+  so the shim stats blocks are now the dominant per-frame logging and
+  the msgbuf no longer wraps.
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
