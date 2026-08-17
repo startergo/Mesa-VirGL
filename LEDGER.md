@@ -15,7 +15,56 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-16 (TRIGGER DUMP: duplication IS in Gecko's composite — two identical strips at y=0 and proper place; blit exonerated; dump-07 overreach corrected; present-failure fallback hypothesis leads)
+Last updated: 2026-08-16 (kCGLBadContext chase: :271/:617 policy wrong — "not ours" must FORWARD, not reject; one-bug-or-two test PRE-REGISTERED before the build; TLS last-set-wins design recorded)
+
+---
+
+## 2026-08-16 (entry 5) — the :271/:617 policy fix, PRE-REGISTERED (one bug or two?)
+
+**Finding:** both kCGLBadContext sites use the registry detection
+correctly and the POLICY wrongly — "not one of ours" was meant to
+mean "forward to the real framework"; at both it currently means
+"reject." `:617` mostly moot (a forward exists at :612 when real
+GL loaded). **`:271` (CGLSetCurrentContext) is the consequential
+one:** if QuartzCore creates a real CGL context via private entry
+points and makes it current, the substitute refuses — that
+context can NEVER become current and everything QuartzCore does
+after goes somewhere undefined. The IOSurface-present failure is
+the visible symptom; SetCurrentContext is upstream of all of it.
+(Fixed-forward diagnostic build skipped: log-instrument-then-fix
+collapsed into fix-with-logging — the forward itself logs its
+first firings and any residual errors.)
+
+**TLS trap (user, design recorded BEFORE code):** the shim's
+CGLGetCurrentContext derives from OSMesaGetCurrentContext (Mesa's
+TLS) + registry reverse-lookup. Once real contexts can be current
+on the same thread, that derivation answers stale. Fix: one
+pthread TSD key records the LAST CGLContextObj set by
+CGLSetCurrentContext (token or real); CGLGetCurrentContext
+returns a REAL occupant from TSD directly, else falls to the
+existing OSMesa-derivation; every OSMesaMakeCurrent site
+(cgl_shim.mm :421/:456/:464/:477/:534/:685, substitute :211/:266/
+:273) updates the TSD so the swizzle path cannot leave a stale
+real occupant. Last-set-wins across both kinds.
+
+**ONE-BUG-OR-TWO TEST (pre-registered before the build):**
+after the forward lands, click the URL bar (the trigger) —
+- **Duplication GONE and the foreign-forward log shows the path
+  firing without error** → ONE BUG: the token rejection produced
+  Gecko's fallback redraw; the duplicated strip was a symptom of
+  the substitute's policy, not an independent Gecko defect.
+- **Duplication PERSISTS with foreign forwards firing clean** →
+  TWO BUGS: the artifact investigation continues into Gecko's
+  compositor with one fewer confound.
+- No foreign forwards fire at all → the CARenderer hypothesis is
+  wrong about the entry point; back to instrumenting which CGL
+  call returns the error (the survey showed only 2 CGL_FWD
+  calls, both CGLSetOption — the failure lives in an IMPLEMENTED
+  entry's reject path or a private symbol).
+
+**Mechanism prediction:** foreign CGLSetCurrentContext forwards
+fire at composite/present time (QuartzCore render thread),
+≥1 per presented frame.
 
 ---
 

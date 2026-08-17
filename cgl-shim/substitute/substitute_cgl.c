@@ -65,9 +65,29 @@ typedef void (*CGLDispatchFunc)(void);
 
 static void *g_real_gl = NULL;
 
+/* -----------------------------------------------------------------------
+ * TLS current-context, last-set-wins across BOTH occupant kinds
+ * (2026-08-16, design pre-registered in LEDGER entry 5 before code):
+ * token (shim) or real pointer (forwarded foreign contexts). Set by
+ * CGLSetCurrentContext AND by every OSMesaMakeCurrent site via
+ * substitute_cgl_tls_set(), so the swizzle path cannot leave a stale
+ * real occupant. CGLGetCurrentContext trusts a REAL occupant from the
+ * TSD directly; shim occupants and unset fall through to the existing
+ * OSMesa-derivation.
+ * ----------------------------------------------------------------------- */
+static pthread_key_t g_tls_cgl;
+static int g_tls_cgl_ok = 0;
+
+void substitute_cgl_tls_set(CGLContextObj ctx)
+{
+    if (g_tls_cgl_ok) pthread_setspecific(g_tls_cgl, ctx);
+}
+
 __attribute__((constructor))
 static void substitute_init(void)
 {
+    g_tls_cgl_ok = (pthread_key_create(&g_tls_cgl, NULL) == 0);
+
     /* Must run before any OSMesaCreateContextExt: Mesa's driver choice
      * is a process-global call_once keyed off GALLIUM_DRIVER. If the
      * first context is created first, the whole process silently lands
@@ -201,6 +221,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
     /* Allocate initial 1x1 buffer (will be resized on setView/makeCurrent) */
     sc->width = 1;
     sc->height = 1;
+    substitute_cgl_tls_set((CGLContextObj)sc);   /* initial bind at creation */
     sc->render_buf = calloc(1, 4);  /* 1x1 RGBA */
     sc->present_buf = calloc(1, 4);
     pthread_mutex_init(&sc->lock, NULL);
@@ -240,6 +261,14 @@ CGLDestroyContext(CGLContextObj ctx)
 CGLContextObj
 CGLGetCurrentContext(void)
 {
+    /* REAL occupant from the TSD wins — a foreign context made current
+     * via the forwarded CGLSetCurrentContext must be answered with
+     * itself, not the stale Mesa-TLS derivation (LEDGER entry 5). */
+    if (g_tls_cgl_ok) {
+        CGLContextObj t = (CGLContextObj)pthread_getspecific(g_tls_cgl);
+        if (t && !shim_lookup(t)) return t;
+    }
+
     /* OSMesaGetCurrentContext returns the OSMesaContext; we need to
      * return the shim_ctx that wraps it. The shim stores the current
      * context via the same mechanism as NSOpenGLContext's makeCurrent. */
@@ -264,15 +293,46 @@ CGLSetCurrentContext(CGLContextObj ctx)
 {
     if (!ctx) {
         OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
+        substitute_cgl_tls_set(NULL);
+        /* Clear the real side too, so neither kind lingers. */
+        static CGLError (*real)(CGLContextObj);
+        if (!real && g_real_gl) real = dlsym(g_real_gl, "CGLSetCurrentContext");
+        if (real) real(NULL);
         return kCGLNoError;
     }
 
     struct shim_ctx *sc = shim_lookup(ctx);
-    if (!sc) return kCGLBadContext;
+    if (sc) {
+        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
+                          sc->width, sc->height);
+        substitute_cgl_tls_set(ctx);
+        return kCGLNoError;
+    }
 
-    OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
-                      sc->width, sc->height);
-    return kCGLNoError;
+    /* Foreign/real context (QuartzCore CARenderer etc.): FORWARD,
+     * don't reject (policy fix 2026-08-16, LEDGER entry 5 — the old
+     * kCGLBadContext here could permanently bar a real context from
+     * becoming current; the IOSurface-present failure was its visible
+     * symptom). Record in the TSD so GetCurrentContext answers with
+     * whichever was set last. */
+    static CGLError (*real)(CGLContextObj);
+    if (!real && g_real_gl) real = dlsym(g_real_gl, "CGLSetCurrentContext");
+    if (real) {
+        CGLError r = real(ctx);
+        static int s_fwd_log = 0;
+        static long s_fwd_count = 0;
+        s_fwd_count++;
+        if (s_fwd_log < 10) {
+            s_fwd_log++;
+            fprintf(stderr, "substitute_cgl: CGLSetCurrentContext FOREIGN "
+                    "ctx=%p forwarded -> %d (#%ld)\n", (void *)ctx, (int)r,
+                    s_fwd_count);
+        }
+        if (r == kCGLNoError)
+            substitute_cgl_tls_set(ctx);
+        return r;
+    }
+    return kCGLBadContext;   /* no real GL loaded — unchanged */
 }
 
 CGLError

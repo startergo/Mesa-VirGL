@@ -52,6 +52,10 @@ extern GLenum (*p_glGetError)(void);
 extern void   (*p_glGetIntegerv)(GLenum, GLint *);
 extern const GLubyte *(*p_glGetString)(GLenum);
 extern void   (*p_glReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *);
+/* TLS current-context mirror (LEDGER entry 5): every OSMesaMakeCurrent
+ * site in THIS file must update the substitute's last-set-wins TSD so a
+ * real (foreign) context cannot linger as a stale occupant. */
+extern void substitute_cgl_tls_set(CGLContextObj ctx);
 #ifdef __cplusplus
 }
 #endif
@@ -419,6 +423,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 
     alloc_buffers(sc, 1, 1);
     OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE, 1, 1);
+    substitute_cgl_tls_set((CGLContextObj)sc);
     /* Dispatch probe right after OSMesaMakeCurrent: did it install a real
      * dispatch table, or is _glapi_tls_Dispatch still the no-op table? */
     {
@@ -454,6 +459,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 {
     set_current_ctx(nil);
     OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
+    substitute_cgl_tls_set(NULL);
 }
 
 - (void)shim_makeCurrentContext
@@ -463,6 +469,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         set_current_ctx(self);
         OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
                           sc->width, sc->height);
+        substitute_cgl_tls_set((CGLContextObj)sc);
     } else {
         /* Fall through to original for non-shim contexts. */
         [self shim_makeCurrentContext];
@@ -475,6 +482,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     if (sc) {
         set_current_ctx(nil);
         OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
+        substitute_cgl_tls_set(NULL);
     } else {
         [self shim_clearDrawable];
     }
@@ -533,6 +541,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
             alloc_buffers(sc, vp_rs[2], vp_rs[3]);
             OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
                               GL_UNSIGNED_BYTE, vp_rs[2], vp_rs[3]);
+            substitute_cgl_tls_set((CGLContextObj)sc);
             pthread_mutex_unlock(&sc->lock);
         } else {
             static int s_rs_skip_log = 0;
@@ -684,6 +693,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     {
         GLboolean mc_ret = OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
                                               GL_UNSIGNED_BYTE, sc->width, sc->height);
+        substitute_cgl_tls_set((CGLContextObj)sc);
         static int s_swap_mc_log = 0;
         if (s_swap_mc_log < 5) {
             s_swap_mc_log++;
