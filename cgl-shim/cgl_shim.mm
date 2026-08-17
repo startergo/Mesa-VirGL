@@ -439,6 +439,83 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 - (CGLContextObj)shim_CGLContextObj;
 @end
 
+/* ===================================================================
+ * NSOpenGLPixelFormat strip swizzle — THE COMPOSITOR GATE
+ * (2026-08-17, mechanism measured by probe/probe_pix.c):
+ *
+ * gfxPlatformMac::RequiresAcceleratedGLContextForCompositorOGL() is
+ * unconditionally true, so CompositorOGL demands
+ * {NSOpenGLPFAAccelerated, AllowOfflineRenderers, DoubleBuffer} via
+ * NSOpenGLPixelFormat initWithAttributes. That matching consults the
+ * REAL renderer list, which in this VM contains only the Apple
+ * software renderer (CGLQueryRendererInfo: nrend=1 id=0x01020400
+ * accelerated=0 — boot-constant, clean or not). The format therefore
+ * returns nil, Gecko reports FEATURE_FAILURE_OPENGL_CREATE_CONTEXT
+ * with zero CGL traffic, falls to BasicCompositor, and the view-path
+ * then presents its empty opaque-black buffer over Gecko's software
+ * paint — the white-then-black symptom.
+ *
+ * The substitute's GL is virgl-on-host-GPU; "acceleration" is not a
+ * property AppKit can measure here. Stripping the Accelerated
+ * attribute lets the format match (software renderer satisfies the
+ * remaining attributes), after which the ALREADY-SWIZZLED
+ * NSOpenGLContext initWithFormat takes over and routes everything
+ * through OSMesa. Same fix class as drawRect-as-flush: satisfy the
+ * consumer's contract in emulated semantics.
+ *
+ * Negative control built in: SHIM_KEEP_ACCEL_ATTR=1 disables the
+ * strip — the launch must then fail as before. Log first strips so
+ * firing is observable (installation ≠ firing).
+ * =================================================================== */
+@interface NSOpenGLPixelFormat (CGLShim)
+- (id)shim_initWithAttributes:(const NSOpenGLPixelFormatAttribute *)attribs;
+@end
+
+@implementation NSOpenGLPixelFormat (CGLShim)
+- (id)shim_initWithAttributes:(const NSOpenGLPixelFormatAttribute *)attribs
+{
+    static int s_keep = -1;
+    static int s_strip_log = 0;
+    if (s_keep < 0)
+        s_keep = (getenv("SHIM_KEEP_ACCEL_ATTR") != NULL);
+
+    if (attribs && !s_keep) {
+        /* Boolean attributes (no value follows): Accelerated=73,
+         * AllowOfflineRenderers=96, DoubleBuffer=5 is also boolean.
+         * Count, then rebuild without 73 if present. */
+        NSUInteger n = 0, has_accel = 0;
+        while (attribs[n] != 0) {
+            if (attribs[n] == NSOpenGLPFAAccelerated) has_accel = 1;
+            n++;
+        }
+        if (has_accel) {
+            NSOpenGLPixelFormatAttribute stripped[32];
+            NSUInteger i, j = 0;
+            if (n < 32) {
+                for (i = 0; i < n; i++)
+                    if (attribs[i] != NSOpenGLPFAAccelerated)
+                        stripped[j++] = attribs[i];
+                stripped[j] = 0;
+                if (s_strip_log < 10) {
+                    s_strip_log++;
+                    fprintf(stderr, "cgl_shim: PIXFMT_STRIP[%d] dropped "
+                            "NSOpenGLPFAAccelerated from %lu-attr list — "
+                            "real renderer list is software-only "
+                            "(SHIM_KEEP_ACCEL_ATTR=1 undoes)\n",
+                            s_strip_log, (unsigned long)n);
+                }
+                return [self shim_initWithAttributes:stripped];
+            } else if (s_strip_log < 10) {
+                s_strip_log++;
+                fprintf(stderr, "cgl_shim: PIXFMT_STRIP attr list %lu > 32 "
+                        "— passing through unstripped\n", (unsigned long)n);
+            }
+        }
+    }
+    return [self shim_initWithAttributes:attribs];
+}
+@end
+
 @implementation NSOpenGLContext (CGLShim)
 
 - (id)shim_initWithFormat:(NSOpenGLPixelFormat *)fmt shareContext:(NSOpenGLContext *)share
@@ -1423,6 +1500,13 @@ static void swizzle_class_method(Class cls, SEL originalSel, SEL shimSel)
     Class viewCls = [NSView class];
     swizzle_method(viewCls, @selector(drawRect:),
                         @selector(shim_drawRect:));
+
+    /* Pixel-format gate: strip NSOpenGLPFAAccelerated before real
+     * AppKit matching (software-only renderer list — see the category
+     * comment above). Without this, CompositorOGL cannot get a format. */
+    Class pixCls = [NSOpenGLPixelFormat class];
+    swizzle_method(pixCls, @selector(initWithAttributes:),
+                        @selector(shim_initWithAttributes:));
 
     shim_timing_init();
 

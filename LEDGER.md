@@ -15,7 +15,112 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-17 (entry 17: HOST-DISK-PRESSURE confound — the black browser was the host at 97% disk with a 35 GB UTM debug log; truncated, recovering; ten-click test pending on healthy host)
+Last updated: 2026-08-17 (entry 18: THE COMPOSITOR GATE FOUND AND FIXED — gfxPlatformMac demands NSOpenGLPFAAccelerated unconditionally; real AppKit matching sees a software-only renderer list (boot-constant, probe-measured) → FEATURE_FAILURE_OPENGL_CREATE_CONTEXT on every launch since the Flurry era; fix = NSOpenGLPixelFormat strip swizzle; GL chrome back; new frontier: typing-burst congestion collapse on 1 vCPU)
+
+---
+
+## 2026-08-17 (entry 18) — the compositor gate: found, measured, fixed; the failing era decoded; typing-cliff at the new frontier
+
+**The reboot test (session start):** first launch after reboot COMPOSITED
+(run 1, binary d965f3dc, same profile/env as the failing era) — user
+verdict "GL-composited chrome with triple tab." Ten-click test then ran:
+**BOUNDED — unbounded-feedback falsified** (10 clicks did not march to 10
+strips; arrangement reshuffled: 2 tabs stacked + tab strip over URL box;
+compositor active throughout at ~3 Hz). The artifact = the WALK, fixed
+set of stray draws at offset destinations.
+
+**Then every subsequent launch failed identically.** Same signature as
+the failing era: `GraphicsCriticalError … FEATURE_FAILURE_OPENGL_CREATE_
+CONTEXT` at t≈95-125 s, with ZERO CGL traffic through the substitute (no
+CGL_FWD, no CGLCreateContext). Visual: white first paint, then black.
+
+**Falsification chain (each a separate launch, one variable):**
+- env (SHIM_SCISSOR_LOG/MOZ_LOG) — exonerated (run 3, no extra env)
+- profile — exonerated (run 4, fresh profile `-P freshsci`)
+- our stack in-process — exonerated (run 6, NO substitute: plain Apple
+  GL fails identically)
+- the scissor delta — exonerated (run 5, committed rebuild; user
+  attribution "the last change" falsified by direct A/B)
+- "first launch of boot composites" law — FALSIFIED (run 8: clean boot,
+  first launch, failed)
+- clean quit — does not clear it (run 7 after AppleScript quit)
+- host disk pressure (entry 17's cause) — RULED OUT this session
+  (debug.log 3.4K, 100+ Gi free at every failure)
+- guest disk — ruled out (9.3 Gi free)
+- kernel surface path — zero NotReady/MISMATCH/CannotLock; accelerator
+  alive in ioreg the whole time
+- **RESIDUAL, unexplained: run 1's success.** One composite in ~15
+  launches, same binary class, same env, same profile as failures.
+  Consistent with a rare race (entry-16 precedent class) — the renderer
+  state at 12:54 on that boot may have briefly answered differently.
+  Not chased further: the fix (below) makes the question moot.
+
+**Root cause — source read + direct probe (probe/probe_pix.c, new):**
+- `gfxPlatformMac::RequiresAcceleratedGLContextForCompositorOGL()`
+  returns TRUE unconditionally (gfxPlatformMac.h:89 — "in a VM,
+  unaccelerated CompositorOGL shows black flashes").
+- So CompositorOGL always demands
+  `{NSOpenGLPFAAccelerated, AllowOfflineRenderers, DoubleBuffer}` via
+  NSOpenGLPixelFormat (GLContextProviderCGL.mm:194, CreateWithFormat).
+- The shim's +load swizzle list NEVER covered NSOpenGLPixelFormat —
+  the request went to REAL AppKit matching.
+- probe_pix (both plain and substitute, clean boot AND poisoned):
+  `CGLQueryRendererInfo(0xFFFFFFFF)` → **nrend=1, id=0x01020400,
+  accelerated=0** — software-only, boot-constant. The `{Accelerated}`
+  format therefore returns nil ALWAYS in this VM. GA CFPlugIn absent
+  (the standing architecture gap) is why no accelerated renderer ever
+  exists for real GL to find.
+- Black-over-white mechanism: compositor fails → BasicCompositor paints
+  software (white) → the swizzled view-path presents its EMPTY OPAQUE-
+  BLACK buffer over it (drawptr 0xff000000) — white-then-black exactly.
+
+**THE FIX (cgl_shim.mm, committed):** swizzle
+`NSOpenGLPixelFormat initWithAttributes:` at +load; when
+NSOpenGLPFAAccelerated (73, boolean) is present, strip it and pass the
+rest to the original (acceleration is not a property AppKit can measure
+against our virgl-on-host-GPU GL). Negative control built in:
+`SHIM_KEEP_ACCEL_ATTR=1` disables the strip.
+**Landing verified:** `PIXFMT_STRIP[1] dropped NSOpenGLPFAAccelerated
+from 3-attr list` (Gecko's exact list), zero FEATURE_FAILURE, ~3900
+frames, renderer=virgl throughout, **user verdict "GL composited
+chrome."** Negative control NOT yet exercised (queued).
+
+**New frontier — typing-burst congestion collapse (unattributed):**
+after ~3500 healthy frames (~300 ms wall each), a typing burst hit and
+wall mean went 300→755→2347 ms (max 18.7 s) and never recovered. Cliff
+anatomy: at the transition block wall(755) ≫ submit(89)+transfer(67)+
+blit(14) — ~580 ms unaccounted = thread starvation FIRST; submit/
+transfer inflated only behind the backlog. The kext's own 2D refresh
+workavg rose 3.4→15 ms in the same window (kernel-side, browser-
+independent) = host service degraded too; host was at load 14-20
+(AddressBookS 90%, contactsd 81% — host's own daemons, not ours).
+Browser ended in uninterruptible wait (U), then the process was gone
+with NO crash report. **Hypothesis (unverified): 1-vCPU TCG congestion
+collapse triggered by input burst on a busy host. Pre-registered next:
+quiet host; relaunch; idle stays healthy?; small typing burst
+reproduces the cliff? Compare wall-vs-parts gap at the transition.**
+
+**Corrections to earlier entries:**
+- Entry 17's "black browser = host disk pressure" — PARTIAL: disk
+  pressure caused the 2.5-24 s frames; but the black CHROME also/instead
+  required the compositor gate (this entry). Two black classes
+  coexisted; the pre-reboot era's failures were the GATE
+  (binary-independent, launch-independent).
+- The glClear no-context probe (substitute_cgl.c, "gated to first 20")
+  was NEVER force-exported → per the GLU-shim lesson it almost
+  certainly never fired; "zero foreign forwards" readings built on it
+  are unproven. Same class as installation ≠ firing.
+- Entry 13's "per-quad clip scissors" premise — FALSIFIED: Gecko's
+  compositor makes ZERO glScissor calls (scissor wrapper deployed,
+  proven live by probe, zero hits across ~3900 frames). The artifact
+  offset lives in vertex/uniform data. The wrapper delta is in
+  `git stash` ("scissor-wrapper-delta") — keep stashed or drop.
+
+**Tools added (VMQemuVGA/probe/):** probe_pix.c (renderer list +
+Gecko's exact pixel-format call — needs NSApplication bootstrap or it
+fails bare; the AutoreleaseNoPool spam was the tell), probe_sci.c
+(glScissor export/fire prover). Deploy to /Users/sl/ — /tmp is wiped
+every reboot and ate the tools twice.
 
 ---
 
