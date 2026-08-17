@@ -15,6 +15,64 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-16 (entry 12: SOURCE SESSION — the strip IDENTIFIED as mTitlebarImage (tabs-in-titlebar snapshot); full path traced with line refs; the walk narrowed to two inputs; self-damaging-feedback hypothesis)
+
+---
+
+## 2026-08-16 (entry 12) — source session: the walk hunt; strip identified; path traced
+
+**The strip is nsChildView's mTitlebarImage.** Chain (all
+powerfox-browser/platform/widget/cocoa/): Gecko covers the
+titlebar with the GL context and re-draws the real titlebar
+controls into GL by snapshotting them (nsChildView.mm:3076-3085
+comment); with tabs-in-titlebar the snapshot contains the TAB
+STRIP, not just buttons — matching every screenshot. Evidence
+closure: exactly ONE IOSurface upload ever logged (1453x27 =
+RectTextureImage.mm:307-330 BindIOSurfaceToTexture, gated
+`!mTexture` — first bind only); a Basic+GLPresenter window image
+would be 1453x910 and logged uncapped (w>=1000) — never seen ⇒
+the OGL compositor path is active, the titlebar image is the
+only IOSurface in play.
+
+**Path (line refs):** UpdateTitlebarCGContext (nsChildView.mm
+:2915) snapshots controls into a POW2 bitmap (texSize =
+RoundUpPow2, :2927-2931 → 2048x32) → MaybeDrawTitlebar (:3087)
+→ RectTextureImage::UpdateFromCGContext (raw size 1453x27
+surface, bitmap read at pow2 size, drawn OP_SOURCE clipped to
+the dirty region) → RectTextureImage::Draw (:247): quad = full
+surface, destination = aTransform.PostTranslate(aLocation) with
+aLocation = mTitlebarRect.TopLeft() (:3110), renderOffset (0,0),
+projection = the compositor's.
+
+**The walk — narrowed to two inputs, not yet pinned:**
+1. mTitlebarRect.TopLeft() (set :2637 =
+   RectContainingTitlebarControls()) — should be static; would
+   need the controls' frames to shift by exactly h per click.
+2. **The compositor frame's render offset** — DrawWindowOverlay
+   draws inside the frame CompositorOGL set up; if the frame's
+   render origin follows the DAMAGE region's bounds and the
+   damage walks, every overlay draw walks with it.
+**Working hypothesis (unproven): a self-damaging feedback loop**
+— an overlay draw at y covers real content there → native dirty
+rect appears there (:2923 getAndResetNativeDirtyRect) → next
+damage origin walks → the next overlay draw walks +h. Fits
+"one new copy per click" and "full repaint clears" (resets the
+damage region).
+
+**Also recorded, a smell not the walk:** pow2 bitmap (2048x32)
+feeding the raw-size surface (1453x27) — UpdateFromCGContext
+reads the bitmap at its OWN size into the smaller target,
+clipped; copies land at (0,0) stably — mismatch noted, not
+implicated.
+
+**Next read (one session, queued):** CompositorOGL::BeginFrame
+render-offset computation + who chooses the damage region
+origin; then RectContainingTitlebarControls. The fix, once the
+walking input is named, is upstream-in-Gecko or
+compensate-in-shim (log the render offset per frame in the
+substitute to CONFIRM the walk's source before touching Gecko).
+
+---
 Last updated: 2026-08-16 (entry 11: CORNER-STAMP RUN — readback is FULL-FRAME host transfer, 0/4 survival every frame; magenta was Gecko's behavior; persistence ingredient relocated HOST-side — the virgl framebuffer never discards)
 
 ---
