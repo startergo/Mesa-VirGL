@@ -15,7 +15,56 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-16 (MATRIX DISCRIMINATOR: identity across artifact frames — accumulation is inside Gecko's draw loop, shim exonerated; page-content artifact NOT closed — timeline correction; next unit: powerfox-browser compositor)
+Last updated: 2026-08-16 (entry 8: FIFTH CONFOUND recorded — intermittency needs run counts; buffer-persistence discriminator BUILT (SHIM_CLEAR_FRAME), pre-registered; persistence model now explains every observation)
+
+---
+
+## 2026-08-16 (entry 8) — the fifth confound; the persistence hypothesis; SHIM_CLEAR_FRAME pre-registered and built
+
+**FIFTH MEASUREMENT CONFOUND (user, recorded in .claude/CLAUDE.md
+too):** an artifact that comes and goes cannot be established fixed
+by any single screenshot — only repetition can. "Same page, clean
+now, duplicated then" = INTERMITTENT, not fixed. The CGL-forward
+closure was exactly this error (user's own acknowledgment — the
+inference-as-fact rule in its newest costume: the timeline and
+error count were checkable and were not checked). Every A/B on the
+duplication class carries a run count from here on.
+
+**The persistence hypothesis (user) — now explaining EVERY
+observation including entry 7's matrix identity:** nothing has
+established that render_buf is ever cleared between frames. If it
+isn't, "two bands in one dumped buffer" is equally consistent with
+ONE draw per click plus PIXEL PERSISTENCE (band N left from frame
+N−1) as with two draws in one frame. Real double-buffered GL
+DISCARDS the back buffer on swap; Gecko may lawfully rely on
+swap-to-clear; our persistent render_buf never clears. Under this
+model: accumulation = stale pixels (no GL state accumulates →
+matrix identity, entry 7, consistent); full repaint clears it
+(overwrites everything); intermittency on page content = partial
+redraws leaving exposed stale regions (black rectangles = cleared
+regions never repainted); one upload reused (texture drawn once per
+event at a walking destination).
+
+**SHIM_CLEAR_FRAME (built, 63d1ccd6, PRE-REGISTERED):** after each
+swap, magenta-clear the fresh render_buf (old present; present_buf
+still holds frame N for drawRect). Run: launch with
+SHIM_CLEAR_FRAME=1, click the URL bar 3×:
+- **Bands VANISH** → persistence + walking destination; the fix is
+  swap-to-clear semantics in the shim — possibly THE artifact, a
+  one-line fix class.
+- **Bands REMAIN** → both draws genuinely occur per frame; the
+  one-upload-two-draws reading stands; proceed to the Gecko source
+  session with that question.
+Side datum either way: any magenta visible on screen = regions
+Gecko does NOT repaint per frame (its assumed-clear map).
+
+**Next after the discriminator: powerfox-browser source session**
+(hunt the accumulating/offset draw — or, if persistence confirmed,
+never needed).
+
+---
+
+## 2026-08-16 (entry 7) — FMTX verdict: Gecko's draw loop; shim exonerated on every instrumentable axis
 
 ---
 

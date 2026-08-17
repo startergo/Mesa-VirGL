@@ -688,6 +688,35 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     void *tmp = sc->render_buf;
     sc->render_buf = sc->present_buf;
     sc->present_buf = tmp;
+    /* SHIM_CLEAR_FRAME — the persistence-vs-two-draws discriminator
+     * (LEDGER entry 8, pre-registered): nothing has established that
+     * render_buf is ever cleared between frames. If it isn't, "two
+     * bands in one dumped buffer" is equally consistent with ONE draw
+     * per click plus pixel persistence (band N left from frame N−1)
+     * as with two draws in one frame. Real double-buffered GL
+     * DISCARDS the back buffer on swap — Gecko may lawfully rely on
+     * swap-to-clear; our persistent render_buf never clears. Clear
+     * the fresh render_buf (old present) to magenta AFTER the swap —
+     * present_buf still holds frame N for drawRect.
+     *   bands VANISH → persistence + walking destination; the fix is
+     *     swap-to-clear semantics in the shim (maybe THE artifact).
+     *   bands REMAIN → both draws genuinely occur per frame. */
+    {
+        static int s_clear_frame = -1;
+        if (s_clear_frame < 0) {
+            s_clear_frame = (getenv("SHIM_CLEAR_FRAME") != NULL);
+            if (s_clear_frame)
+                fprintf(stderr, "cgl_shim: CLEAR_FRAME — render_buf "
+                        "magenta-cleared after each swap\n");
+        }
+        if (s_clear_frame && sc->render_buf && sc->width > 0 &&
+            sc->height > 0) {
+            uint32_t *p = (uint32_t *)sc->render_buf;
+            size_t n = (size_t)sc->width * sc->height;
+            for (size_t i = 0; i < n; i++)
+                p[i] = 0xFFFF00FFu;   /* RGBA bytes: magenta, opaque */
+        }
+    }
     /* FMTX probe at COMPOSITE time (LEDGER entry 7): URL-bar clicks
      * fire NO new uploads, so the upload-site MTX probe never samples
      * artifact frames. Sample HERE — every flushBuffer, the state Gecko

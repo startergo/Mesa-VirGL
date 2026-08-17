@@ -43,6 +43,16 @@ driver in a `call_once` when the first context is created; the shim sets
 Never patch the driver selection to be unconditional — that made softpipe
 unreachable at runtime once and cost the bisect tool.
 
+**Intermittent artifacts need run counts, not observations (fifth
+measurement confound, 2026-08-16).** An artifact that comes and goes
+(the chrome/page duplication class) cannot be established fixed or
+broken by any single screenshot — "same page, clean now, duplicated
+then" means INTERMITTENT, not fixed. Every A/B on such an artifact
+carries a run count, and a claimed closure needs repetition, plus the
+build timeline and the error counts actually checked (both were
+skipped once and produced a false closure — the inference-as-fact
+rule in its newest costume).
+
 **The softpipe bisect is the first instrument for any wrong-pixels bug.**
 The same binary with `GALLIUM_DRIVER=softpipe` renders on the CPU through
 Mesa only — no virgl, no winsys, no kext, no host. Identical output under
