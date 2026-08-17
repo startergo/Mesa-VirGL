@@ -15,6 +15,55 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-17 (entry 13: FLURRY TEST — crashed in Apple libGLU gluBuild2DMipmaps/halveImage_ubyte through the substitute; the blast-radius question has a crashing answer; GLU coverage gap logged)
+
+---
+
+## 2026-08-17 (entry 13) — Flurry through the substitute: CRASH in Apple's GLU
+
+**Run:** ScreenSaverEngine -module Flurry with the standard
+substitute env. The full chain engaged cleanly first: swizzles,
+GALLIUM_DRIVER=virgl, libOpenGL_real, **virgl capset via the kext
+(get_caps capset_id=2 ver=2 size=1408 — VIRGL2)**, contexts
+created. Then SIGSEGV, crash report at
+~/Library/Logs/CrashReporter/ScreenSaverEngine_2026-08-17-*.crash:
+
+```
+0  libGLU.dylib  halveImage_ubyte + 278          ← OOB (KERN_INVALID_ADDRESS)
+1  libGLU.dylib  gluBuild2DMipmapsCTXCore        (takes _CGLContextObject*)
+2  libGLU.dylib  gluBuild2DMipmapsCTX / gluBuild2DMipmaps
+3  com.apple.Flurry (texture build at startup)
+```
+
+**Mechanism (inference, high confidence):** libGLU on 10.6 links
+OpenGL.framework — under DYLD_FRAMEWORK_PATH substitution its gl*
+resolve against the SUBSTITUTE. GLU's mipmap builder receives the
+shim token as its CGL context and sizes its work from GL state
+queries; a query returning garbage/0 through a misrouted wrapper
+breaks its row/stride arithmetic → OOB write in halveImage_ubyte.
+This is the substitute's "blast radius" question (the no-context
+glClear probe was built for QuartzCore) now answered by a
+measured, crashing consumer.
+
+**Next step (queued):** identify which gl* entry libGLU resolves
+against the substitute misroutes — nm the substitute's export
+table for the GLU-consumed set (glGetIntegerv/pixel-store/
+glTexImage2D family), then either export proper Mesa-forwarding
+wrappers for them or treat libGLU as a consumer needing the
+interpose layer too. Flurry is the regression test for it.
+
+**Also this session (user, recorded): FMTX scope correction** —
+the GL_MODELVIEW_MATRIX identity verdict covered the
+FIXED-FUNCTION stack only; CompositorOGL passes transforms as
+shader uniforms the fixed-function matrix cannot see, so FMTX
+never constrained Gecko's destination. The walk instrument
+upgrades to glScissor logging (per-quad clip scissors walk with
+the damage region; readable from the substitute with no Gecko
+internals). Plus a free no-code prediction queued: the feedback
+loop, if unbounded, gives TEN strips for ten clicks, marching
+down until off-window; if it stops, the loop story needs a bound.
+
+---
 Last updated: 2026-08-16 (entry 12: SOURCE SESSION — the strip IDENTIFIED as mTitlebarImage (tabs-in-titlebar snapshot); full path traced with line refs; the walk narrowed to two inputs; self-damaging-feedback hypothesis)
 
 ---
