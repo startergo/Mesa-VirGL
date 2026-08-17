@@ -15,6 +15,41 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-17 (entry 15: Flurry CGL census — CGLFlushDrawable FALSIFIED (zero calls); present path is neither -flushBuffer nor CGLFlushDrawable; single-buffered/-flush or CVDisplayLink queued; direct-CGL present hook landed as infrastructure)
+
+---
+
+## 2026-08-17 (entry 15) — Flurry present-path census: both standard paths falsified
+
+**Infrastructure landed (4a4f06a6):** CGLFlushDrawable on a shim
+context now runs the SHIM'S OWN presentation (readback + swap +
+rebind + view store + drawRect — cgl_shim_present_from_cgl in the
+.mm, extern "C" for ObjC++ linkage), third instance of the
+implement-not-forward rule. CGLGetCurrentContext logs its return
+classification (FOREIGN/shim, capped). This lights the census AND
+the fix if the prediction held.
+
+**Census verdict (flurry8, softpipe): the prediction is
+FALSIFIED — ZERO CGLFlushDrawable calls, ZERO GetCurrentContext
+calls.** Flurry presents through NEITHER -flushBuffer NOR
+CGLFlushDrawable. Remaining candidates: (a) the single-buffered
+idiom — NSOpenGLContext -flush (glFlush + front update), which
+the swizzle set does NOT cover; (b) CVDisplayLink-driven drawing;
+(c) an as-yet-unnamed private path. Also: flurry8's process EXITED
+(<85 s, softpipe) where flurry7 (softpipe, previous build) was
+still alive at 3+ min — labeled UNEXPLAINED VARIANCE (possibly
+screensaver idle-dismissal timing; nothing in the delta calls
+itself: FlushDrawable/GetCurrentContext logged zero hits).
+
+**Next (queued):** swizzle -flush (and log CVDisplayLink creation
+via dlsym survey); then Flurry screen verdict. The hook landed
+today is the fix IF the present is CGLFlushDrawable-shaped in
+disguise (e.g. -flush → CGLFlushDrawable internally — worth
+checking whether NSOpenGLContext -flush CALLS CGLFlushDrawable;
+if yes, the zero census means -flush is never called either, and
+the hunt moves to CVDisplayLink/other).
+
+---
 Last updated: 2026-08-17 (entry 14: GLU FIX LANDED — crash gone; Flurry now WHITE-under-both (bisect: Mesa-side/upstream); Flurry's presentation BYPASSES the shim entirely; full-screen surface binding the lead)
 
 ---

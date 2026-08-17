@@ -335,8 +335,7 @@ static char kPresentSizeKey;
 #define PRESENT_BUF_KEY (&kPresentBufKey)
 #define PRESENT_SIZE_KEY (&kPresentSizeKey)
 
-static void shim_present(NSOpenGLContext *nsc)
-{
+static void shim_present(NSOpenGLContext *nsc){
     struct shim_ctx *sc = get_shim_ctx(nsc);
     if (!sc || !sc->present_buf || !sc->view) return;
 
@@ -359,6 +358,54 @@ static void shim_present(NSOpenGLContext *nsc)
     pthread_mutex_unlock(&sc->lock);
 
     /* Trigger drawRect on the main thread */
+    [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
+                           withObject:[NSNumber numberWithBool:YES]
+                        waitUntilDone:NO];
+}
+
+/* Direct-CGL present entry (LEDGER entry 14): CGLFlushDrawable on a
+ * shim context, from substitute_cgl.c. Mirrors shim_flushBuffer's tail
+ * — readback into render_buf (virgl path), swap, rebind, store on the
+ * view, trigger drawRect — so the existing present/blit/dump machinery
+ * all lights up. Runs on whatever thread the app flushed from. */
+extern "C" void cgl_shim_present_from_cgl(void *scv)
+{
+    struct shim_ctx *sc = (struct shim_ctx *)scv;
+    if (!sc || !sc->view) return;
+
+    if (pthread_mutex_trylock(&sc->lock) != 0)
+        return;   /* never block a foreign flush on our lock */
+
+    if (sc->osmesa_ctx && sc->render_buf) {
+        /* Render with the (pre-swap) render buffer current, so the
+         * readback captures this frame's output. */
+        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
+                          sc->width, sc->height);
+        substitute_cgl_tls_set((CGLContextObj)sc);
+    }
+    if (p_glFinish) p_glFinish();
+    if (p_glReadPixels && sc->render_buf && sc->width > 0 && sc->height > 0)
+        p_glReadPixels(0, 0, sc->width, sc->height, GL_RGBA,
+                       GL_UNSIGNED_BYTE, sc->render_buf);
+
+    void *tmp = sc->render_buf;
+    sc->render_buf = sc->present_buf;
+    sc->present_buf = tmp;
+    if (sc->osmesa_ctx && sc->render_buf)
+        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
+                          sc->width, sc->height);
+
+    NSView *view = (NSView *)sc->view;
+    NSData *bufData = [NSData dataWithBytesNoCopy:sc->present_buf
+                                           length:(NSUInteger)(sc->width * sc->height * 4)
+                                     freeWhenDone:NO];
+    NSDictionary *sizeDict = [NSDictionary dictionaryWithObjectsAndKeys:
+                              [NSNumber numberWithInt:sc->width], @"w",
+                              [NSNumber numberWithInt:sc->height], @"h", nil];
+    objc_setAssociatedObject(view, PRESENT_BUF_KEY, bufData, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(view, PRESENT_SIZE_KEY, sizeDict, OBJC_ASSOCIATION_RETAIN);
+    pthread_mutex_unlock(&sc->lock);
+
     [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
                            withObject:[NSNumber numberWithBool:YES]
                         waitUntilDone:NO];

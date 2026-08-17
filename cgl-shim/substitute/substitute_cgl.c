@@ -267,8 +267,17 @@ CGLGetCurrentContext(void)
      * itself, not the stale Mesa-TLS derivation (LEDGER entry 5). */
     if (g_tls_cgl_ok) {
         CGLContextObj t = (CGLContextObj)pthread_getspecific(g_tls_cgl);
-        if (t && !shim_lookup(t)) return t;
+        if (t && !shim_lookup(t)) {
+            static int s_gcc_log = 0;
+            if (s_gcc_log < 12) {
+                s_gcc_log++;
+                fprintf(stderr, "substitute_cgl: GetCurrentContext -> "
+                        "%p (FOREIGN)\n", (void *)t);
+            }
+            return t;
+        }
     }
+    CGLContextObj r = NULL;
 
     /* OSMesaGetCurrentContext returns the OSMesaContext; we need to
      * return the shim_ctx that wraps it. The shim stores the current
@@ -286,7 +295,16 @@ CGLGetCurrentContext(void)
         }
     }
     pthread_mutex_unlock(&shim_registry_lock);
-    return (CGLContextObj)found;
+    r = (CGLContextObj)found;
+    {
+        static int s_gcc_shim_log = 0;
+        if (r && s_gcc_shim_log < 12) {
+            s_gcc_shim_log++;
+            fprintf(stderr, "substitute_cgl: GetCurrentContext -> %p "
+                    "(shim)\n", (void *)r);
+        }
+    }
+    return r;
 }
 
 CGLError
@@ -406,12 +424,26 @@ CGLUnlockContext(CGLContextObj ctx)
 CGLError
 CGLFlushDrawable(CGLContextObj ctx)
 {
-    /* Forward to glFinish if shim context; real if not */
+    /* CGLFlushDrawable = the DIRECT-CGL present (LEDGER entry 14):
+     * apps that skip -flushBuffer on NSOpenGLContext call
+     * CGLFlushDrawable(CGLGetCurrentContext()) — Flurry's shape
+     * (swizzle installed, shim_flushBuffer never ran). For a shim
+     * context, run THE SHIM'S OWN PRESENTATION (readback + swap +
+     * drawRect trigger — implemented in cgl_shim.mm against this
+     * shim_ctx), NOT a forward: third instance of the token rule
+     * (CGL contexts, foreign CGLSetCurrentContext, now GLU/flush). */
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
-        /* The actual presentation is handled by cgl_shim.mm's
-         * NSOpenGLContext -flushBuffer swizzle. Direct CGL flush
-         * is a no-op for shim contexts (or glFinish via p_glFinish). */
+        extern void cgl_shim_present_from_cgl(void *sc);
+        static int s_fd_log = 0;
+        static long s_fd_count = 0;
+        s_fd_count++;
+        if (s_fd_log < 8) {
+            s_fd_log++;
+            fprintf(stderr, "substitute_cgl: CGLFlushDrawable SHIM ctx "
+                    "→ shim present (#%ld)\n", s_fd_count);
+        }
+        cgl_shim_present_from_cgl(sc);
         return kCGLNoError;
     }
     static CGLError (*real)(CGLContextObj);
