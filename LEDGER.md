@@ -15,6 +15,34 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-17 (entry 17: HOST-DISK-PRESSURE confound — the black browser was the host at 97% disk with a 35 GB UTM debug log; truncated, recovering; ten-click test pending on healthy host)
+
+---
+
+## 2026-08-17 (entry 17) — sixth confound: host-disk-pressure (the black browser)
+
+**Symptom:** PowerFox "black just like Flurry." Log: frames taking
+2.5-24 s (wall mean 7.5 s; transfer mean 2.5 s — previously
+sub-100 ms); STAMP corners returning 0xff000000. NOT a shim
+regression — nothing in the delta runs on the Gecko path with the
+gate off.
+**Cause:** host Data volume 97% full (26 Gi free), with the UTM
+per-VM debug.log at 35.3 GB writing thousands of DEBUG lines per
+minute (cs_gl_draw et al. per presented frame). Host I/O
+starvation → guest frame stalls. Also plausibly explains Flurry's
+exit-after-one-frame (entry 16) — same era, same pressure.
+**Fix applied:** truncated the log in place (inode kept; UTM
+appends on) — 26→58 Gi free; lock stats recovered max 2554 ms →
+61 ms within seconds. **The Debug Log must be DISABLED in UTM
+settings (user-side action) or the 35 GB regrows and this recurs.**
+**Rule added (.claude/CLAUDE.md, commit 2de24b4):** the 1x1
+lesson (flushBuffer owns the resize; alternate present paths
+inherit it) + silent-declining-guards rule (src=0 class;
+installation-≠-firing class).
+**Pending:** ten-click test (the walk's unbounded-vs-bounded
+prediction) once the host is healthy and the browser paints.
+
+---
 Last updated: 2026-08-17 (entry 16: drawRect-as-flush-point LANDED FOR THE CLASS — full-frame present proven (1680x1050, real content); the 1x1 lesson; Flurry exits after one frame — animateOneFrame lead; user roadmap recorded: walk measurement → drawRect fix (DONE) → GA CFPlugIn)
 
 ---
