@@ -15,7 +15,54 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-16 (kCGLBadContext chase: :271/:617 policy wrong — "not ours" must FORWARD, not reject; one-bug-or-two test PRE-REGISTERED before the build; TLS last-set-wins design recorded)
+Last updated: 2026-08-16 (google.com renders through the full stack; colors CLOSED; artifact ACCUMULATES (triplicate on 2nd click); black rectangles new; pattern-fill discriminator pre-registered)
+
+---
+
+## 2026-08-16 (entry 6) — google.com through the whole stack; artifact ACCUMULATES; black rectangles; pattern-fill discriminator pre-registered
+
+**Milestone (user screenshot): google.com renders** in the Snow
+Leopard guest through Mesa → virgl → kext (2D transport) →
+virglrenderer → Metal.
+
+**Colour question CLOSED:** the Google logo shows blue, red,
+yellow, green in the right places — no R/B swap anywhere in the
+chain. The last open format question from the substitute era is
+answered.
+
+**Artifact class extended, with ACCUMULATION:** the search box
+duplicates exactly like the tab strip — two instances, vertical
+offset ≈ the element's own height; same signature as the
+27-row strip at rows 0-30/30-60, now on PAGE CONTENT. And the
+mechanism datum: **a second URL-bar click makes the strip a
+TRIPLICATE — each damage event ADDS a copy; copies persist and
+accumulate.** Not a moved redraw — an accumulating draw/layer.
+(Numeric buffer read of the triplicate dump pending — both
+vision analyzers reject the CDN-transformed PNGs; a
+pure-Python BMP decode answers band counts/geometry more
+rigorously anyway.)
+
+**Black rectangles — NEW, not pure displacement:** they sit
+where the first instance's background should be; previous
+artifacts were correct-content-wrong-place, never absent
+content. Two readings (user): (a) region cleared then redrawn
+at the offset — cleared area exposed — ties to the SAME offset
+bug; (b) first instance drawn with an unpopulated source — a
+DISTINCT fault.
+
+**PRE-REGISTERED discriminator (user): SHIM_PATTERN_FILL on
+google.com.** Black regions come back CHECKERBOARDED → they are
+IOSurface-borne; the offset story covers them (reading a).
+Black regions STAY BLACK → separate fault, own thread
+(reading b). Read NUMERICALLY from a buffer dump (period-8
+alternation detector in the black regions), not by eye.
+
+**One-bug-or-two result (entry 5's test):** branch 3 — ZERO
+foreign CGLSetCurrentContext forwards in 5 min of pf8 (all
+uploads clean, no error lines). The forward fix (8e13519)
+stands as correct policy, unexercised: QuartzCore does not call
+CGLSetCurrentContext through the substitute (private-symbol
+path, inferred). The rejection was NOT the artifact trigger.
 
 ---
 
