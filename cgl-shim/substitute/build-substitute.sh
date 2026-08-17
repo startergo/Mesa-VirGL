@@ -52,9 +52,13 @@ echo "  [2/3] clang    cgl_interpose.c (no interpose section)"
 clang "${COMMON_CFLAGS[@]}" -DSUBSTITUTE_FRAMEWORK \
     -c "$SHIM_DIR/cgl_interpose.c" -o "$SUBST_DIR/cgl_interpose.o"
 
-echo "  [3/3] clang    substitute_cgl.c"
+echo "  [3/4] clang    substitute_cgl.c"
 clang "${COMMON_CFLAGS[@]}" \
     -c "$SUBST_DIR/substitute_cgl.c" -o "$SUBST_DIR/substitute_cgl.o"
+
+echo "  [4/4] clang    glu_shim.c (GLU subset — shadows the Apple re-export)"
+clang "${COMMON_CFLAGS[@]}" \
+    -c "$SUBST_DIR/glu_shim.c" -o "$SUBST_DIR/glu_shim.o"
 
 # ---------------------------------------------------------------- link
 echo "  [4/4] clang    link → OpenGL.framework (no libc++)"
@@ -68,6 +72,7 @@ clang "${COMMON_CFLAGS[@]}" \
     "$SUBST_DIR/cgl_shim.o" \
     "$SUBST_DIR/cgl_interpose.o" \
     "$SUBST_DIR/substitute_cgl.o" \
+    "$SUBST_DIR/glu_shim.o" \
     -L"$(dirname "$OSMESA")" \
     -L"$(dirname "$GLAPI")" \
     -L"$LIBCXX" \
@@ -76,6 +81,13 @@ clang "${COMMON_CFLAGS[@]}" \
     -framework IOSurface \
     -framework QuartzCore \
     -lglapi.0 \
+    -Wl,-exported_symbol,_gluBuild2DMipmaps \
+    -Wl,-exported_symbol,_gluScaleImage \
+    -Wl,-exported_symbol,_gluErrorString \
+    -Wl,-exported_symbol,_gluPerspective \
+    -Wl,-exported_symbol,_gluLookAt \
+    -Wl,-exported_symbol,_gluOrtho2D \
+    -Wl,-exported_symbol,_gluPickMatrix \
     -Wl,-reexport_library,"$SUBST_DIR/libOSMesa.8.dylib" \
     -Wl,-reexport_library,"$REAL_GL" \
     -Wl,-rpath,@loader_path \

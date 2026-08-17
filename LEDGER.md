@@ -15,6 +15,62 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
+Last updated: 2026-08-17 (entry 14: GLU FIX LANDED — crash gone; Flurry now WHITE-under-both (bisect: Mesa-side/upstream); Flurry's presentation BYPASSES the shim entirely; full-screen surface binding the lead)
+
+---
+
+## 2026-08-17 (entry 14) — GLU fix landed; Flurry: crash → white; bisect verdict; presentation-path bypass found
+
+**GLU ROUTING FIX (user's layering rule, landed):** GLU is a
+CLIENT of GL. Apple's umbrella re-exports libGLU (absolute-path
+LC_REEXPORT inside libOpenGL_real), so Apple's GLU ran with the
+shim token where it dereferences _CGLContextObject internals →
+halveImage_ubyte OOB (entry 13). Fix: glu_shim.c DEFINES the
+era-common glu* inside the substitute (Build2DMipmaps, ScaleImage
+[box filter, not bit-exact], ErrorString, Perspective, LookAt,
+Ortho2D, PickMatrix — over p_*/dlsym'd Mesa pointers; quadrics/
+NURBS/tess/project deliberately absent = loud bind failure).
+Linker suppressed the definitions from the export trie (the
+re-export chain also supplies the names — nm showed T, dyld
+never saw them); -Wl,-exported_symbol ×7 forces them (build
+86c19d00). ALSO FOUND: overwriting the framework binary while a
+process holds it silently fails — kill ALL holders (leftover
+ScreenSaverEngine pids) before deploy; verify md5 both ends.
+
+**RESULT: the crash is GONE.** Flurry now runs — white screen.
+- Under virgl: white, runs a few seconds, exits clean (no crash
+  report).
+- Under softpipe: white, RUNS INDEFINITELY, 10.9s+ CPU and
+  climbing.
+
+**SOFTPIPE BISECT VERDICT: white under BOTH ⇒ the fault is
+Mesa-side or in Flurry's GL expectations — NOT the virgl/winsys/
+kext/host chain.** Host debug log (found INSIDE the bundle —
+/Users/macbookpro/Documents/Snow Leopard.utm/Data/debug.log,
+34.8 GB, tail-only; no UTM shutdown needed): clean 25 Hz
+cs_gl_draw present loop, ZERO virgl decode errors during Flurry.
+
+**The sharper datum: Flurry's presentation BYPASSES the shim
+entirely.** Both drivers: the setView lazy swizzle fired on
+AppleFlurryOpenGLView, but shim_flushBuffer NEVER RAN (zero
+pre-resize/swap_mc/drawptr lines — those log their first 5
+unconditionally). Flurry creates/presents through a path none of
+the swizzles wrap. LEAD (inference): full-screen surface
+binding — CGLSetFullScreen / CGLSetSurface / PBuffer route,
+where the CGL_FORWARD token-failure model applies: forwarded
+with the shim token → real CGL fails → Flurry has no drawable →
+draws go nowhere; capability-check differences between drivers
+could explain virgl's early exit vs softpipe's endless loop.
+NOTE: no CGL_FWD lines in flurry logs — whatever it calls is
+either implemented-and-quiet or another private entry point.
+
+**NEXT (queued):** log every CGL entry Flurry exercises (the
+CGL_FWD survey exists; extend the logging to implemented entries
+too), identify its surface/present calls, then wrap or honestly
+refuse them. Flurry remains the regression test: crash fixed,
+white next.
+
+---
 Last updated: 2026-08-17 (entry 13: FLURRY TEST — crashed in Apple libGLU gluBuild2DMipmaps/halveImage_ubyte through the substitute; the blast-radius question has a crashing answer; GLU coverage gap logged)
 
 ---
