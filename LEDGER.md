@@ -298,6 +298,23 @@ class our T2 swizzle covers; T2 is passthrough there — SC_KEY-gated
 blocks unarmed, blit inert without associated buffer — asserted from
 code, not yet logged).
 
+**PREF TEST VERDICT — the artifact family SPLITS (2026-08-18,
+browser.tabs.drawInTitlebar=false via user.js):**
+- **Corners: GONE. Black top stripe: GONE.** The draw-in-titlebar
+  machinery (native snapshot titlebar vs XUL titlebar layout — two
+  geometries disagreeing from first paint) is CONFIRMED as their
+  mechanism, exactly as pre-registered. The pref is a usable fix NOW:
+  one geometry, two of three symptoms eliminated, price = a
+  conventional titlebar.
+- **Double tab over the URL bar / search-box ghost: STILL PRESENT.**
+  Separate class: the AUTOCOMPLETE DROPDOWN's rendering (the popup
+  view stack captured at 115x18 → 288x146 → 288x326). This is the
+  ONE remaining open graphics item — Gecko's popup content rendering
+  under this configuration. Next instruments if pursued: dump the
+  popup's surface after first paint; or source-read the autocomplete
+  popup's content path (Gecko-side, the popup is a ChildView window
+  whose PixelHostingView paints tab-strip-like content).
+
 **GLYPH ITEM CLOSED (2026-08-17, the one-variable local page).** The
 softpipe github reading was DOUBLE-confounded: the page never finished
 (script hang — the "Unresponsive script" dialog was github's), AND
