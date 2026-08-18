@@ -210,6 +210,25 @@ compositor → GL path; still missing → font loading/rasterisation.
   this configuration (only 3 one-time widget uploads ever seen);
   pattern-fill must move to the glTexImage2D family to see anything.
 
+**DIFF INSTRUMENT LANDED AND MEASURED (commit 54eb37a, same night).**
+Present-time scan: presented buffer vs the union of the frame's draw
+rects (walk wrappers feed it; LayerRects = second-to-last 4×vec4
+glUniform4fv per draw, y-flipped). Windowed (SHIM_DIFF_LOG=1 +
+/tmp/walk_on); trigger without mouse: AppleScript `set bounds of
+front window` (the user's pointer couldn't capture — the resize was
+scripted over ssh instead). First run: 312 frames through two
+resizes. **Steady state, identical across ~310 frames: coverage
+91.4% (37 draws/frame), STALE 116,604 px == the uncovered 8.6% — a
+constant full-width ~96-px band at the window bottom; BLANK 0 (no
+never-drawn region in this window state).** The persistence mechanism
+is MEASURED: ~9% of every presented frame is content drawn by no
+frame of that pass, riding the buffer. The user-visible ghosts are
+instances of this class. **FIX TARGET (pre-registered): at present,
+clear exactly the uncovered region — surgical, avoids the entry-9
+full-clear breakage.** Cosmetic known bugs: frame-0 coverage/count
+warm-up artifact (reset only inside window); tile threshold 32 px/32²
+hides ghosts smaller than a tile inside covered tiles.
+
 **GLYPH ITEM CLOSED (2026-08-17, the one-variable local page).** The
 softpipe github reading was DOUBLE-confounded: the page never finished
 (script hang — the "Unresponsive script" dialog was github's), AND
