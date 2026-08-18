@@ -440,6 +440,20 @@ protection needed; force-enabled pref added but untested as cause):
   the ladder pages + a relaunch A/B (blue on fresh, black after
   heavy page — the repro is now 100% schedulable).
 
+**USER CORRECTION — CANVAS NEVER WORKED (2026-08-18, final):** the
+"coexistence wedge" framing is RETRACTED. WebGL canvas presentation
+has NEVER worked in this stack as a standing state; the single blue
+canvas observation (webgltest.html first run) is an UNEXPLAINED
+RESIDUAL — this project's second (alongside run 1's compositor
+success) — not a baseline to measure regressions from. Consequences:
+the UAF-fix-broke-canvas theory is dead (nothing to break); the
+grey/black masks are the canvas's NORMAL presentation failure faces
+(transparent vs opaque buffer); the teardown crash remains real and
+separate. THE ITEM: "WebGL canvas presentation does not work under
+the substitute" — hunt from scratch; instruments = the ladder pages
+(blue residual proves the path CAN work; its conditions are the
+question).
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
