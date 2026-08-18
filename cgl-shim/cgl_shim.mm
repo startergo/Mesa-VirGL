@@ -127,6 +127,10 @@ static void alloc_buffers(struct shim_ctx *sc, int w, int h)
     sc->height = h;
 }
 
+/* associated-object keys (defined below, near shim_present) */
+static char kPresentBufKey;
+static char kPresentSizeKey;
+
 static void free_buffers(struct shim_ctx *sc)
 {
     /* Single-buffer mode: both pointers alias one allocation — free
@@ -139,6 +143,22 @@ static void free_buffers(struct shim_ctx *sc)
     }
     sc->render_buf = NULL;
     sc->present_buf = NULL;
+
+    /* UAF guard (2026-08-18, crash in shim_blit_present_buf +217):
+     * the main-thread drawRect reads the view's associated
+     * PRESENT_BUF_KEY NSData WITHOUT the GL lock; after a resize-free
+     * here, that object wraps freed memory until the next present
+     * replaces it — the webgl page's resize churn crashed exactly in
+     * that window. Nil the associated objects now so the blit's
+     * no-buffer early-return covers the race at EVERY free site.
+     * objc_setAssociatedObject is safe off-main (associated-object
+     * table is lock-protected per object). */
+    if (sc->view) {
+        objc_setAssociatedObject((id)sc->view, &kPresentBufKey, nil,
+                                 OBJC_ASSOCIATION_RETAIN);
+        objc_setAssociatedObject((id)sc->view, &kPresentSizeKey, nil,
+                                 OBJC_ASSOCIATION_RETAIN);
+    }
 }
 
 /* --- Performance instrumentation (readback thread) ----------------------------
@@ -331,8 +351,6 @@ static void shim_timing_record_draw(uint64_t blit_ticks)
 /* --- Presentation (runs on main thread via dispatch_async) --- */
 
 /* Associated object key for present_buf on the view (for drawRect swizzle) */
-static char kPresentBufKey;
-static char kPresentSizeKey;
 static char kScKey;
 #define PRESENT_BUF_KEY (&kPresentBufKey)
 #define PRESENT_SIZE_KEY (&kPresentSizeKey)
