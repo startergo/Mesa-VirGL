@@ -353,6 +353,28 @@ in-shim buffer-vs-draw-rects diff).
   at the texture-target mismatch (RECTANGLE vs 2D binding in the
   page's program) — one root mismatch likely explains the storm.
 
+**WEBGL MINIMAL-PAGE VERDICT — the class splits clean (2026-08-18,
+the one-variable page + a title channel read via AppleScript, since
+page text did not render while the canvas did):**
+- **WebGL1: WORKS** — context OK, clear to blue, getError 0x0 clean.
+  Base WebGL is fully functional in this stack.
+- **WebGL2: BLOCKED at Gecko's version gate** — GLContextFeatures:
+  clear_buffers needs GL 3.0, get_integer64_indexed needs GL 3.2;
+  pure version checks, no extension alternates. Our OSMesa COMPAT
+  context reports 3.0 (Mesa virgl compat ceiling); virgl CORE reaches
+  3.3+. The earlier "black webgl" page demanded WebGL2 specifically
+  ("WebGL 2 requires... Exhausted GL driver options") — no rendering
+  fault; a profile ceiling. The 306-error storm was downstream noise
+  of a refused/never-properly-created context.
+- **FIX DIRECTION (design decision, next session's opener):** dual
+  contexts in the shim (compat for Gecko's compositor path, core for
+  GL/WebGL consumers) or attrib-based creation serving 3.3+ where
+  Gecko tolerates core. Real surface area — needs a considered design
+  pass, not a tail-of-session patch.
+- Reusable asset: cgl-shim/killtest/webgltest.html (clear-to-colour +
+  verdict in document.title — readable over ssh when page text
+  doesn't render).
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
