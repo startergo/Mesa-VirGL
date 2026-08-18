@@ -335,6 +335,24 @@ item LEAVES the graphics queue. The only open graphics artifact is
 the duplication (virgl/host-side persistence; next instrument =
 in-shim buffer-vs-draw-rects diff).
 
+**WEBGL CODE READ + PREF TEST (2026-08-18, cross-repo session tail):**
+- virgl_resource.c:342-343 — virgl_transfer_map_size computes
+  stride/layer_stride from format x box ONLY; nr_samples appears
+  nowhere in guest transfer sizing. Dormant at msaa-samples=0.
+- virgl_screen.c:801-817 — sample gating against caps exists
+  (v1.max_samples + v2 multisample format bits); whether OUR caps
+  blob overclaims (host max 4) is unverified — GL_MAX_SAMPLES query
+  queued.
+- Host "Skipping N samples" lines are boot-time format-table
+  enumeration, NOT per-resource evidence (dead lead, recorded).
+- Pref test (webgl.msaa-samples=0): the fatal capacity error FROZE —
+  crash class closed. Remaining black = rendering correctness: 306x
+  glBindTexture(target mismatch), invalid uniform locations,
+  glTexSubImage2D(level 0) — the WebGL page's ANGLE-translated
+  program failing Mesa-side semantics. NEXT (Mesa-side hunt): start
+  at the texture-target mismatch (RECTANGLE vs 2D binding in the
+  page's program) — one root mismatch likely explains the storm.
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
