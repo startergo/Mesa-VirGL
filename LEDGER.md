@@ -275,6 +275,29 @@ m_user_backings table at res id 0x1bc → attachBackingUser FAIL
 table was ALSO filling silently on Aug 17 23:30 — the limit had been
 biting since the SMP era, unnoticed.
 
+**STARTUP-FIRST-PAINT DATUM — the dynamic framings die (2026-08-18,
+user observation): the duplicated corners are visible at STARTUP, on
+the white screen, BEFORE any blit or GL present.** No movement
+history exists at first paint — "stale positions," "damage-region
+repaint," and "ghost accumulation" are all falsified as descriptions.
+The startup T1 census confirms: the NonDraggableView y-spread
+(831..871) is present in the FIRST logged paint. **The duplication is
+in Gecko's INITIAL view-tree geometry: the titlebar layout creates
+the NonDraggableView population at two overlapping geometry sets from
+the first pass** (two layout assumptions — e.g. unified vs plain
+toolbar measurement — under this window configuration). Remaining
+question, answerable by SOURCE READ (no build/boot): nsChildView/
+nsCocoaWindow NonDraggableView creation in ~/powerfox-browser —
+which two geometry computations produce the doubled set.
+Related same-day datum (change-triggered DR log, 0d5bed3b): clicking
+the search box paints a popup view stack (NSView→ChildView→
+ViewRegionContainerView→PixelHostingView) at 115x18 → 288x146 →
+288x326 — the AUTOCOMPLETE DROPDOWN opening and growing; the "extra
+tab covering the search box" is the dropdown's own rendering (same
+class our T2 swizzle covers; T2 is passthrough there — SC_KEY-gated
+blocks unarmed, blit inert without associated buffer — asserted from
+code, not yet logged).
+
 **GLYPH ITEM CLOSED (2026-08-17, the one-variable local page).** The
 softpipe github reading was DOUBLE-confounded: the page never finished
 (script hang — the "Unresponsive script" dialog was github's), AND

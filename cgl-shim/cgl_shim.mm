@@ -22,6 +22,7 @@
 #include <GL/gl.h>
 #include <GL/osmesa.h>
 #include <pthread.h>
+#include <sys/time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <mach/mach_time.h>
@@ -1321,6 +1322,41 @@ static void shim_blit_present_buf(id view)
 
 @implementation NSView (CGLShimDraw)
 
+/* CHANGE-TRIGGERED drawRect logging (2026-08-18): the first-40 +
+ * every-200th sampling cannot resolve a typing-burst transition (a
+ * false negative reads as a result). Log each (class, bounds, CTM)
+ * tuple ONCE on first appearance — the transitions and nothing else —
+ * with wall-clock time to correlate with user events. Bounded. */
+#define DR_SEEN_MAX 2048
+static struct { char cls[64]; float bx, by, bw, bh, tx, ty; }
+    g_dr_seen[DR_SEEN_MAX];
+static int g_dr_seen_n = 0;
+static unsigned long g_dr_logged = 0;
+
+static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
+                         CGFloat ty)
+{
+    for (int i = 0; i < g_dr_seen_n; i++) {
+        if (strncmp(g_dr_seen[i].cls, cls, sizeof(g_dr_seen[0].cls)) == 0 &&
+            g_dr_seen[i].bx == bb.origin.x && g_dr_seen[i].by == bb.origin.y &&
+            g_dr_seen[i].bw == bb.size.width && g_dr_seen[i].bh == bb.size.height &&
+            g_dr_seen[i].tx == (float)tx && g_dr_seen[i].ty == (float)ty)
+            return 0;   /* seen — no log */
+    }
+    if (g_dr_seen_n < DR_SEEN_MAX) {
+        strlcpy(g_dr_seen[g_dr_seen_n].cls, cls,
+                sizeof(g_dr_seen[0].cls));
+        g_dr_seen[g_dr_seen_n].bx = bb.origin.x;
+        g_dr_seen[g_dr_seen_n].by = bb.origin.y;
+        g_dr_seen[g_dr_seen_n].bw = bb.size.width;
+        g_dr_seen[g_dr_seen_n].bh = bb.size.height;
+        g_dr_seen[g_dr_seen_n].tx = (float)tx;
+        g_dr_seen[g_dr_seen_n].ty = (float)ty;
+        g_dr_seen_n++;
+    }
+    return 1;
+}
+
 - (void)shim_drawRect:(NSRect)dirtyRect
 {
     /* DRAWRECT-ENTRY INSTRUMENT (2026-08-18; the drop-blit run proved
@@ -1334,7 +1370,7 @@ static void shim_blit_present_buf(id view)
         static int s_on = -1;
         if (s_on < 0) s_on = (getenv("SHIM_DRAWRECT_LOG") != NULL);
         s_dr_n++;
-        if (s_on && (s_dr_n <= 40 || (s_dr_n % 200) == 0)) {
+        if (s_on && g_dr_logged < 2000) {
             CGContextRef cg = nullptr;
             NSGraphicsContext *nsctx = [NSGraphicsContext currentContext];
             if (nsctx) cg = (CGContextRef)[nsctx graphicsPort];
@@ -1342,14 +1378,21 @@ static void shim_blit_present_buf(id view)
             if (cg) { const CGAffineTransform m = CGContextGetCTM(cg);
                       a=m.a; b=m.b; c=m.c; d=m.d; tx=m.tx; ty=m.ty; }
             NSRect bb = [self bounds];
-            fprintf(stderr, "DR[T1][%lu] %s bounds=(%.0f,%.0f %.0fx%.0f) "
-                    "dirty=(%.0f,%.0f %.0fx%.0f) ctm=[%.1f %.1f %.1f %.1f "
-                    "tx=%.0f ty=%.0f]\n",
-                    s_dr_n, class_getName([self class]),
-                    bb.origin.x, bb.origin.y, bb.size.width, bb.size.height,
-                    dirtyRect.origin.x, dirtyRect.origin.y,
-                    dirtyRect.size.width, dirtyRect.size.height,
-                    a, b, c, d, tx, ty);
+            const char *cls1 = class_getName([self class]);
+            if (dr_log_if_new(cls1, bb, tx, ty)) {
+                g_dr_logged++;
+                struct timeval tv; gettimeofday(&tv, NULL);
+                fprintf(stderr, "DR[T1][%lu] %ld.%03ld %s "
+                        "bounds=(%.0f,%.0f %.0fx%.0f) "
+                        "dirty=(%.0f,%.0f %.0fx%.0f) ctm=[%.1f %.1f %.1f "
+                        "%.1f tx=%.0f ty=%.0f]\n",
+                        s_dr_n, (long)tv.tv_sec, (long)tv.tv_usec/1000,
+                        cls1,
+                        bb.origin.x, bb.origin.y, bb.size.width, bb.size.height,
+                        dirtyRect.origin.x, dirtyRect.origin.y,
+                        dirtyRect.size.width, dirtyRect.size.height,
+                        a, b, c, d, tx, ty);
+            }
         }
     }
     shim_blit_present_buf(self);
@@ -1396,7 +1439,7 @@ static void shim_blit_present_buf(id view)
         static int s2_on = -1;
         if (s2_on < 0) s2_on = (getenv("SHIM_DRAWRECT_LOG") != NULL);
         s_dr2_n++;
-        if (s2_on && (s_dr2_n <= 40 || (s_dr2_n % 200) == 0)) {
+        if (s2_on && g_dr_logged < 2000) {
             CGContextRef cg = nullptr;
             NSGraphicsContext *nsctx = [NSGraphicsContext currentContext];
             if (nsctx) cg = (CGContextRef)[nsctx graphicsPort];
@@ -1405,11 +1448,18 @@ static void shim_blit_present_buf(id view)
                       a=m.a; b=m.b; c=m.c; d=m.d; tx=m.tx; ty=m.ty; }
             NSView *selfView2 = (NSView *)self;
             NSRect bb = [selfView2 bounds];
-            fprintf(stderr, "DR[T2][%lu] %s bounds=(%.0f,%.0f %.0fx%.0f) "
-                    "ctm=[%.1f %.1f %.1f %.1f tx=%.0f ty=%.0f]\n",
-                    s_dr2_n, class_getName([self class]),
-                    bb.origin.x, bb.origin.y, bb.size.width, bb.size.height,
-                    a, b, c, d, tx, ty);
+            const char *cls2 = class_getName([self class]);
+            if (dr_log_if_new(cls2, bb, tx, ty)) {
+                g_dr_logged++;
+                struct timeval tv; gettimeofday(&tv, NULL);
+                fprintf(stderr, "DR[T2][%lu] %ld.%03ld %s "
+                        "bounds=(%.0f,%.0f %.0fx%.0f) ctm=[%.1f %.1f %.1f "
+                        "%.1f tx=%.0f ty=%.0f]\n",
+                        s_dr2_n, (long)tv.tv_sec, (long)tv.tv_usec/1000,
+                        cls2,
+                        bb.origin.x, bb.origin.y, bb.size.width, bb.size.height,
+                        a, b, c, d, tx, ty);
+            }
         }
     }
 
