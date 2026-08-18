@@ -229,6 +229,52 @@ full-clear breakage.** Cosmetic known bugs: frame-0 coverage/count
 warm-up artifact (reset only inside window); tile threshold 32 px/32²
 hides ghosts smaller than a tile inside covered tiles.
 
+**THE ARTIFACT CHAIN CLOSES GECKO-SIDE (2026-08-18 morning).** The
+arc, in order:
+1. **Vacate fix BUILT (ef5d916) and FALSIFIED by user verdict**:
+   SHIM_VACATE_CLEAR=1 (clear prev-covered-now-uncovered pixels at
+   present) left double tab, black stripe, and hidden-URL-bar
+   unchanged. The fix's target (our buffer's stale pixels) was the
+   wrong layer.
+2. **Drop-blit discriminator (SHIM_DROP_BLIT=1)**: with our ENTIRE
+   present path off the screen, the page goes white (the blit was
+   the only page-content source — nothing else paints it) but the
+   **duplicated corners survive** → the ghosts live in Gecko's own
+   CoreGraphics paint. (User reading: the CG-drawn parts duplicate,
+   the GL part is absent — one mechanism explains both.)
+3. **drawRect-entry instrument (64e5719, SHIM_DRAWRECT_LOG=1)**:
+   code review first — lazy install IS guarded one-shot; both swizzle
+   targets call the original exactly once. Empirical: T2
+   (PixelHostingView) fires ~1:1 with frames, CTM uniform on every
+   entry; T1's offset-CTM entries are ALL Gecko's own
+   **NonDraggableView** (titlebar corner/region views) painting
+   micro-rects at a spread of y=831..871, x clusters 4/85/1380/
+   1412/1448 — the ghost-strip pattern IS Gecko's view population at
+   stale layout positions. T1 inert on them (no associated
+   present_buf).
+**VERDICT: the duplication artifact is Gecko-side** — its titlebar
+view machinery holding/painting views at old positions under this
+configuration. The shim is exonerated by measurement at every
+instrumented layer: GL uniforms (walk), draws (walk), present buffer
+(diff), blit (drop), drawRect/CTM (DR). Likely interaction: Gecko's
+titlebar/snapshot invalidation keys off window-surface state that the
+emulated context presents differently than real hardware (real-Mac
+PowerFox renders github's chrome correctly). **NEXT (if pursued):
+Gecko-side — enumerate NonDraggableView frames over time (their
+positions ARE the ghost positions), or source-read nsChildView's
+titlebar snapshot invalidation (~/powerfox-browser platform/widget/
+cocoa).** The earlier softpipe "no double tab" observation is
+re-attributed to early-state timing, not driver.
+
+**Kext-side same morning: backing table full (VMQemuVGA 36f8f97-era
+limit)** — fresh-boot browser start filled the 64-entry
+m_user_backings table at res id 0x1bc → attachBackingUser FAIL
+0xe00002be → Mesa GL_OUT_OF_MEMORY → compositor SIGSEGV at 0xb5
+(user's crash report, thread 20). Fixed: MAX_USER_BACKINGS 64 → 512
+(installed 322cf426, table-full zero in the new boot). Note: the
+table was ALSO filling silently on Aug 17 23:30 — the limit had been
+biting since the SMP era, unnoticed.
+
 **GLYPH ITEM CLOSED (2026-08-17, the one-variable local page).** The
 softpipe github reading was DOUBLE-confounded: the page never finished
 (script hang — the "Unresponsive script" dialog was github's), AND
