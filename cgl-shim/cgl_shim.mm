@@ -337,6 +337,10 @@ static char kScKey;
 #define PRESENT_SIZE_KEY (&kPresentSizeKey)
 #define SC_KEY (&kScKey)
 
+/* DIFF INSTRUMENT engine (substitute_cgl.c): compares the presented
+ * buffer against the union of this frame's draw rects. */
+extern "C" void cgl_shim_diff_at_present(const void *buf, int w, int h);
+
 static void shim_present(NSOpenGLContext *nsc){
     struct shim_ctx *sc = get_shim_ctx(nsc);
     if (!sc || !sc->present_buf || !sc->view) return;
@@ -347,6 +351,14 @@ static void shim_present(NSOpenGLContext *nsc){
      * drawRect to pick up. */
     pthread_mutex_lock(&sc->lock);
     sc->present_pending = 0;
+
+    /* DIFF INSTRUMENT (2026-08-17, pre-registered entry-18 follow-up):
+     * compare the presented buffer against the union of THIS frame's
+     * draw rects (accumulated by the substitute's walk wrappers).
+     * Outside-coverage non-black = stale ghost content; outside-
+     * coverage black = the never-drawn band. Engine in
+     * substitute_cgl.c; windowed by SHIM_DIFF_LOG + /tmp/walk_on. */
+    cgl_shim_diff_at_present(sc->present_buf, sc->width, sc->height);
 
     NSData *bufData = [NSData dataWithBytesNoCopy:sc->present_buf
                                            length:(NSUInteger)(sc->width * sc->height * 4)

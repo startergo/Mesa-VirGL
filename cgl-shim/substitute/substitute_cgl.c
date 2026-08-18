@@ -256,8 +256,15 @@ static void *walk_mesa_fn(const char *name)
     return g_mesa ? dlsym(g_mesa, name) : NULL;
 }
 
+/* diff instrument engine (defined after the walk wrappers below) */
+static int diff_armed(void);
+static void diff_record_u4fv(const GLfloat *v);
+static void diff_commit_draw(void);
+
 void glUniform4fv(GLint location, GLsizei count, const GLfloat *value)
 {
+    if (diff_armed() && count == 4)
+        diff_record_u4fv(value);
     if (walk_log_on()) {
         if (count == 4) {
             /* LayerRects / TextureRects: 4 rects, each x,y,w,h */
@@ -310,6 +317,8 @@ void glUniform2f(GLint location, GLfloat x, GLfloat y)
 
 void glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
+    if (diff_armed())
+        diff_commit_draw();
     if (walk_log_on())
         walk_line("WALK[%lu] DRAW mode=0x%x first=%d count=%d\n",
                   g_walk_lines, (unsigned)mode, (int)first, (int)count);
@@ -328,6 +337,179 @@ void glBindTexture(GLenum target, GLuint texture)
     if (!fn) fn = (void (*)(GLenum, GLuint))
         walk_mesa_fn("glBindTexture");
     if (fn) fn(target, texture);
+}
+
+/* -----------------------------------------------------------------------
+ * THE DIFF INSTRUMENT (pre-registered 2026-08-17, entry 18 follow-up;
+ * duplication localized to virgl/host render-target persistence by the
+ * softpipe bisect — this measures it mechanically, no visual reading).
+ *
+ * At present time, the presented buffer is compared against the UNION
+ * of the current frame's draw rects (recorded by the walk wrappers:
+ * the second-to-last 4×vec4 glUniform4fv before each glDrawArrays is
+ * the LayerRects set — SetLayerRects precedes SetTextureRects):
+ *   outside coverage + NON-BLACK  → stale content persisted from
+ *                                   earlier frames = the ghost regions
+ *   outside coverage + BLACK      → never drawn in current layout
+ *                                   = the band regions
+ * Reporting: 32-px tile aggregates merged into horizontal runs, with
+ * per-frame covered/stale/blank pixel counts. Windowed like the walk
+ * capture: SHIM_DIFF_LOG=1 arms; /tmp/walk_on opens the capture.
+ *
+ * Coordinate note: LayerRects are y-down (Gecko layer space; the grow
+ * box logs at y≈895 in a 910-tall window); the readback buffer is
+ * y-up (glReadPixels rows from the bottom) — rects are flipped when
+ * marked. First run calibrates against the known titlebar rect
+ * (0,0 1491x79 → buffer rows 831..909).
+ * ----------------------------------------------------------------------- */
+static int diff_armed(void)
+{
+    static int s = -1;
+    if (s < 0) s = (getenv("SHIM_DIFF_LOG") != NULL);
+    return s;
+}
+
+#define DIFF_MAX_LINES 5000
+static unsigned long g_diff_lines = 0;
+
+static unsigned char *g_cov = NULL;   /* w*h coverage, 1 = drawn this frame */
+static int g_cov_w = 0, g_cov_h = 0;
+static unsigned long g_cov_marked = 0;
+static unsigned long g_draws_in_frame = 0;
+
+/* ring of the last two count==4 U4fv rect sets */
+static float g_rect_ring[2][16];
+static int g_rect_ring_n = 0;
+static pthread_mutex_t g_diff_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void diff_mark_rect(float fx, float fy, float fw, float fh)
+{
+    if (!g_cov) return;
+    int x = (int)fx, y = (int)fy, w = (int)fw, h = (int)fh;
+    if (w <= 0 || h <= 0) return;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    /* y-down layer space → y-up buffer rows */
+    int row0 = g_cov_h - (y + h);      /* bottom row of the rect */
+    if (row0 < 0) row0 = 0;
+    int row1 = g_cov_h - y - 1;        /* top row of the rect */
+    if (row1 > g_cov_h - 1) row1 = g_cov_h - 1;
+    int col0 = x, col1 = x + w - 1;
+    if (col1 > g_cov_w - 1) col1 = g_cov_w - 1;
+    for (int r = row0; r <= row1; r++) {
+        unsigned char *line = g_cov + (size_t)r * g_cov_w;
+        for (int c = col0; c <= col1; c++)
+            if (!line[c]) { line[c] = 1; g_cov_marked++; }
+    }
+}
+
+/* Called from glUniform4fv (count==4) when armed. */
+static void diff_record_u4fv(const GLfloat *v)
+{
+    pthread_mutex_lock(&g_diff_mu);
+    memcpy(g_rect_ring[0], g_rect_ring[1], sizeof(g_rect_ring[0]));
+    memcpy(g_rect_ring[1], v, sizeof(g_rect_ring[1]));
+    g_rect_ring_n++;
+    pthread_mutex_unlock(&g_diff_mu);
+}
+
+/* Called from glDrawArrays when armed: second-to-last set = LayerRects. */
+static void diff_commit_draw(void)
+{
+    pthread_mutex_lock(&g_diff_mu);
+    g_draws_in_frame++;
+    if (g_rect_ring_n >= 2) {
+        const float *lr = g_rect_ring[0];
+        for (int i = 0; i < 4; i++)
+            diff_mark_rect(lr[4*i], lr[4*i+1], lr[4*i+2], lr[4*i+3]);
+    }
+    pthread_mutex_unlock(&g_diff_mu);
+}
+
+#define DIFF_TILE 32
+void cgl_shim_diff_at_present(const void *buf, int w, int h)
+{
+    if (!diff_armed()) return;
+    if (access("/tmp/walk_on", F_OK) != 0) return;   /* windowed */
+    if (!buf || w <= 0 || h <= 0) return;
+
+    if (g_diff_lines >= DIFF_MAX_LINES) return;
+
+    pthread_mutex_lock(&g_diff_mu);
+    if (!g_cov || g_cov_w != w || g_cov_h != h) {
+        free(g_cov);
+        g_cov = (unsigned char *)malloc((size_t)w * h);
+        if (!g_cov) { pthread_mutex_unlock(&g_diff_mu); return; }
+        memset(g_cov, 0, (size_t)w * h);
+        g_cov_w = w; g_cov_h = h; g_cov_marked = 0;
+    }
+
+    const unsigned char *px = (const unsigned char *)buf;
+    const size_t total = (size_t)w * h;
+    unsigned long stale = 0, blank = 0;
+    /* tile grid of stale counts */
+    int tw = (w + DIFF_TILE - 1) / DIFF_TILE;
+    int th = (h + DIFF_TILE - 1) / DIFF_TILE;
+    static unsigned int *tiles = NULL;
+    static int tiles_n = 0;
+    if (tiles_n < tw * th) {
+        free(tiles);
+        tiles = (unsigned int *)calloc((size_t)tw * th, sizeof(unsigned int));
+        tiles_n = tw * th;
+    } else {
+        memset(tiles, 0, (size_t)tw * th * sizeof(unsigned int));
+    }
+
+    for (size_t i = 0; i < total; i++) {
+        if (g_cov[i]) continue;
+        const unsigned char *p = px + i * 4;
+        if (p[0] > 8 || p[1] > 8 || p[2] > 8) {
+            stale++;
+            tiles[(i / w) / DIFF_TILE * tw + (i % w) / DIFF_TILE]++;
+        } else {
+            blank++;
+        }
+    }
+
+    fprintf(stderr, "DIFF[%lu] %dx%d draws=%lu covered=%lu (%.1f%%) "
+            "STALE=%lu BLANK=%lu\n",
+            g_diff_lines, w, h, g_draws_in_frame,
+            g_cov_marked, total ? 100.0 * g_cov_marked / total : 0.0,
+            stale, blank);
+
+    /* merge horizontally-adjacent stale tiles into runs */
+    int reported = 0;
+    for (int tr = 0; tr < th && reported < 24; tr++) {
+        int tc = 0;
+        while (tc < tw && reported < 24) {
+            if (tiles[tr * tw + tc] >= DIFF_TILE) {
+                int tc0 = tc;
+                int best = tiles[tr * tw + tc];
+                while (tc < tw && tiles[tr * tw + tc] >= DIFF_TILE) {
+                    if (tiles[tr * tw + tc] > best)
+                        best = tiles[tr * tw + tc];
+                    tc++;
+                }
+                /* convert tile row to y-up screen coords for readability */
+                int y0 = h - (tr + 1) * DIFF_TILE;
+                int y1 = h - tr * DIFF_TILE - 1;
+                if (y0 < 0) y0 = 0;
+                fprintf(stderr, "  STALE-RUN y=%d..%d x=%d..%d peak=%u\n",
+                        y0, y1, tc0 * DIFF_TILE, tc * DIFF_TILE - 1, best);
+                reported++;
+            } else {
+                tc++;
+            }
+        }
+    }
+
+    g_diff_lines++;
+    /* reset per-frame state for the next frame */
+    memset(g_cov, 0, total);
+    g_cov_marked = 0;
+    g_draws_in_frame = 0;
+    g_rect_ring_n = 0;
+    pthread_mutex_unlock(&g_diff_mu);
 }
 
 /* Pixel format: use a static token. XUL calls CGLChoosePixelFormat then
