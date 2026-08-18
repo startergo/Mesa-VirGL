@@ -389,6 +389,36 @@ is the next session's bounded hunt. Guest config at handoff:
 (strip+UAF), prefs drawInTitlebar=false + msaa-samples=0 +
 enable-webgl2=false.
 
+**GREY-CANVAS SESSION STATE + COMPOSITOR CRASH (2026-08-18, the
+final arc):**
+- The FBO ladder page (webgltest2) passed EVERYTHING in-title (ctx OK,
+  default RED clear, FBO COMPLETE, FBO BLUE clear, program link OK,
+  quad drawn, zero GL errors, final GREEN clear) yet the canvas showed
+  GREY = the #333 page background through a transparent canvas: NO GL
+  content reached the presented buffer for the canvas region.
+- **Decisive: webgltest.html (page 1) — BLUE earlier in a fresh
+  session — showed GREY when reopened in the SAME session with the
+  aquarium tab still live (its 1 FPS loop running).** The page's own
+  GL is exonerated; the flip is SESSION STATE — a live WebGL canvas
+  (the aquarium) holds/wedges the shared canvas-compositing path and
+  every other canvas composites transparent. The aquarium's own black
+  canvas rereads as: it TOOK the path and renders nothing visible
+  through it.
+- **NEW CRASH CLASS (stack archived in user report):** while testing
+  aquarium-close + page-1 reload, the COMPOSITOR thread crashed in
+  CompositorOGL::DrawGeometry rendering a TiledContentHost tile,
+  under CompositorBridgeParent::RecvFlushRendering — the canvas-flush
+  after page teardown drew a tile whose texture source had died.
+  Texture-lifetime class on Gecko's compositor side; no shim frames
+  in the stack.
+- NEXT SESSION OPENERS (in order): (1) the coexistence test that was
+  interrupted — close aquarium, reload page 1, blue returns?;
+  (2) the teardown crash — reproducible by closing a live webgl
+  canvas? (3) the ladder pages (webgltest2/3) as instruments.
+- Handoff config: 4 vCPUs, kext 37268cb3, substitute 725804ea
+  (+e43ca76 UAF), prefs drawInTitlebar=false + msaa-samples=0 +
+  enable-webgl2=false.
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
