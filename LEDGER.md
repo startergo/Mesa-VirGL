@@ -375,6 +375,20 @@ page text did not render while the canvas did):**
   verdict in document.title — readable over ssh when page text
   doesn't render).
 
+**UAF FIX VALIDATED + the rendering-correctness repro (2026-08-18,
+end of the marathon):** the aquarium-class WebGL page (webgl2 off →
+WebGL1 fallback, msaa 0) LOADS AND RUNS at ~1 FPS with NO crash —
+the free_buffers UAF guard (e43ca76) held through the churn that
+crashed twice before. The canvas shows BLACK (no fish) while the
+page stays alive: the rendering-correctness item now has a live,
+non-crashing repro AND a working baseline (webgltest.html clears
+blue, getError clean) — the delta between them (offscreen FBO
+rendering, scene textures, translated shaders under GL 3.0 compat)
+is the next session's bounded hunt. Guest config at handoff:
+4 vCPUs, kext 37268cb3 (clamps+identifier), substitute 725804ea
+(strip+UAF), prefs drawInTitlebar=false + msaa-samples=0 +
+enable-webgl2=false.
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
