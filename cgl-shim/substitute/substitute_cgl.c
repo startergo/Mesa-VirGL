@@ -256,14 +256,17 @@ static void *walk_mesa_fn(const char *name)
     return g_mesa ? dlsym(g_mesa, name) : NULL;
 }
 
-/* diff instrument engine (defined after the walk wrappers below) */
+/* diff instrument engine + vacate fix (defined after the walk
+ * wrappers below) */
 static int diff_armed(void);
+static int vacate_on(void);
+static int diff_active(void);
 static void diff_record_u4fv(const GLfloat *v);
 static void diff_commit_draw(void);
 
 void glUniform4fv(GLint location, GLsizei count, const GLfloat *value)
 {
-    if (diff_armed() && count == 4)
+    if (diff_active() && count == 4)
         diff_record_u4fv(value);
     if (walk_log_on()) {
         if (count == 4) {
@@ -317,7 +320,7 @@ void glUniform2f(GLint location, GLfloat x, GLfloat y)
 
 void glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
-    if (diff_armed())
+    if (diff_active())
         diff_commit_draw();
     if (walk_log_on())
         walk_line("WALK[%lu] DRAW mode=0x%x first=%d count=%d\n",
@@ -369,13 +372,37 @@ static int diff_armed(void)
     return s;
 }
 
+/* THE FIX (2026-08-17, pre-registered from the diff instrument's
+ * measurement): vacated-rect clearing. Keep the previous frame's
+ * coverage; pixels COVERED in frame N-1 but UNCOVERED in frame N are
+ * vacated (the widget moved away) — zero them in the presented
+ * buffer. Never-covered regions (the undrawn band Gecko depends on
+ * for persistence — entry 9) are NEVER touched: only actually-
+ * vacated pixels are discarded, which is what avoids the entry-9
+ * full-clear breakage by construction. Env-gated:
+ * SHIM_VACATE_CLEAR=1. Implies coverage recording (the hooks arm on
+ * diff_active()). */
+static int vacate_on(void)
+{
+    static int s = -1;
+    if (s < 0) s = (getenv("SHIM_VACATE_CLEAR") != NULL);
+    return s;
+}
+
+static int diff_active(void)
+{
+    return diff_armed() || vacate_on();
+}
+
 #define DIFF_MAX_LINES 5000
 static unsigned long g_diff_lines = 0;
 
 static unsigned char *g_cov = NULL;   /* w*h coverage, 1 = drawn this frame */
+static unsigned char *g_cov_prev = NULL;  /* previous frame's coverage */
 static int g_cov_w = 0, g_cov_h = 0;
 static unsigned long g_cov_marked = 0;
 static unsigned long g_draws_in_frame = 0;
+static unsigned long g_vacated_px = 0;
 
 /* ring of the last two count==4 U4fv rect sets */
 static float g_rect_ring[2][16];
@@ -429,23 +456,50 @@ static void diff_commit_draw(void)
 #define DIFF_TILE 32
 void cgl_shim_diff_at_present(const void *buf, int w, int h)
 {
-    if (!diff_armed()) return;
-    if (access("/tmp/walk_on", F_OK) != 0) return;   /* windowed */
+    /* Vacate-clearing runs EVERY frame when SHIM_VACATE_CLEAR is set
+     * (it is the fix, not an instrument — no capture window). The
+     * stale/blank REPORTING stays windowed (diff reporting needs
+     * deliberate captures). */
+    const int do_vacate = vacate_on();
+    const int do_report = diff_armed() &&
+                          (access("/tmp/walk_on", F_OK) == 0) &&
+                          (g_diff_lines < DIFF_MAX_LINES);
+    if (!do_vacate && !do_report) return;
     if (!buf || w <= 0 || h <= 0) return;
-
-    if (g_diff_lines >= DIFF_MAX_LINES) return;
 
     pthread_mutex_lock(&g_diff_mu);
     if (!g_cov || g_cov_w != w || g_cov_h != h) {
-        free(g_cov);
+        free(g_cov); free(g_cov_prev);
         g_cov = (unsigned char *)malloc((size_t)w * h);
-        if (!g_cov) { pthread_mutex_unlock(&g_diff_mu); return; }
+        g_cov_prev = (unsigned char *)calloc((size_t)w * h, 1);
+        if (!g_cov || !g_cov_prev) {
+            free(g_cov); free(g_cov_prev);
+            g_cov = NULL; g_cov_prev = NULL;
+            pthread_mutex_unlock(&g_diff_mu); return;
+        }
         memset(g_cov, 0, (size_t)w * h);
         g_cov_w = w; g_cov_h = h; g_cov_marked = 0;
     }
 
     const unsigned char *px = (const unsigned char *)buf;
     const size_t total = (size_t)w * h;
+
+    if (do_vacate) {
+        /* vacated = covered last frame, uncovered now → zero the
+         * pixels in the presented buffer (transparent → composites
+         * black; a redraw overwrites). Never-covered pixels are
+         * untouched — the entry-9 persistence Gecko depends on. */
+        unsigned char *pbuf = (unsigned char *)buf;
+        g_vacated_px = 0;
+        for (size_t i = 0; i < total; i++) {
+            if (g_cov_prev[i] && !g_cov[i]) {
+                unsigned char *p = pbuf + i * 4;
+                p[0] = p[1] = p[2] = p[3] = 0;
+                g_vacated_px++;
+            }
+        }
+    }
+
     unsigned long stale = 0, blank = 0;
     /* tile grid of stale counts */
     int tw = (w + DIFF_TILE - 1) / DIFF_TILE;
@@ -472,10 +526,10 @@ void cgl_shim_diff_at_present(const void *buf, int w, int h)
     }
 
     fprintf(stderr, "DIFF[%lu] %dx%d draws=%lu covered=%lu (%.1f%%) "
-            "STALE=%lu BLANK=%lu\n",
+            "STALE=%lu BLANK=%lu VACATED=%lu\n",
             g_diff_lines, w, h, g_draws_in_frame,
             g_cov_marked, total ? 100.0 * g_cov_marked / total : 0.0,
-            stale, blank);
+            stale, blank, g_vacated_px);
 
     /* merge horizontally-adjacent stale tiles into runs */
     int reported = 0;
@@ -503,8 +557,10 @@ void cgl_shim_diff_at_present(const void *buf, int w, int h)
         }
     }
 
-    g_diff_lines++;
-    /* reset per-frame state for the next frame */
+    if (do_report)
+        g_diff_lines++;
+    /* reset per-frame state for the next frame: prev <- cov, cov <- 0 */
+    memcpy(g_cov_prev, g_cov, total);
     memset(g_cov, 0, total);
     g_cov_marked = 0;
     g_draws_in_frame = 0;
