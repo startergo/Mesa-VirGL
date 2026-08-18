@@ -419,6 +419,27 @@ final arc):**
   (+e43ca76 UAF), prefs drawInTitlebar=false + msaa-samples=0 +
   enable-webgl2=false.
 
+**COEXISTENCE TEST COMPLETE (2026-08-18, the marathon's last act):**
+fresh single instance (substitute restored post-/tmp-wipe; earlier
+"gate failures" were an env-less dock launch + the wipe — no crash-
+protection needed; force-enabled pref added but untested as cause):
+- websamples.org webgl page restored by session (black canvas, 2
+  white UI parts) + webgltest.html in a second tab: page 1's canvas
+  = BLACK (opaque-empty-buffer mask this session; grey=transparent
+  mask last session — same wedge, different alpha face).
+- **Closed the websamples tab: browser SURVIVED (teardown crash is
+  INTERMITTENT), page 1 reloaded — canvas STILL BLACK.**
+- **VERDICT: the canvas-compositing wedge is established by the
+  heavy webgl page, PERSISTS after the trigger dies, resets only on
+  relaunch.** Backing-table-clog theory WEAKENED: unref (2131) >
+  attach-ok (1144), slots flow back; one table-full event all boot.
+  The wedge is Gecko canvas-manager state (TextureClient/ImageBridge
+  family) — the same bad state that intermittently crashes
+  TiledContentHost on teardown.
+- NEXT SESSION: Gecko-side canvas-manager hunt; first instrument =
+  the ladder pages + a relaunch A/B (blue on fresh, black after
+  heavy page — the repro is now 100% schedulable).
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
