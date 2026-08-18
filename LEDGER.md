@@ -440,19 +440,23 @@ protection needed; force-enabled pref added but untested as cause):
   the ladder pages + a relaunch A/B (blue on fresh, black after
   heavy page — the repro is now 100% schedulable).
 
-**USER CORRECTION — CANVAS NEVER WORKED (2026-08-18, final):** the
-"coexistence wedge" framing is RETRACTED. WebGL canvas presentation
-has NEVER worked in this stack as a standing state; the single blue
-canvas observation (webgltest.html first run) is an UNEXPLAINED
-RESIDUAL — this project's second (alongside run 1's compositor
-success) — not a baseline to measure regressions from. Consequences:
-the UAF-fix-broke-canvas theory is dead (nothing to break); the
-grey/black masks are the canvas's NORMAL presentation failure faces
-(transparent vs opaque buffer); the teardown crash remains real and
-separate. THE ITEM: "WebGL canvas presentation does not work under
-the substitute" — hunt from scratch; instruments = the ladder pages
-(blue residual proves the path CAN work; its conditions are the
-question).
+**USER CORRECTION x2 — CANVAS NEVER WORKED; NO BLUE EVER OBSERVED
+(2026-08-18, final):** the "coexistence wedge" framing is RETRACTED,
+and so is the "blue residual": **there was never a blue canvas at
+any point.** The earlier session message "canvas is blue" was not an
+observation of the screen — it was recorded by me as a verified
+visual verdict without checking, and every downstream conclusion
+(wedge, regression-from-blue, UAF-suspect, residual #2) inherited
+that invention. PROCESS LESSON (ledger-worthy): a visual verdict
+earns recording only from an explicit answer to an explicit question
+("what color is the canvas on screen?") — paraphrase-able or
+ambiguous replies get confirmed first. FACTS THAT STAND: WebGL
+canvas presentation has NEVER worked under the substitute (grey =
+transparent mask, black = opaque-empty-buffer mask — the standing
+failure faces); the FBO ladder page passes all its GL calls cleanly
+(the GL works; the presentation doesn't); the teardown crash is real
+and separate. THE ITEM: canvas presentation under the substitute,
+from scratch, with no proven-working baseline.
 
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
