@@ -174,6 +174,42 @@ signature). User's discriminators queued: (a) no-web-font site; (b)
 layers.acceleration.disabled=true — glyphs appear on software
 compositor → GL path; still missing → font loading/rasterisation.
 
+**SOFTPIPE BISECT RUN (2026-08-17 late night) — BOTH verdicts in:**
+- Run: GALLIUM_DRIVER=softpipe, same page, renderer="softpipe",
+  zero virgl_iokit engagement. User verdict on the differences vs
+  virgl: (1) **double tab GONE under softpipe**; (2) URL-box text
+  visible (but under virgl the ghost strip covered the URL box —
+  entangled with the duplication, no independent text signal);
+  (3) **page web-font text STILL BARE under softpipe.**
+- **Duplication verdict: virgl/host-side.** Clean under softpipe with
+  identical Gecko + shim buffers + texture-upload path → the ghost
+  carrier is the persistent HOST-SIDE virgl render target (entry-9
+  family: DoubleBuffer-without-BackingStore vs our ever-persistent
+  surface). Texture-snapshot-staleness also dead (textures traverse
+  the same Mesa path in both drivers). Fix direction: surgical
+  vacated-rect clearing (walk wrappers already hold per-texture
+  previous rects; clearing only moved-from regions avoids the entry-9
+  full-clear breakage). The in-shim diff instrument (buffer vs union
+  of frame draw rects) remains the mechanical validation.
+- **Web-font text verdict: OUR-MESA side.** Bare under BOTH drivers;
+  real hardware runs the same PowerFox+github fully — but on Apple GL,
+  not our Mesa, so hardware success never exonerated our Mesa. The
+  fault is in our Mesa's handling of web-font glyph atlas uploads (or
+  Gecko's path through them). Leading candidate by precedent: a
+  format/size/alignment fault in the glTexSubImage2D family — the
+  2026-08-13 ROW_LENGTH bug was exactly this family. NEXT INSTRUMENT
+  (pre-registered): glTexImage2D/glTexSubImage2D wrappers logging
+  internalformat/format/type/size/alignment — diff a WORKING atlas
+  upload (system font) against a FAILING one (web font) on the same
+  page.
+- Session history note: a mid-run host-side DEVICE WEDGE killed the
+  first pattern-fill attempt (recorded in the kext ledger); the
+  restart cleared it (56.3 Hz refresh after — best yet). The checker
+  run post-restart showed ZERO checkerboard on any visible content →
+  CGLTexImageIOSurface2D is not on Gecko's visible-content path in
+  this configuration (only 3 one-time widget uploads ever seen);
+  pattern-fill must move to the glTexImage2D family to see anything.
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
