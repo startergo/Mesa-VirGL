@@ -15,7 +15,7 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-17 (entry 18: THE COMPOSITOR GATE FOUND AND FIXED — gfxPlatformMac demands NSOpenGLPFAAccelerated unconditionally; real AppKit matching sees a software-only renderer list (boot-constant, probe-measured) → FEATURE_FAILURE_OPENGL_CREATE_CONTEXT on every launch since the Flurry era; fix = NSOpenGLPixelFormat strip swizzle; GL chrome back; new frontier: typing-burst congestion collapse on 1 vCPU)
+Last updated: 2026-08-18 (the marathon: compositor gate fixed+controlled; artifact split, titlebar class closed by pref; wedge mechanism caught host-side, clamped twice; glyph closed; backing table raised; UAF fixed; WebGL2 gate identified; MSAA crash class closed by pref; canvas presentation = the standing open item; correction x2 recorded)
 
 ---
 
@@ -334,6 +334,55 @@ binary as the real machine that renders github fully); the glyph
 item LEAVES the graphics queue. The only open graphics artifact is
 the duplication (virgl/host-side persistence; next instrument =
 in-shim buffer-vs-draw-rects diff).
+
+## OPEN ITEMS AT SESSION END (2026-08-18, the canvas-presentation item and the queue)
+
+**1. CANVAS PRESENTATION UNDER THE SUBSTITUTE — the standing open
+item, from scratch.** WebGL/2D canvas GL content has NEVER reached
+the screen through the substitute (no verified working moment; see
+correction x2 below). Known faces: transparent mask (grey-over-
+background) and opaque-empty-buffer mask (black) — the blit presents
+either nothing (early-return) or an empty buffer. Known GOOD: the GL
+itself works — webgltest2's FBO pipeline passes every call with zero
+GL errors; the title channel reads verdicts without page text.
+Instruments in tree: webgltest.html (title-channel), webgltest2.html
+(FBO ladder), webgltest3.html (no-FBO control). FIRST QUESTIONS:
+(1) does the canvas present path ever CALL our shim's present
+(blit-skip lines vs blit lines in a fresh log)? (2) where does
+Gecko's canvas compositing route under the substitute — the
+CanvasClient/ImageBridge path may bypass our flushBuffer present
+entirely (the same class as the drawRect-as-flush-point gap that
+needed its own hook). Suspect: the canvas layer presents through a
+path the shim does not wrap — the entry-16 lesson (AppKit flushes
+through private __NS_CGL* wrappers our swizzles cannot see) applies
+to canvases too.
+
+**2. Wedge residual (the 0x6008-stream oversized transfer):** kext
+paths exonerated by capture; MSAA capacity accounting named as the
+remaining candidate; msaa-samples=0 pref closes the crash class in
+practice. Fix locus = Mesa virgl transfer sizing under nr_samples
+(virgl_resource.c:342-343 has no sample multiplication).
+
+**3. WebGL2 gate:** blocked by Gecko's 3.2 version check under our
+compat-3.0 OSMesa context. Fix = core/compat context design (real
+surface area). enable-webgl2=false makes pages fall back to WebGL1.
+
+**4. Intermittent teardown crash:** TiledContentHost/DrawGeometry
+under RecvFlushRendering when closing a live webgl canvas. Not
+deterministic; stack archived in ledger.
+
+**5. Standing hygiene:** debug log growth (cap it); scissor stash
+(decide); GL_MAX_SAMPLES guest report; the dropdown-class artifact
+(Gecko popup, sole remaining duplication item).
+
+Handoff config: 4 vCPUs; kext 37268cb3 (512-table, attach+transfer
+clamps, stream identifier); substitute 725804ea (strip+walk+diff+
+vacate+UAF+DR-instrument); prefs drawInTitlebar=false,
+msaa-samples=0, enable-webgl2=false (in both profiles' user.js);
+probe tools in VMQemuVGA/probe/ and killtest/; /tmp/subst needs
+redeploy after every guest reboot.
+
+---
 
 **WEBGL CODE READ + PREF TEST (2026-08-18, cross-repo session tail):**
 - virgl_resource.c:342-343 — virgl_transfer_map_size computes
