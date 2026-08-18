@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Web-font one-variable test</title>
+<style>
+@font-face {
+  font-family: "LocalWebFont";
+  src: url("file:///Library/Fonts/Andale Mono.ttf") format("truetype");
+}
+.wf { font-family: "LocalWebFont", monospace; font-size: 28px; }
+.sf { font-family: monospace; font-size: 28px; }
+</style>
+</head>
+<body>
+<p class="wf">WEBFONT LINE: The quick brown fox jumps over the lazy dog 0123456789</p>
+<p class="sf">SYSTEM LINE: The quick brown fox jumps over the lazy dog 0123456789</p>
+</body>
+</html>

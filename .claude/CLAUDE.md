@@ -60,6 +60,22 @@ softpipe and virgl ⇒ the fault is downstream of Mesa (winsys / kext /
 host); differs ⇒ the fault is in Mesa's state tracker or the virgl
 encoder. Every pixel-correctness investigation starts here.
 
+**EXCEPT for text: softpipe blanks web-font glyphs (2026-08-17,
+LEDGER entry 18).** The one-variable local page
+(`cgl-shim/killtest/fonttest.html`) showed the @font-face line
+INVISIBLE under softpipe while rendering perfectly under virgl — a
+softpipe-specific glyph-atlas fault. For any text/glyph question,
+softpipe gives a false branch in the "Mesa-side" direction; do not
+bisect text with it. Use the local fonttest page under virgl instead
+(it loads reliably — no network, no script — and its `monospace`
+fallback makes rejected fonts RENDER rather than vanish, so
+invisibility means the atlas path blanked). This bug masqueraded as a
+real result once: github's never-finishing load (script hang) and the
+softpipe atlas fault BOTH produced "text missing", and together they
+looked like a clean bisect branch — the double confound. Two faults
+with one signature defeat a single observation; the defence is the
+same as for ghosts: a control that isolates one variable.
+
 **flushBuffer owns the viewport-driven resize — every alternate
 present path inherits it (2026-08-17, the 1x1 lesson).**
 CGLCreateContext allocates a 1x1 buffer; the resize to real size
