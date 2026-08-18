@@ -210,6 +210,26 @@ compositor → GL path; still missing → font loading/rasterisation.
   this configuration (only 3 one-time widget uploads ever seen);
   pattern-fill must move to the glTexImage2D family to see anything.
 
+**GLYPH ITEM CLOSED (2026-08-17, the one-variable local page).** The
+softpipe github reading was DOUBLE-confounded: the page never finished
+(script hang — the "Unresponsive script" dialog was github's), AND
+softpipe has its own atlas fault. The user's instrument settled it:
+`/Users/sl/fonttest.html` — two lines, identical text; one via
+@font-face to a LOCAL TTF (no network, no script, instant load),
+one system monospace; `monospace` fallback on both so a rejected
+font would RENDER, not vanish. Results:
+- softpipe: system ✓, **webfont INVISIBLE** (⇒ font loaded, glyphs
+  blanked — a SOFTPIPE-SPECIFIC atlas fault; instrument-mode bug,
+  NOT the product path; record so it never re-confounds a bisect)
+- virgl: **system ✓, webfont ✓ — the production stack renders
+  downloaded fonts correctly, end to end.**
+Verdicts: github's bare text = LOAD-STALL confound (text never
+arrived), not font rendering; WOFF2 decode = fine (CPU-side, same
+binary as the real machine that renders github fully); the glyph
+item LEAVES the graphics queue. The only open graphics artifact is
+the duplication (virgl/host-side persistence; next instrument =
+in-shim buffer-vs-draw-rects diff).
+
 **Corrections to earlier entries:**
 - Entry 17's "black browser = host disk pressure" — PARTIAL: disk
   pressure caused the 2.5-24 s frames; but the black CHROME also/instead
