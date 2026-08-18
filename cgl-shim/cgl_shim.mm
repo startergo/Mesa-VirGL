@@ -1323,6 +1323,35 @@ static void shim_blit_present_buf(id view)
 
 - (void)shim_drawRect:(NSRect)dirtyRect
 {
+    /* DRAWRECT-ENTRY INSTRUMENT (2026-08-18; the drop-blit run proved
+     * the duplication lives in Gecko's own paint — the queued question
+     * is whether OUR swizzle chain causes Gecko's drawRect to run
+     * twice per cycle at a shifted CTM, or Gecko's single paint
+     * contains the duplication. Log entry count, class, bounds, dirty
+     * rect, CTM. SHIM_DRAWRECT_LOG=1; first 40 + every 200th. */
+    {
+        static unsigned long s_dr_n = 0;
+        static int s_on = -1;
+        if (s_on < 0) s_on = (getenv("SHIM_DRAWRECT_LOG") != NULL);
+        s_dr_n++;
+        if (s_on && (s_dr_n <= 40 || (s_dr_n % 200) == 0)) {
+            CGContextRef cg = nullptr;
+            NSGraphicsContext *nsctx = [NSGraphicsContext currentContext];
+            if (nsctx) cg = (CGContextRef)[nsctx graphicsPort];
+            CGFloat a=0,b=0,c=0,d=0,tx=0,ty=0;
+            if (cg) { const CGAffineTransform m = CGContextGetCTM(cg);
+                      a=m.a; b=m.b; c=m.c; d=m.d; tx=m.tx; ty=m.ty; }
+            NSRect bb = [self bounds];
+            fprintf(stderr, "DR[T1][%lu] %s bounds=(%.0f,%.0f %.0fx%.0f) "
+                    "dirty=(%.0f,%.0f %.0fx%.0f) ctm=[%.1f %.1f %.1f %.1f "
+                    "tx=%.0f ty=%.0f]\n",
+                    s_dr_n, class_getName([self class]),
+                    bb.origin.x, bb.origin.y, bb.size.width, bb.size.height,
+                    dirtyRect.origin.x, dirtyRect.origin.y,
+                    dirtyRect.size.width, dirtyRect.size.height,
+                    a, b, c, d, tx, ty);
+        }
+    }
     shim_blit_present_buf(self);
 
     /* Call original drawRect for non-shim views */
@@ -1359,6 +1388,28 @@ static void shim_blit_present_buf(id view)
             s_cvd_log++;
             fprintf(stderr, "cgl_shim: drawRect FIRED on %s\n",
                     class_getName([self class]));
+        }
+    }
+    /* DRAWRECT-ENTRY INSTRUMENT, Target 2 (see Target 1 note). */
+    {
+        static unsigned long s_dr2_n = 0;
+        static int s2_on = -1;
+        if (s2_on < 0) s2_on = (getenv("SHIM_DRAWRECT_LOG") != NULL);
+        s_dr2_n++;
+        if (s2_on && (s_dr2_n <= 40 || (s_dr2_n % 200) == 0)) {
+            CGContextRef cg = nullptr;
+            NSGraphicsContext *nsctx = [NSGraphicsContext currentContext];
+            if (nsctx) cg = (CGContextRef)[nsctx graphicsPort];
+            CGFloat a=0,b=0,c=0,d=0,tx=0,ty=0;
+            if (cg) { const CGAffineTransform m = CGContextGetCTM(cg);
+                      a=m.a; b=m.b; c=m.c; d=m.d; tx=m.tx; ty=m.ty; }
+            NSView *selfView2 = (NSView *)self;
+            NSRect bb = [selfView2 bounds];
+            fprintf(stderr, "DR[T2][%lu] %s bounds=(%.0f,%.0f %.0fx%.0f) "
+                    "ctm=[%.1f %.1f %.1f %.1f tx=%.0f ty=%.0f]\n",
+                    s_dr2_n, class_getName([self class]),
+                    bb.origin.x, bb.origin.y, bb.size.width, bb.size.height,
+                    a, b, c, d, tx, ty);
         }
     }
 
