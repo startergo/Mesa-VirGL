@@ -163,16 +163,54 @@ and the instrument notes:**
    FRESH-PROFILE BASELINE is the first action of the next session —
    everything else is uninterpretable until it exists.
 
-**MODULE-NAME VERIFICATION AT CLOSE (operator-directed, from the
-read-only Gecko source — no run spent):** the log module IS "Layers" —
-`platform/gfx/layers/Layers.cpp:69: static LazyLogModule sLog("Layers")`.
-So the silent MOZ_LOG run failed on the ENV FORM, not the name:
-Gecko 52 is the rename boundary era; older builds accept only
-NSPR_LOG_MODULES. The corrected incantation for the next session:
-`NSPR_LOG_MODULES=Layers:5 NSPR_LOG_FILE=/tmp/layers.log` (the FILE
-variable included — without it output can land somewhere unwatched).
-Other gfx modules available if needed: "userfonts" (gfxUserFontSet),
-"gfx2d" (Factory.cpp).
+**FRESH-PROFILE BASELINE RUNS (18:30–18:48) — CONTENT VISIBLE, FIRST
+TIME; the confound lesson landed exactly as the operator framed it:**
+- **baseline1 (fresh profile, NO prefs)**: white↔BLACK ALTERNATION
+  within one session (operator reading: transparent frames = blit
+  skips, opaque = blit runs — the compositor alternates; flat grey
+  traffic lights = Gecko CoreGraphics showing on skip), DOUBLE corner
+  stamps (drawInTitlebar default returned — the pref, not code, closed
+  that class), error storm: glUniform(program not linked) ×17, target
+  mismatch ×15, texSubImage ×7. **An unconfigured stack is NOT the
+  debugged configuration — every fresh-profile observation without
+  user.js is against the wrong stack.** The entire entry-18 error
+  family is PREF-DEPENDENT (msaa-samples=0 + force-layers-readback
+  suppress it).
+- **baseline2 (fresh profile + user.js copied in BEFORE first launch —
+  drawInTitlebar=false, msaa=0, webgl2 off, force-layers-readback)**:
+  at 4 min — ALIVE, calm (12.8% CPU vs baseline1's 70%), census nearly
+  clean (3× GL_MAJOR_VERSION benign + 1 glUseProgram), and **CHROME
+  RENDERS — the first visible browser UI of the entire 2026-08-19
+  effort.** Addendum from operator: **the page (webgltest.html) does
+  not load** — UI composites, page content absent. That is the new
+  frontier, cleanly split.
+- **STAMP probe confirmed on-screen** (operator saw the blue corner
+  squares; code read: 8×8 0xCAFE0000|frame blocks at all 4 corners of
+  render_buf before each readback — cgl_shim.mm:808+). Squares visible
+  = stamps survive readback → present path works end-to-end AND the
+  host transfer overwrites ~nothing per frame (empty composition
+  delivered faithfully). NOTE: with content now rendering, the
+  on-screen stamps are an instrument artifact to remember when reading
+  screenshots.
+- **NSPR_LOG_MODULES=Layers:5 + NSPR_LOG_FILE=/tmp/layers.log**: file
+  created, ZERO bytes — logging inert even in the old form. The
+  "Layers" module is nearly silent in release builds (few call sites);
+  do not spend more runs on it without first grepping what
+  Layers.cpp's sLog actually logs.
+- **Anomaly**: /tmp/pf_baseline.log was readable at 18:37:00 and
+  unlinked by 18:37:32 while its writer lived — something cleans
+  /tmp/pf_*.log on the guest (possibly the parallel session). Flagged.
+
+**NEXT (frontier = page load, with UI rendering banked):**
+1. Page-load diagnostics on baseline2: does about:blank differ? URL
+   bar typing work? Sample main thread for docshell/parser/layout
+   activity vs a stall; check the page's own console via a trivial
+   local HTML with document.title writes (the recorded title-channel
+   trick).
+2. The empty-tree question TRANSFORMS: the tree DOES fill with chrome
+   layers in the configured stack — the virgl-path carrier narrowed
+   again to PAGE CONTENT specifically (canvas/texture path), aligning
+   with force-layers-readback=true now being load-bearing.
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
