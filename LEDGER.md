@@ -151,21 +151,21 @@ kext a378b9b, deployed together, one boot):**
   read(200,150)=255,0,255,255; wire now real: `box=(399,299)
   stride=1600 offset=479996` (= 299*1600+399*4 exactly); canvas-sized
   readbacks `400x300 stride=1600`; no XFER-CLAMP fires.
-- Stage 2 (screen, user verdicts verbatim): **"now is blue!"** — the
-  webgltest canvas presents its clear colour. THE FIRST CANVAS CONTENT
-  EVER PRESENTED through this stack; the canvas-presentation item,
-  open since canvases were first tried, is CLOSED.
-- **UNPLANNED BONUS, user verdict: "No more double tab corruption!"**
-  — the ghost/double-tab duplication artifact (the sole remaining
+- Stage 2 (screen, user visual check): the webgltest canvas presents
+  its clear colour (light blue). THE FIRST CANVAS CONTENT EVER
+  PRESENTED through this stack; the canvas-presentation item, open
+  since canvases were first tried, is CLOSED.
+- **UNPLANNED BONUS (user visual check): the double-tab duplication
+  artifact is GONE** — the ghost/double-tab class (the sole remaining
   open duplication item, carried as the autocomplete-dropdown class)
-  VANISHED with the same fix. ATTRIBUTION REWRITE: its carrier was
+  vanished with the same fix. ATTRIBUTION REWRITE: its carrier was
   misplaced sub-box updates leaving stale texture content — the whole
   "persistence family" (vacated-rect clearing, drop-blit probes,
   entry-9-style framings) was this transport bug wearing UI masks.
   The drawInTitlebar pref closed the corners/black-stripe subset
   (genuinely Gecko geometry); the REMAINING class was ours.
-- Browser fully interactive — user: "I can type about:config in the
-  URL!" (URL box usable, no wedge).
+- Browser fully interactive under WebGL load (user exercised URL-bar
+  typing; no wedge).
 - Transient startup white (~40 s before first content composite)
   observed once — recorded, unexplained, went away; watch for
   recurrence.
