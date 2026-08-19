@@ -65,6 +65,7 @@ virgl_iokit_debug(void) {
 #define IOKIT_GET_CAPSET           0x6007
 #define IOKIT_SUBMIT_CMDS          0x6008
 #define IOKIT_CTX_ATTACH_RESOURCE  0x6009
+#define IOKIT_DRAIN_3D             0x600A   /* ordering barrier for the async submit queue */
 #define IOKIT_TRANSFER_TO_HOST_3D  0x3008
 #define IOKIT_TRANSFER_FROM_3D     0x3009
 
@@ -236,6 +237,20 @@ virgl_iokit_resource_map(struct virgl_winsys *vws, struct virgl_hw_res *res)
  * Transfer operations — 0x3008 / 0x3009
  * =================================================================== */
 
+/* Drain barrier (2026-08-19): 0x6008 submits are now ASYNC in the
+ * kext (a worker thread with an unbounded poll — no fixed budget
+ * survives cold-compile variance). This blocks until the host has
+ * consumed every queued batch. Called before transfers and from
+ * resource_wait — the ordering points the driver already expects. */
+static void
+virgl_iokit_drain(struct virgl_iokit_winsys *iws)
+{
+   uint64_t in[1] = { 120000 };   /* timeout ms */
+   IOConnectCallMethod(iws->connect, IOKIT_DRAIN_3D,
+                       in, 1, NULL, 0,
+                       NULL, NULL, NULL, NULL);
+}
+
 static int
 virgl_iokit_transfer_put(struct virgl_winsys *vws,
                          struct virgl_hw_res *res,
@@ -247,6 +262,7 @@ virgl_iokit_transfer_put(struct virgl_winsys *vws,
    iokit_dbg("iokit: transfer_put res=%u box=%ux%ux%u stride=%u lstride=%u off=%u\n",
              res->res_handle, box->width, box->height, box->depth,
              stride, layer_stride, buf_offset);
+   virgl_iokit_drain(iws);   /* order against in-flight submits */
    /* Scalars [9..11] carry the iov layout (stride/layer_stride/offset).
     * THE 2026-08-18 ROOT-CAUSE FIX: these were silently discarded and the
     * kext wired stride=0/layer_stride=0/offset=0, so vrend placed every
@@ -278,6 +294,7 @@ virgl_iokit_transfer_get(struct virgl_winsys *vws,
    iokit_dbg("iokit: transfer_get res=%u box=%ux%ux%u stride=%u lstride=%u off=%u\n",
              res->res_handle, box->width, box->height, box->depth,
              stride, layer_stride, buf_offset);
+   virgl_iokit_drain(iws);   /* readback must see every queued batch */
    /* See transfer_put — same fix, readback direction. */
    uint64_t in[12] = {
       res->res_handle, level,
@@ -506,8 +523,26 @@ virgl_iokit_get_caps(struct virgl_winsys *vws, struct virgl_drm_caps *caps)
  * Stubs / trivial — see LEDGER vtable scope classification
  * =================================================================== */
 static int  virgl_iokit_get_fd(struct virgl_winsys *vws) { return -1; }
-static void virgl_iokit_resource_wait(struct virgl_winsys *vws, struct virgl_hw_res *res) { /* sync submit */ }
-static bool virgl_iokit_resource_is_busy(struct virgl_winsys *vws, struct virgl_hw_res *res) { return false; }
+/* resource_wait is REAL now (2026-08-19): the sync-submit assumption is
+ * gone with the async 0x6008 queue — waiting = draining every queued
+ * batch (the transfers drain internally too; this covers the driver's
+ * resource-lifetime ordering points). */
+static void virgl_iokit_resource_wait(struct virgl_winsys *vws, struct virgl_hw_res *res)
+{
+   struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   virgl_iokit_drain(iws);
+}
+static bool virgl_iokit_resource_is_busy(struct virgl_winsys *vws, struct virgl_hw_res *res)
+{
+   struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   /* Drain with a zero timeout would be the NOWAIT probe; the kext's
+    * 0x600A waits, so approximate busy-check by a 1 ms bounded drain:
+    * timeout = still busy. */
+   uint64_t in[1] = { 1 };
+   return IOConnectCallMethod(iws->connect, IOKIT_DRAIN_3D,
+                              in, 1, NULL, 0,
+                              NULL, NULL, NULL, NULL) != KERN_SUCCESS;
+}
 static uint32_t virgl_iokit_resource_get_storage_size(struct virgl_winsys *vws, struct virgl_hw_res *res) { return res->size; }
 
 /* Fence stubs — valid only while submit_cmd is synchronous (LEDGER.md) */
