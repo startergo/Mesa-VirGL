@@ -244,16 +244,25 @@ virgl_iokit_transfer_put(struct virgl_winsys *vws,
                          uint32_t buf_offset, uint32_t level)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
-   iokit_dbg("iokit: transfer_put res=%u box=%ux%ux%u\n",
-             res->res_handle, box->width, box->height, box->depth);
-   uint64_t in[9] = {
+   iokit_dbg("iokit: transfer_put res=%u box=%ux%ux%u stride=%u lstride=%u off=%u\n",
+             res->res_handle, box->width, box->height, box->depth,
+             stride, layer_stride, buf_offset);
+   /* Scalars [9..11] carry the iov layout (stride/layer_stride/offset).
+    * THE 2026-08-18 ROOT-CAUSE FIX: these were silently discarded and the
+    * kext wired stride=0/layer_stride=0/offset=0, so vrend placed every
+    * sub-box row at y*0 → offset-collapsed transfers. Full-surface-at-
+    * origin boxes happened to work (sequential host path), masking the
+    * bug everywhere the 2D desktop relied on it. Indicies 0-8 unchanged
+    * for ABI compatibility with the pre-fix kext (which ignores [9..11]). */
+   uint64_t in[12] = {
       res->res_handle, level,
       box->x, box->y, box->z,
       box->width, box->height, box->depth,
       iws->ctx_id,
+      stride, layer_stride, buf_offset,
    };
    kern_return_t kr = IOConnectCallMethod(iws->connect, IOKIT_TRANSFER_TO_HOST_3D,
-                                           in, 9, NULL, 0,
+                                           in, 12, NULL, 0,
                                            NULL, NULL, NULL, NULL);
    return (kr == KERN_SUCCESS) ? 0 : -1;
 }
@@ -266,16 +275,19 @@ virgl_iokit_transfer_get(struct virgl_winsys *vws,
                          uint32_t buf_offset, uint32_t level)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
-   iokit_dbg("iokit: transfer_get res=%u box=%ux%ux%u\n",
-             res->res_handle, box->width, box->height, box->depth);
-   uint64_t in[9] = {
+   iokit_dbg("iokit: transfer_get res=%u box=%ux%ux%u stride=%u lstride=%u off=%u\n",
+             res->res_handle, box->width, box->height, box->depth,
+             stride, layer_stride, buf_offset);
+   /* See transfer_put — same fix, readback direction. */
+   uint64_t in[12] = {
       res->res_handle, level,
       box->x, box->y, box->z,
       box->width, box->height, box->depth,
       iws->ctx_id,
+      stride, layer_stride, buf_offset,
    };
    kern_return_t kr = IOConnectCallMethod(iws->connect, IOKIT_TRANSFER_FROM_3D,
-                                           in, 9, NULL, 0,
+                                           in, 12, NULL, 0,
                                            NULL, NULL, NULL, NULL);
    return (kr == KERN_SUCCESS) ? 0 : -1;
 }
