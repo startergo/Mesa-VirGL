@@ -237,11 +237,37 @@ virgl_iokit_resource_map(struct virgl_winsys *vws, struct virgl_hw_res *res)
  * Transfer operations — 0x3008 / 0x3009
  * =================================================================== */
 
-/* Drain barrier (2026-08-19): 0x6008 submits are now ASYNC in the
- * kext (a worker thread with an unbounded poll — no fixed budget
- * survives cold-compile variance). This blocks until the host has
- * consumed every queued batch. Called before transfers and from
- * resource_wait — the ordering points the driver already expects. */
+/* PER-RESOURCE WAIT (2026-08-19 fence era, the DRM VIRTGPU_WAIT
+ * contract — Linux virtgpu_ioctl.c): replaces the global drain. The
+ * kext records last_seq per resource at dispatch time (the FCE1
+ * handle list each submit now carries); 0x600B waits until that
+ * resource's fences complete (15 s bound) — or tests without blocking
+ * under NOWAIT (the real resource_is_busy; the return-false interim
+ * of a88c72eb4b4 is retired). The global drain could only say
+ * "everything done" or "something isn't" — the approximation behind
+ * the is_busy famine and the pipeline serialization, both 2026-08-19. */
+#define IOKIT_FENCE_WAIT  0x600B
+#define FENCE_FLAG_NOWAIT 1u
+
+static kern_return_t
+virgl_iokit_fence_call(struct virgl_iokit_winsys *iws, uint32_t res,
+                       uint32_t flags)
+{
+   uint64_t in[2] = { res, flags };
+   return IOConnectCallMethod(iws->connect, IOKIT_FENCE_WAIT,
+                              in, 2, NULL, 0,
+                              NULL, NULL, NULL, NULL);
+}
+
+/* resource_wait: block (bounded 15 s) until the resource is ready. */
+static void
+virgl_iokit_res_wait(struct virgl_iokit_winsys *iws, uint32_t res)
+{
+   virgl_iokit_fence_call(iws, res, 0);
+}
+
+/* Retired global drain (kept only as a fallback if a pre-fence kext
+ * is ever booted against this winsys — it logs on the kext side). */
 static void
 virgl_iokit_drain(struct virgl_iokit_winsys *iws)
 {
@@ -262,7 +288,7 @@ virgl_iokit_transfer_put(struct virgl_winsys *vws,
    iokit_dbg("iokit: transfer_put res=%u box=%ux%ux%u stride=%u lstride=%u off=%u\n",
              res->res_handle, box->width, box->height, box->depth,
              stride, layer_stride, buf_offset);
-   virgl_iokit_drain(iws);   /* order against in-flight submits */
+   virgl_iokit_res_wait(iws, res->res_handle);   /* fence era: wait THIS resource, not the world */
    /* Scalars [9..11] carry the iov layout (stride/layer_stride/offset).
     * THE 2026-08-18 ROOT-CAUSE FIX: these were silently discarded and the
     * kext wired stride=0/layer_stride=0/offset=0, so vrend placed every
@@ -294,7 +320,7 @@ virgl_iokit_transfer_get(struct virgl_winsys *vws,
    iokit_dbg("iokit: transfer_get res=%u box=%ux%ux%u stride=%u lstride=%u off=%u\n",
              res->res_handle, box->width, box->height, box->depth,
              stride, layer_stride, buf_offset);
-   virgl_iokit_drain(iws);   /* readback must see every queued batch */
+   virgl_iokit_res_wait(iws, res->res_handle);   /* fence era: readback waits THIS resource */
    /* See transfer_put — same fix, readback direction. */
    uint64_t in[12] = {
       res->res_handle, level,
@@ -442,11 +468,44 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
       }
    }
 
+   /* FENCE FRAME (2026-08-19, DRM execbuffer model): prefix the blob
+    * with the command buffer's resource-handle list so the kext can
+    * track last_seq per resource and 0x600B WAIT can express
+    * per-resource readiness. Frame: ['FCE1'][cres][handles][blob] in
+    * ONE contiguous buffer (IOConnectCallMethod takes a single
+    * structureInput). The kext discriminates on the magic; a pre-fence
+    * kext would treat the whole frame as the blob, so kext+winsys
+    * deploy as a pair. */
+   uint32_t cres = cbuf->cres;
+   if (cres > 96) {
+      /* kext V3D_BATCH_MAX_RES=96 — resources past 96 would silently
+       * lose fencing (ordering hole, not a crash). Log loudly if this
+       * ever fires; raise both sides together if it does. */
+      fprintf(stderr, "virgl_iokit: FENCE FRAME cres=%u > 96 — "
+              "truncating, tail resources unfenced\n", cres);
+      cres = 96;
+   }
+   uint32_t blob_bytes = cbuf->base.cdw * sizeof(uint32_t);
+   uint32_t frame_bytes = 8 + cres * 4 + blob_bytes;
+   uint32_t *frame = (uint32_t *)malloc(frame_bytes);
+   if (!frame) {
+      virgl_iokit_release_all_res(iws, cbuf);
+      memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
+      cbuf->base.cdw = 0;
+      return -1;
+   }
+   frame[0] = 0x31454346u;   /* 'FCE1' */
+   frame[1] = cres;
+   for (uint32_t i = 0; i < cres; i++)
+      frame[2 + i] = cbuf->res_bo[i]->res_handle;
+   memcpy(&frame[2 + cres], cbuf->base.buf, blob_bytes);
+
    uint64_t ctx_scalar = iws->ctx_id;
    kr = IOConnectCallMethod(iws->connect, IOKIT_SUBMIT_CMDS,
                             &ctx_scalar, 1,
-                            cbuf->base.buf, cbuf->base.cdw * sizeof(uint32_t),
+                            frame, frame_bytes,
                             NULL, NULL, NULL, NULL);
+   free(frame);
    if (kr != KERN_SUCCESS) {
       fprintf(stderr, "virgl_iokit: 0x6008 submitVirglCommandsEx FAIL 0x%x\n", kr);
    }
@@ -523,28 +582,27 @@ virgl_iokit_get_caps(struct virgl_winsys *vws, struct virgl_drm_caps *caps)
  * Stubs / trivial — see LEDGER vtable scope classification
  * =================================================================== */
 static int  virgl_iokit_get_fd(struct virgl_winsys *vws) { return -1; }
-/* resource_wait is REAL now (2026-08-19): the sync-submit assumption is
- * gone with the async 0x6008 queue — waiting = draining every queued
- * batch (the transfers drain internally too; this covers the driver's
- * resource-lifetime ordering points). */
+/* resource_wait (fence era, 2026-08-19): the DRM VIRTGPU_WAIT contract
+ * — block until THIS resource's fences complete (15 s bound). The
+ * global-drain version waited out every client's work; this waits the
+ * resource the caller actually needs. */
 static void virgl_iokit_resource_wait(struct virgl_winsys *vws, struct virgl_hw_res *res)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
-   virgl_iokit_drain(iws);
+   virgl_iokit_res_wait(iws, res->res_handle);
 }
 static bool virgl_iokit_resource_is_busy(struct virgl_winsys *vws, struct virgl_hw_res *res)
 {
-   /* REGRESSION FIX (2026-08-19, pre-registered one-line test): the 1 ms
-    * drain probe above reported BUSY whenever ANY batch was in flight —
-    * with the async-era compositor batching at ~22 fps that is always —
-    * and virgl_resource.c:296 turns is_busy=true into
-    * VIRGL_TRANSFER_MAP_ERROR for every PIPE_MAP_DONTBLOCK map. Gecko's
-    * content uploads are DONTBLOCK maps: all errored silently at the
-    * map level (census: 34 cursor puts vs 13k compositor readbacks,
-    * empty layer tree, white window). Restored the pre-faea295
-    * semantics (never busy) pending a real fence; ordering stays
-    * enforced by resource_wait/transfer drains. */
-   return false;
+   /* REAL busy check (fence era): the 0x600B NOWAIT probe tests THIS
+    * resource's fences only — the DRM dma_resv_test_signaled
+    * equivalent. Retires the return-false interim of a88c72eb4b4:
+    * that fix ended the DONTBLOCK famine (the 1 ms global-drain probe
+    * reported busy under any in-flight batch, erroring every
+    * PIPE_MAP_DONTBLOCK map); this replaces the approximation with
+    * the reference semantics. */
+   struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   return virgl_iokit_fence_call(iws, res->res_handle,
+                                  FENCE_FLAG_NOWAIT) != KERN_SUCCESS;
 }
 static uint32_t virgl_iokit_resource_get_storage_size(struct virgl_winsys *vws, struct virgl_hw_res *res) { return res->size; }
 
