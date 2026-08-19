@@ -119,6 +119,27 @@ attribution flipped twice in one hour (recorded in order):**
   present). Softpipe's remaining DrawGeometry SIGSEGV (real stack,
   layers present) is a SEPARATE queued defect — not read against the
   bisect verdict.
+
+**SESSION CLOSE (18:24) — the exit-0 death class gets a prime suspect
+and the instrument notes:**
+- **LaunchServices `GetOurLSSessionIDInit` SIGABRT ×2** (18:10:50,
+  18:19:11) — 10.6's LS daemon wedging under RAPID RELAUNCH (8+
+  launches/20 min today) is now the leading suspect for the clean
+  exit-0 deaths that ended otherwise-healthy runs (the layers run:
+  **353 frames composited** — the most ever before a clean death —
+  wall mean 61 ms, then gone, no crash report). Next session: no more
+  rapid relaunch cycles; pause between launches; if deaths persist on
+  a quiet cadence, lsregister/launchservicesd reset is the queued
+  remedy.
+- **MOZ_LOG=Layers:5 produced ZERO output** on the virgl run — module
+  name or env form wrong for this Gecko 52 build. Next: try
+  NSPR_LOG_MODULES=Layers:5, then MOZ_LOG=getflattenedtree:5 /
+  LayerManager variants; check the build's log-module list before
+  burning another run.
+- Guest state: cce52813 subst + fence kext installed; browsers dead;
+  artifacts preserved (preTSD dylib at /tmp/libOSMesa_preTSD.dylib,
+  fish kext at /tmp/VMQemuVGA_fish.kext); crash series 18:04–18:19 all
+  banked above.
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
