@@ -571,9 +571,27 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * the driver. If this prints "(unset)", the call_once fired earlier. */
     fprintf(stderr, "cgl_shim: pre-OSMesaCreateContextExt GALLIUM_DRIVER=\"%s\" thread=%p\n",
             getenv("GALLIUM_DRIVER") ?: "(unset)", (void*)pthread_self());
-    sc->osmesa_ctx = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0, NULL);
-    fprintf(stderr, "cgl_shim: post-OSMesaCreateContextExt osmesa_ctx=%p\n",
-            (void*)sc->osmesa_ctx);
+    /* SHARELIST FIX (2026-08-19, operator-named cause): Gecko's chrome
+     * compositing passes a real shareContext and expects object sharing
+     * — textures/FBOs created in one context must exist in the other.
+     * We received the argument and DROPPED it (NULL here and in
+     * substitute_cgl.c's CGLCreateContext): every OSMesa context lived
+     * in its own share group, so a texture created in the content
+     * context was non-existent in the compositor's — the exact
+     * glFramebufferTexture2D(non-existent texture 2) → incomplete
+     * framebuffer → empty readback → transparent frame → blit-skip →
+     * WHITE chain. The aquarium worked because a WebGL canvas is one
+     * self-contained context; chrome compositing is where Gecko
+     * shares. Mesa plumbing verified (osmesa.c:575-681 passes share →
+     * st_shared; virgl handles are global). */
+    struct shim_ctx *share_sc = share ? get_shim_ctx(share) : NULL;
+    sc->osmesa_ctx = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0,
+                                            share_sc ? share_sc->osmesa_ctx
+                                                     : NULL);
+    fprintf(stderr, "cgl_shim: post-OSMesaCreateContextExt osmesa_ctx=%p "
+            "share=%p share_osmesa=%p\n",
+            (void*)sc->osmesa_ctx, (void*)share,
+            share_sc ? (void*)share_sc->osmesa_ctx : NULL);
     if (!sc->osmesa_ctx) {
         free(sc);
         return self;
@@ -1150,6 +1168,71 @@ static void shim_blit_present_buf(id view)
                 fprintf(stderr, "cgl_shim: blit-skip[%d] empty frame "
                         "p0=0x%08x — Gecko's own paint stands\n",
                         s_empty_skip_log, p0);
+            }
+            /* DUMP-ON-SKIP (2026-08-19, the queued instrument): the
+             * ledger's sparse-frame mechanism left empty frames
+             * undumpable — the guard returns before SHIM_DUMP_BUFFER.
+             * An empty-buffer dump is itself a datum: uniformly zero =
+             * consistent with upload famine (pre-registered reading);
+             * content beyond pixel[0] = the single-pixel guard is a
+             * false-positive filter eating real frames. Same 24-bit
+             * BMP writer as the blit dump, own counter/env. */
+            static int s_skip_dump_left = -1, s_skip_dump_idx = 0;
+            if (s_skip_dump_left < 0) {
+                const char *dv = getenv("SHIM_DUMP_SKIP");
+                s_skip_dump_left = dv ? atoi(dv) : 0;
+                if (s_skip_dump_left > 0)
+                    fprintf(stderr, "cgl_shim: SKIP DUMP ACTIVE "
+                            "(SHIM_DUMP_SKIP=%d frames)\n", s_skip_dump_left);
+            }
+            if (s_skip_dump_left > 0) {
+                int w = [[sizeDict objectForKey:@"w"] intValue];
+                int h = [[sizeDict objectForKey:@"h"] intValue];
+                const unsigned char *buf =
+                    (const unsigned char *)[bufData bytes];
+                if (w > 0 && h > 0 && w < 8192 && h < 8192) {
+                    char dpath[64];
+                    snprintf(dpath, sizeof dpath,
+                             "/tmp/shim_skip_%02d.bmp", s_skip_dump_idx);
+                    FILE *df = fopen(dpath, "wb");
+                    if (df) {
+                        uint32_t rowsz =
+                            ((uint32_t)w * 3 + 3u) & ~3u;
+                        uint32_t datasz = rowsz * (uint32_t)h;
+                        uint32_t filesz = 54u + datasz;
+                        unsigned char hdr[54] = {0};
+                        hdr[0] = 'B'; hdr[1] = 'M';
+                        *(uint32_t *)&hdr[2] = filesz;
+                        *(uint32_t *)&hdr[10] = 54u;
+                        *(uint32_t *)&hdr[14] = 40u;
+                        *(int32_t *)&hdr[18] = w;
+                        *(int32_t *)&hdr[22] = h;
+                        *(uint16_t *)&hdr[26] = 1u;
+                        *(uint16_t *)&hdr[28] = 24u;
+                        *(uint32_t *)&hdr[34] = datasz;
+                        fwrite(hdr, 1, 54, df);
+                        unsigned char *rowbuf =
+                            (unsigned char *)calloc(1, rowsz);
+                        if (rowbuf) {
+                            for (int y = 0; y < h; y++) {
+                                const unsigned char *srow =
+                                    buf + (size_t)y * w * 4;
+                                for (int x = 0; x < w; x++) {
+                                    rowbuf[x*3+0] = srow[x*4+2];
+                                    rowbuf[x*3+1] = srow[x*4+1];
+                                    rowbuf[x*3+2] = srow[x*4+0];
+                                }
+                                fwrite(rowbuf, 1, rowsz, df);
+                            }
+                            free(rowbuf);
+                        }
+                        fclose(df);
+                        s_skip_dump_idx++;
+                        s_skip_dump_left--;
+                        fprintf(stderr, "cgl_shim: skip-dump[%d] %dx%d "
+                                "-> %s\n", s_skip_dump_idx, w, h, dpath);
+                    }
+                }
             }
             return;
         }

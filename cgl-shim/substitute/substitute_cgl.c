@@ -602,8 +602,21 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 {
     if (!ctx) return kCGLBadAddress;
 
+    /* SHARELIST FIX (2026-08-19 — see cgl_shim.mm's shim_initWithFormat
+     * for the full chain): the `share` argument was received and dropped
+     * (NULL below), putting every OSMesa context in a private share
+     * group. Gecko's chrome compositing shares objects across contexts;
+     * a texture created in one was non-existent in the other →
+     * incomplete framebuffer → empty readback → transparent frames →
+     * blit-skip → white window. In the substitute world a CGLContextObj
+     * IS a shim_ctx pointer, so the share's OSMesa context is directly
+     * reachable. */
+    struct shim_ctx *share_sc = share ? shim_lookup(share) : NULL;
+    OSMesaContext share_osmesa = share_sc ? share_sc->osmesa_ctx : NULL;
+
     /* Create OSMesa context */
-    OSMesaContext osmesa = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0, NULL);
+    OSMesaContext osmesa = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0,
+                                                  share_osmesa);
     if (!osmesa) {
         fprintf(stderr, "substitute_cgl: CGLCreateContext OSMesaCreateContextExt FAILED\n");
         return kCGLBadContext;
