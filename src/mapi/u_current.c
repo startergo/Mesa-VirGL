@@ -202,10 +202,18 @@ _glapi_set_dispatch(struct _glapi_table *tbl)
 struct _glapi_table *
 _glapi_get_dispatch(void)
 {
-   if (ThreadSafe)
-      return tsd_keys_ready
-         ? (struct _glapi_table *) pthread_getspecific(tsd_dispatch_key)
-         : NULL;
+   if (ThreadSafe) {
+      if (!tsd_keys_ready)
+         return (struct _glapi_table *) table_noop_array;
+      /* TLS-init semantics: a fresh thread's TSD is NULL, but the
+       * entries jump straight through the returned table — the
+       * historical noop-table default must survive here. The 18:04
+       * softpipe crash (compositor at a garbage PC, crash report
+       * powerfox_2026-08-19-180410) was exactly this NULL. */
+      struct _glapi_table *t =
+         (struct _glapi_table *) pthread_getspecific(tsd_dispatch_key);
+      return t ? t : (struct _glapi_table *) table_noop_array;
+   }
    return (struct _glapi_table *) _glapi_Dispatch;
 }
 
