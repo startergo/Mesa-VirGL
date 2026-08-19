@@ -534,14 +534,17 @@ static void virgl_iokit_resource_wait(struct virgl_winsys *vws, struct virgl_hw_
 }
 static bool virgl_iokit_resource_is_busy(struct virgl_winsys *vws, struct virgl_hw_res *res)
 {
-   struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
-   /* Drain with a zero timeout would be the NOWAIT probe; the kext's
-    * 0x600A waits, so approximate busy-check by a 1 ms bounded drain:
-    * timeout = still busy. */
-   uint64_t in[1] = { 1 };
-   return IOConnectCallMethod(iws->connect, IOKIT_DRAIN_3D,
-                              in, 1, NULL, 0,
-                              NULL, NULL, NULL, NULL) != KERN_SUCCESS;
+   /* REGRESSION FIX (2026-08-19, pre-registered one-line test): the 1 ms
+    * drain probe above reported BUSY whenever ANY batch was in flight —
+    * with the async-era compositor batching at ~22 fps that is always —
+    * and virgl_resource.c:296 turns is_busy=true into
+    * VIRGL_TRANSFER_MAP_ERROR for every PIPE_MAP_DONTBLOCK map. Gecko's
+    * content uploads are DONTBLOCK maps: all errored silently at the
+    * map level (census: 34 cursor puts vs 13k compositor readbacks,
+    * empty layer tree, white window). Restored the pre-faea295
+    * semantics (never busy) pending a real fence; ordering stays
+    * enforced by resource_wait/transfer drains. */
+   return false;
 }
 static uint32_t virgl_iokit_resource_get_storage_size(struct virgl_winsys *vws, struct virgl_hw_res *res) { return res->size; }
 
