@@ -15,7 +15,7 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-18 (ROOT CAUSE of the canvas/WebGL failure found and pinned by instrument chain: sub-box 3D transfers misplace data because the iokit winsys discards stride/layer_stride/offset and the kext writes zeros on the wire — full-surface-at-origin paths mask it everywhere the desktop works; fix pre-registered across both repos, entry 19)
+Last updated: 2026-08-18 (THE FIX LANDED AND VERIFIED — Mesa 0afb1aa + kext a378b9b: canvas shows blue, first canvas content ever presented; the double-tab duplication artifact vanished with the same fix, rewriting its attribution; entry 19)
 
 ---
 
@@ -144,6 +144,39 @@ fence-based (dma_fence per submit/transfer + VIRTGPU_WAIT on the
 resource resv); our winsys stubs resource_wait/is_busy on the
 "sync-submit" assumption. If post-fix anomalies remain (reads racing
 host execution), the fence mechanism is the design to adopt.
+
+**THE FIX LANDED AND VERIFIED (2026-08-18 night — Mesa 0afb1aa +
+kext a378b9b, deployed together, one boot):**
+- Stage 1 (transport): offscreen_min — **every probe magenta**,
+  read(200,150)=255,0,255,255; wire now real: `box=(399,299)
+  stride=1600 offset=479996` (= 299*1600+399*4 exactly); canvas-sized
+  readbacks `400x300 stride=1600`; no XFER-CLAMP fires.
+- Stage 2 (screen, user verdicts verbatim): **"now is blue!"** — the
+  webgltest canvas presents its clear colour. THE FIRST CANVAS CONTENT
+  EVER PRESENTED through this stack; the canvas-presentation item,
+  open since canvases were first tried, is CLOSED.
+- **UNPLANNED BONUS, user verdict: "No more double tab corruption!"**
+  — the ghost/double-tab duplication artifact (the sole remaining
+  open duplication item, carried as the autocomplete-dropdown class)
+  VANISHED with the same fix. ATTRIBUTION REWRITE: its carrier was
+  misplaced sub-box updates leaving stale texture content — the whole
+  "persistence family" (vacated-rect clearing, drop-blit probes,
+  entry-9-style framings) was this transport bug wearing UI masks.
+  The drawInTitlebar pref closed the corners/black-stripe subset
+  (genuinely Gecko geometry); the REMAINING class was ours.
+- Browser fully interactive — user: "I can type about:config in the
+  URL!" (URL box usable, no wedge).
+- Transient startup white (~40 s before first content composite)
+  observed once — recorded, unexplained, went away; watch for
+  recurrence.
+- Guest state: kext 8f011dca, libOSMesa 8e5b016b (md5-verified),
+  substitute framework 725804ea, 4 vCPUs, /tmp/subst survives until
+  next reboot; probe tools in /Users/sl/.
+- Standing next steps: the aquarium-class WebGL page under the fix
+  (does actual scene content render now?); MSAA capacity accounting
+  (virgl_transfer_map_size nr_samples) still dormant-at-0; fence
+  design per virtgpu_ioctl.c review still queued for sync hardening;
+  webgltest2/3 ladder re-run as regression instruments.
 
 **RUN 1 OUTCOME — pref ENGAGED, verdict stolen by a host-class panic
 (2026-08-18 evening):** launch happened; kernel log carried
