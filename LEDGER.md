@@ -201,16 +201,21 @@ TIME; the confound lesson landed exactly as the operator framed it:**
   unlinked by 18:37:32 while its writer lived — something cleans
   /tmp/pf_*.log on the guest (possibly the parallel session). Flagged.
 
-**NEXT (frontier = page load, with UI rendering banked):**
-1. Page-load diagnostics on baseline2: does about:blank differ? URL
-   bar typing work? Sample main thread for docshell/parser/layout
-   activity vs a stall; check the page's own console via a trivial
-   local HTML with document.title writes (the recorded title-channel
-   trick).
-2. The empty-tree question TRANSFORMS: the tree DOES fill with chrome
-   layers in the configured stack — the virgl-path carrier narrowed
-   again to PAGE CONTENT specifically (canvas/texture path), aligning
-   with force-layers-readback=true now being load-bearing.
+**SESSION CLOSE, FINAL DATUM (19:05–19:10):** operator navigated —
+**every new page is white all over** (chrome composites; page content
+never does). Main-thread sample at 16 min: ~95% in
+SendFlushRendering's wait, ZERO parser/layout/docshell frames; log
+carries no page-load traces. The frontier is now exactly ONE question:
+**why page-content layers never paint while chrome layers do** — and
+the census is nearly clean on this path (no GL errors), so the failure
+sits BEFORE GL: the content side never submits (layout/paint never
+schedules — the flush-wait ownership of the main thread is the prime
+suspect, the day's original starvation reading returning at the
+page-content level). Browser LEFT RUNNING on baseline2 for the
+operator. Next session: URL-bar/title-channel interaction test,
+main-thread starvation measurement (layout.frame_rate throttle
+revisited WITH the working config), and the content-paint scheduling
+question.
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
