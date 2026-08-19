@@ -92,15 +92,43 @@ so per-thread contexts on 10.6 = RESTORING the old design ourselves.
   ~17:52) — exit cause unknown; not chased (no crash signature; the
   17:54 relaunch survived).
 
-**NEXT (the single remaining frontier):** the page-context error family
-vs the empty layer tree — why Gecko's client side never fills the tree
-with working content. Instruments: MOZ_DUMP_PAINTING produced zero
-output (try MOZ_LOG=LayerManager:5 / gfxCriticalNote capture), and the
-softpipe bisect stands ready (same empty face on softpipe says the
-family is Mesa-state-tracker-level, not virgl). The browser is CLOSE:
-every transport-layer bug class of 2026-08-19 is now closed with a
-verified fix (is_busy famine → fences; serialization → fences; uniform
-crossing → TSD).
+**SOFTPIPE BISECT ATTEMPTED — BLOCKED BY A NEW DEATH CLASS (18:00–18:15):**
+- **Free checks first (banked):** sharelist conclusively dormant —
+  n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
+  passes a share context on this build; observation over source read).
+- **The bisect instrument itself dies:** post-TSD dylib (19d3f756) +
+  GALLIUM_DRIVER=softpipe = clean startup death, EXIT=0, ~seconds of
+  life (pf_soft3/4/5/6), zero completed frames; the SAME dylib under
+  virgl runs minutes. Pre-TSD softpipe (14:40) survived to frame 11.
+  - Ruled out: stale profile locks (cleared both .parentlock, death
+    recurred); pure remoting handshake (-no-remote extended life past
+    25 s and produced ONE dump — shim_skip_00.bmp nonzero=14, a
+    DEGENERATE frame (truncated header — zero/tiny dims?) — then died
+    before any completed frame).
+  - **Correlation, attribution open:** TSD-era dylib × softpipe path =
+    lethal; virgl unaffected. Candidates: a defect in MY TSD port that
+    softpipe's init path exercises (review the flip sequence vs
+    historical first), or a Gecko capability-quit (exit 0 = clean) on
+    what softpipe reports post-TSD. NOT diagnosed; pre-registered next
+    step below.
+- **The day's mystery "clean deaths" partially reattributed:** at least
+  the softpipe ones are NOT locks/handshake alone; -no-remote changed
+  the survival time. The virgl mid-run deaths (16:11, 17:52) remain
+  unexplained (no crash reports, exit unknown — capture next time with
+  a foreground run).
+
+**NEXT (revised order):**
+1. Diagnose the softpipe death: run with the PRE-TSD fence dylib
+   (rebuild from 503d14cadde^ of the mapi files only, or keep a copy)
+   to confirm the correlation is TSD-caused; if confirmed, audit the
+   TSD flip sequence against the historical original (setters write
+   TSD unconditionally; flip nulls globals) — the divergence is the
+   bug. MOZ_LOG=Layers:5 (release-build route — MOZ_DUMP_PAINTING is
+   compile-gated, inert here) runs on VIRGL regardless of softpipe.
+2. VIRGL + MOZ_LOG=Layers:5 launch: does the client fill the layer
+   tree at all? (The direct instrument for the empty-tree question.)
+3. Text in any softpipe result = uninterpretable (glyph-atlas fault,
+   pre-registered).
 
 **Session artifacts:** gate-removal attempt reverted (u_thread.h
 restored); rebuilt dylib f689069c is functionally the fence build
