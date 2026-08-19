@@ -140,6 +140,28 @@ and the instrument notes:**
   artifacts preserved (preTSD dylib at /tmp/libOSMesa_preTSD.dylib,
   fish kext at /tmp/VMQemuVGA_fish.kext); crash series 18:04–18:19 all
   banked above.
+
+**OPERATOR REFINEMENTS AT CLOSE (all three adopted):**
+1. **The softpipe-vs-virgl A/B is NOT yet controlled.** Softpipe dies
+   almost immediately — "softpipe fills layers" describes its FIRST
+   frames only; a full virgl session is being weighed against a
+   handful of softpipe frames. The frontier statement is downgraded
+   to: "softpipe's EARLY frames carry ImageLayers; virgl's steady-
+   state frames compose zero." Whether softpipe fills the SAME content
+   virgl leaves empty — or just fills early — is the open comparison;
+   it needs softpipe surviving longer (fresh profile may enable that).
+2. **The LaunchServices SIGABRT is a SYMPTOM of the storm, not an
+   independent fault** — consistent with the recorded 10.6 rule
+   (launching a GUI app without an Aqua session aborts in
+   GetOurLSSessionIDInit; a crash-loop relaunch racing session state
+   hits the same path). Evidence: 3 SIGABRTs in all history (08-13
+   01:29 loop era; today 18:10+18:19) — all in storm contexts, none
+   isolated. Do not chase it as a fault; avoid it by not
+   crash-looping.
+3. **Profile contamination = the SIXTH confound and the gating one**
+   (the five before were about timing; this one invalidates any run).
+   FRESH-PROFILE BASELINE is the first action of the next session —
+   everything else is uninterpretable until it exists.
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
