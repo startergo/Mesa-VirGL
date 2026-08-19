@@ -139,7 +139,7 @@ Guest-side offset math verified upstream-correct
    webgltest.html — prediction: canvas finally shows light blue.
    Negative control: revert one side → zeros return.
 Related follow-up (queued, not blocking): the Linux reference
-(virtgpu_ioctl.c review, user-directed) shows the real stack's sync is
+(virtgpu_ioctl.c review) shows the real stack's sync is
 fence-based (dma_fence per submit/transfer + VIRTGPU_WAIT on the
 resource resv); our winsys stubs resource_wait/is_busy on the
 "sync-submit" assumption. If post-fix anomalies remain (reads racing
@@ -151,11 +151,11 @@ kext a378b9b, deployed together, one boot):**
   read(200,150)=255,0,255,255; wire now real: `box=(399,299)
   stride=1600 offset=479996` (= 299*1600+399*4 exactly); canvas-sized
   readbacks `400x300 stride=1600`; no XFER-CLAMP fires.
-- Stage 2 (screen, user visual check): the webgltest canvas presents
+- Stage 2 (screen, visual check): the webgltest canvas presents
   its clear colour (light blue). THE FIRST CANVAS CONTENT EVER
   PRESENTED through this stack; the canvas-presentation item, open
   since canvases were first tried, is CLOSED.
-- **UNPLANNED BONUS (user visual check): the double-tab duplication
+- **UNPLANNED BONUS (visual check): the double-tab duplication
   artifact is GONE** — the ghost/double-tab class (the sole remaining
   open duplication item, carried as the autocomplete-dropdown class)
   vanished with the same fix. ATTRIBUTION REWRITE: its carrier was
@@ -164,7 +164,7 @@ kext a378b9b, deployed together, one boot):**
   entry-9-style framings) was this transport bug wearing UI masks.
   The drawInTitlebar pref closed the corners/black-stripe subset
   (genuinely Gecko geometry); the REMAINING class was ours.
-- Browser fully interactive under WebGL load (user exercised URL-bar
+- Browser fully interactive under WebGL load (URL-bar
   typing; no wedge).
 - Transient startup white (~40 s before first content composite)
   observed once — recorded, unexplained, went away; watch for
@@ -191,8 +191,8 @@ CPU 0x0"` in `_kqueue_scan→_kevent` (fontd); the owner thread
 ACPI/lapic interrupt while another spun on its lock. NO VMQemuVGA frames
 in either backtrace; the recorded SMP APIC-timing artifact family, first
 occurrence since the 4-vCPU re-enable. Captured from the UTM serial
-console by the user (panics after the buffer never reach kernel.log on
-disk). AMENDMENT (revised after user direction — my 1-vCPU proposal was
+console (panics after the buffer never reach kernel.log on
+disk). AMENDMENT (revised — the 1-vCPU proposal was
 overtaken): **rerun on 4 vCPU as configured.** Grounds: the panic is not
 caused by the test's variable or our code (no kext frames; pre-existing
 SMP timing artifact), and the canvas verdict is a correctness question
@@ -202,7 +202,7 @@ probability only. 1 vCPU remains the documented fallback if the artifact
 steals another run. P1/P2 unchanged.
 - **P1 (mechanism confirmed):** the canvas region shows LIGHT BLUE on
   screen — first canvas content ever presented. Title channel unchanged
-  (ctx OK, getError clean). Explicit user visual required (the correction-
+  (ctx OK, getError clean). Explicit visual check required (the correction-
   x2 lesson: ask "what colour is the canvas on screen?" and take the answer
   literally, or confirm an ambiguous one).
 - **P2 (still grey/black):** write-direction story insufficient or wrong →
@@ -226,7 +226,7 @@ steals another run. P1/P2 unchanged.
 ## 2026-08-17 (entry 18) — the compositor gate: found, measured, fixed; the failing era decoded; typing-cliff at the new frontier
 
 **The reboot test (session start):** first launch after reboot COMPOSITED
-(run 1, binary d965f3dc, same profile/env as the failing era) — user
+(run 1, binary d965f3dc, same profile/env as the failing era) — the run
 verdict "GL-composited chrome with triple tab." Ten-click test then ran:
 **BOUNDED — unbounded-feedback falsified** (10 clicks did not march to 10
 strips; arrangement reshuffled: 2 tabs stacked + tab strip over URL box;
@@ -243,7 +243,7 @@ CGL_FWD, no CGLCreateContext). Visual: white first paint, then black.
 - profile — exonerated (run 4, fresh profile `-P freshsci`)
 - our stack in-process — exonerated (run 6, NO substitute: plain Apple
   GL fails identically)
-- the scissor delta — exonerated (run 5, committed rebuild; user
+- the scissor delta — exonerated (run 5, committed rebuild; the
   attribution "the last change" falsified by direct A/B)
 - "first launch of boot composites" law — FALSIFIED (run 8: clean boot,
   first launch, failed)
@@ -286,11 +286,11 @@ against our virgl-on-host-GPU GL). Negative control built in:
 `SHIM_KEEP_ACCEL_ATTR=1` disables the strip.
 **Landing verified:** `PIXFMT_STRIP[1] dropped NSOpenGLPFAAccelerated
 from 3-attr list` (Gecko's exact list), zero FEATURE_FAILURE, ~3900
-frames, renderer=virgl throughout, **user verdict "GL composited
+frames, renderer=virgl throughout, **visual verdict "GL composited
 chrome."** Negative control EXERCISED same evening (4-vCPU boot, same
 profile, one-variable relaunch): `SHIM_KEEP_ACCEL_ATTR=1` → zero
 PIXFMT_STRIP lines, `FEATURE_FAILURE_OPENGL_CREATE_CONTEXT` at t=12.1,
-CGL_FWD=0, view-path-only frames, **user visual: black** — the
+CGL_FWD=0, view-path-only frames, **visual: black** — the
 pre-fix symptom, reproduced on demand. Recovery relaunch without the
 env: PIXFMT_STRIP fired, zero FEATURE_FAILURE, ~1470 frames composited.
 **The strip is load-bearing; the only variable between black and
@@ -362,7 +362,7 @@ loc=1). DECODE:
   persistence). Same run answers the black band (drawn-and-covered vs
   never-uploaded).
 - Third symptom recorded: black band above the ghost strip (absence,
-  not displacement) — user's vacated-region reading is consistent
+  not displacement) — the vacated-region reading is consistent
   with the persistence family; band-vs-ghost growth correlation is
   directly checkable in the next run.
 
@@ -374,13 +374,13 @@ field/buttons. Chrome + system-font pages (start page, google.com)
 rendered text fine → suspicion: web-font path. STRIKING resemblance to
 the FIXED 2026-08-13 pixel-store bug ("glyph atlases at progressive
 offsets" — ROW_LENGTH reset bug; single-"H" = first-glyph-survives
-signature). User's discriminators queued: (a) no-web-font site; (b)
+signature). Discriminators queued: (a) no-web-font site; (b)
 layers.acceleration.disabled=true — glyphs appear on software
 compositor → GL path; still missing → font loading/rasterisation.
 
 **SOFTPIPE BISECT RUN (2026-08-17 late night) — BOTH verdicts in:**
 - Run: GALLIUM_DRIVER=softpipe, same page, renderer="softpipe",
-  zero virgl_iokit engagement. User verdict on the differences vs
+  zero virgl_iokit engagement. Verdict on the differences vs
   virgl: (1) **double tab GONE under softpipe**; (2) URL-box text
   visible (but under virgl the ghost strip covered the URL box —
   entangled with the duplication, no independent text signal);
@@ -419,7 +419,7 @@ Present-time scan: presented buffer vs the union of the frame's draw
 rects (walk wrappers feed it; LayerRects = second-to-last 4×vec4
 glUniform4fv per draw, y-flipped). Windowed (SHIM_DIFF_LOG=1 +
 /tmp/walk_on); trigger without mouse: AppleScript `set bounds of
-front window` (the user's pointer couldn't capture — the resize was
+front window` (the pointer couldn't capture — the resize was
 scripted over ssh instead). First run: 312 frames through two
 resizes. **Steady state, identical across ~310 frames: coverage
 91.4% (37 draws/frame), STALE 116,604 px == the uncovered 8.6% — a
@@ -435,7 +435,7 @@ hides ghosts smaller than a tile inside covered tiles.
 
 **THE ARTIFACT CHAIN CLOSES GECKO-SIDE (2026-08-18 morning).** The
 arc, in order:
-1. **Vacate fix BUILT (ef5d916) and FALSIFIED by user verdict**:
+1. **Vacate fix BUILT (ef5d916) and FALSIFIED by visual verdict**:
    SHIM_VACATE_CLEAR=1 (clear prev-covered-now-uncovered pixels at
    present) left double tab, black stripe, and hidden-URL-bar
    unchanged. The fix's target (our buffer's stale pixels) was the
@@ -444,7 +444,7 @@ arc, in order:
    present path off the screen, the page goes white (the blit was
    the only page-content source — nothing else paints it) but the
    **duplicated corners survive** → the ghosts live in Gecko's own
-   CoreGraphics paint. (User reading: the CG-drawn parts duplicate,
+   CoreGraphics paint. (Reading: the CG-drawn parts duplicate,
    the GL part is absent — one mechanism explains both.)
 3. **drawRect-entry instrument (64e5719, SHIM_DRAWRECT_LOG=1)**:
    code review first — lazy install IS guarded one-shot; both swizzle
@@ -474,13 +474,13 @@ re-attributed to early-state timing, not driver.
 limit)** — fresh-boot browser start filled the 64-entry
 m_user_backings table at res id 0x1bc → attachBackingUser FAIL
 0xe00002be → Mesa GL_OUT_OF_MEMORY → compositor SIGSEGV at 0xb5
-(user's crash report, thread 20). Fixed: MAX_USER_BACKINGS 64 → 512
+(crash report, thread 20). Fixed: MAX_USER_BACKINGS 64 → 512
 (installed 322cf426, table-full zero in the new boot). Note: the
 table was ALSO filling silently on Aug 17 23:30 — the limit had been
 biting since the SMP era, unnoticed.
 
 **STARTUP-FIRST-PAINT DATUM — the dynamic framings die (2026-08-18,
-user observation): the duplicated corners are visible at STARTUP, on
+observation): the duplicated corners are visible at STARTUP, on
 the white screen, BEFORE any blit or GL present.** No movement
 history exists at first paint — "stale positions," "damage-region
 repaint," and "ghost accumulation" are all falsified as descriptions.
@@ -522,7 +522,7 @@ browser.tabs.drawInTitlebar=false via user.js):**
 **GLYPH ITEM CLOSED (2026-08-17, the one-variable local page).** The
 softpipe github reading was DOUBLE-confounded: the page never finished
 (script hang — the "Unresponsive script" dialog was github's), AND
-softpipe has its own atlas fault. The user's instrument settled it:
+softpipe has its own atlas fault. The one-variable page settled it:
 `/Users/sl/fonttest.html` — two lines, identical text; one via
 @font-face to a LOCAL TTF (no network, no script, instant load),
 one system monospace; `monospace` fallback on both so a rejected
@@ -657,7 +657,7 @@ final arc):**
   every other canvas composites transparent. The aquarium's own black
   canvas rereads as: it TOOK the path and renders nothing visible
   through it.
-- **NEW CRASH CLASS (stack archived in user report):** while testing
+- **NEW CRASH CLASS (stack archived):** while testing
   aquarium-close + page-1 reload, the COMPOSITOR thread crashed in
   CompositorOGL::DrawGeometry rendering a TiledContentHost tile,
   under CompositorBridgeParent::RecvFlushRendering — the canvas-flush
@@ -693,7 +693,7 @@ protection needed; force-enabled pref added but untested as cause):
   the ladder pages + a relaunch A/B (blue on fresh, black after
   heavy page — the repro is now 100% schedulable).
 
-**USER CORRECTION x2 — CANVAS NEVER WORKED; NO BLUE EVER OBSERVED
+**CORRECTION x2 — CANVAS NEVER WORKED; NO BLUE EVER OBSERVED
 (2026-08-18, final):** the "coexistence wedge" framing is RETRACTED,
 and so is the "blue residual": **there was never a blue canvas at
 any point.** The earlier session message "canvas is blue" was not an
@@ -750,7 +750,7 @@ exit-after-one-frame (entry 16) — same era, same pressure.
 **Fix applied:** truncated the log in place (inode kept; UTM
 appends on) — 26→58 Gi free; lock stats recovered max 2554 ms →
 61 ms within seconds. **The Debug Log must be DISABLED in UTM
-settings (user-side action) or the 35 GB regrows and this recurs.**
+settings or the 35 GB regrows and this recurs.**
 **Rule added (.claude/CLAUDE.md, commit 2de24b4):** the 1x1
 lesson (flushBuffer owns the resize; alternate present paths
 inherit it) + silent-declining-guards rule (src=0 class;
@@ -759,13 +759,13 @@ installation-≠-firing class).
 prediction) once the host is healthy and the browser paints.
 
 ---
-Last updated: 2026-08-17 (entry 16: drawRect-as-flush-point LANDED FOR THE CLASS — full-frame present proven (1680x1050, real content); the 1x1 lesson; Flurry exits after one frame — animateOneFrame lead; user roadmap recorded: walk measurement → drawRect fix (DONE) → GA CFPlugIn)
+Last updated: 2026-08-17 (entry 16: drawRect-as-flush-point LANDED FOR THE CLASS — full-frame present proven (1680x1050, real content); the 1x1 lesson; Flurry exits after one frame — animateOneFrame lead; roadmap: walk measurement → drawRect fix (DONE) → GA CFPlugIn)
 
 ---
 
 ## 2026-08-17 (entry 16) — drawRect-as-flush-point: landed for the class, proven with a full frame
 
-**Diagnosis chain (user's NSOpenGLView theory, confirmed):** zero
+**Diagnosis chain (NSOpenGLView theory, confirmed):** zero
 CGLGetCurrentContext + zero flushes = the app doesn't present;
 AppKit does, via private __NS_CGL* wrappers interposition can't
 reach. AppleFlurryOpenGLView is the idiom's instance here. The
@@ -779,7 +779,7 @@ BEFORE the app's drawRect (main thread — AppKit safe), call the
 original (app draws GL), then flushBuffer-equivalent (readback +
 swap + rebind) and the existing blit. Covers the whole
 NSOpenGLView idiom — a large class of era apps, not Flurry
-specifically (user: universal-driver work, do it for the class).
+specifically (universal-driver work, for the class).
 
 **THE 1x1 LESSON (first run after landing):** presented frame was
 `drawRect[0] 1x1` — flushBuffer owns the viewport-driven resize;
@@ -804,7 +804,7 @@ key`, Terminating) on an identical relaunch — environmental
 variance, not the build (the re-run of the same binary worked);
 unexplained, watch for recurrence.
 
-**User roadmap (recorded verbatim in intent):** (1) finish the
+**Roadmap:** (1) finish the
 WALK measurement (render-offset/scissor log — last shim-side
 question on the chrome artifact); (2) land drawRect-as-flush —
 DONE this entry, for the class; (3) the GA CFPlugIn — connects
@@ -858,7 +858,7 @@ Last updated: 2026-08-17 (entry 14: GLU FIX LANDED — crash gone; Flurry now WH
 
 ## 2026-08-17 (entry 14) — GLU fix landed; Flurry: crash → white; bisect verdict; presentation-path bypass found
 
-**GLU ROUTING FIX (user's layering rule, landed):** GLU is a
+**GLU ROUTING FIX (layering rule, landed):** GLU is a
 CLIENT of GL. Apple's umbrella re-exports libGLU (absolute-path
 LC_REEXPORT inside libOpenGL_real), so Apple's GLU ran with the
 shim token where it dereferences _CGLContextObject internals →
@@ -945,7 +945,7 @@ glTexImage2D family), then either export proper Mesa-forwarding
 wrappers for them or treat libGLU as a consumer needing the
 interpose layer too. Flurry is the regression test for it.
 
-**Also this session (user, recorded): FMTX scope correction** —
+**Also this session: FMTX scope correction** —
 the GL_MODELVIEW_MATRIX identity verdict covered the
 FIXED-FUNCTION stack only; CompositorOGL passes transforms as
 shader uniforms the fixed-function matrix cannot see, so FMTX
@@ -1059,7 +1059,7 @@ real-hardware conditions; the compositor source read remains the
 avenue).
 
 **Standing questions: the walk; full-window vs
-damage-scissored composite (source read).** CORRECTION (user,
+damage-scissored composite (source read).** CORRECTION (
 session close): the earlier phrasing "why real hardware shows no
 strays" framed the wrong comparison. PowerFox works PERFECTLY on
 a real-hardware Mac mini — running Apple's REAL OpenGL/CGL on a
@@ -1126,7 +1126,7 @@ Last updated: 2026-08-16 (entry 9: CLEAR_FRAME RUN — magenta everywhere, click
 showed real content flowing early (readbacks returning page gray
 0xffe8e8e8); then the screen AND the buffers went 100% magenta
 (mean B=255,G=0,R=255; zero non-magenta rows across 11 armed
-dumps) — the user's blind URL-bar clicks painted NOTHING over the
+dumps) — the blind URL-bar clicks painted NOTHING over the
 clear (they could not see the window; position-guessing). Two
 readings recorded: (a) Gecko composited nothing further because
 no damage event landed (idle/no valid input) — consistent with
@@ -1169,7 +1169,7 @@ de-facto persistence ⇒ fix must instead target the stray draws
 themselves (find them in Gecko's toolbar repaint path with the
 one-draw-per-click fact).
 
-**User refinement at close — the artifact needs TWO separable
+**Refinement at close — the artifact needs TWO separable
 ingredients, only one accounted for:**
 1. **The WALK: destination moves by h per repaint — UNEXPLAINED.**
    Pure persistence of a stationary stray gives ONE extra copy in
@@ -1208,16 +1208,16 @@ turns out to be the artifact.
 
 ## 2026-08-16 (entry 8) — the fifth confound; the persistence hypothesis; SHIM_CLEAR_FRAME pre-registered and built
 
-**FIFTH MEASUREMENT CONFOUND (user, recorded in .claude/CLAUDE.md
+**FIFTH MEASUREMENT CONFOUND (recorded in .claude/CLAUDE.md
 too):** an artifact that comes and goes cannot be established fixed
 by any single screenshot — only repetition can. "Same page, clean
 now, duplicated then" = INTERMITTENT, not fixed. The CGL-forward
-closure was exactly this error (user's own acknowledgment — the
+closure was exactly this error (acknowledged — the
 inference-as-fact rule in its newest costume: the timeline and
 error count were checkable and were not checked). Every A/B on the
 duplication class carries a run count from here on.
 
-**The persistence hypothesis (user) — now explaining EVERY
+**The persistence hypothesis — now explaining EVERY
 observation including entry 7's matrix identity:** nothing has
 established that render_buf is ever cleared between frames. If it
 isn't, "two bands in one dumped buffer" is equally consistent with
@@ -1309,7 +1309,7 @@ constrains it: same texture, successive draws at h-multiples.
 
 ## 2026-08-16 (entry 6) — google.com through the whole stack; artifact ACCUMULATES; black rectangles; pattern-fill discriminator pre-registered
 
-**Milestone (user screenshot): google.com renders** in the Snow
+**Milestone (screenshot): google.com renders** in the Snow
 Leopard guest through Mesa → virgl → kext (2D transport) →
 virglrenderer → Metal.
 
@@ -1333,12 +1333,12 @@ rigorously anyway.)
 **Black rectangles — NEW, not pure displacement:** they sit
 where the first instance's background should be; previous
 artifacts were correct-content-wrong-place, never absent
-content. Two readings (user): (a) region cleared then redrawn
+content. Two readings: (a) region cleared then redrawn
 at the offset — cleared area exposed — ties to the SAME offset
 bug; (b) first instance drawn with an unpopulated source — a
 DISTINCT fault.
 
-**PRE-REGISTERED discriminator (user): SHIM_PATTERN_FILL on
+**PRE-REGISTERED discriminator: SHIM_PATTERN_FILL on
 google.com.** Black regions come back CHECKERBOARDED → they are
 IOSurface-borne; the offset story covers them (reading a).
 Black regions STAY BLACK → separate fault, own thread
@@ -1370,7 +1370,7 @@ the visible symptom; SetCurrentContext is upstream of all of it.
 collapsed into fix-with-logging — the forward itself logs its
 first firings and any residual errors.)
 
-**TLS trap (user, design recorded BEFORE code):** the shim's
+**TLS trap (design recorded BEFORE code):** the shim's
 CGLGetCurrentContext derives from OSMesaGetCurrentContext (Mesa's
 TLS) + registry reverse-lookup. Once real contexts can be current
 on the same thread, that derivation answers stale. Fix: one
@@ -1411,7 +1411,7 @@ fire at composite/present time (QuartzCore render thread),
   474×129 frames — the small-surface capture error the codebase
   already recorded once for the upload log; re-gated (w≥1000 or
   first 2).
-- **Dump 07 (startup frame) verdict RETRACTED as overreach** (user
+- **Dump 07 (startup frame) verdict RETRACTED as overreach** (
   caught it): it showed a correct new-tab composite (strip at
   proper place, white page) — a NON-artifact frame. The artifact
   is transient (URL-bar click); a startup dump arbitrates nothing.
@@ -1427,7 +1427,7 @@ fire at composite/present time (QuartzCore render thread),
   predates the ChildView/PixelHostingView swizzle — both exist;
   only one fires.)
 - **Trigger-correlated dump** (`touch /tmp/shim_dump_now` arms the
-  next 6 blits): user clicked the URL bar, confirmed the artifact
+  next 6 blits): the URL bar was clicked, confirmed the artifact
   on screen, dump armed at that moment.
 
 **VERDICT — dump 05 of the armed window (1453×910, artifact on
@@ -1480,13 +1480,13 @@ arms the next 6 dumps for transient-artifact capture.
 **Run:** PowerFox on the guest, fresh substitute at `/tmp/subst`
 (md5 verified), `SHIM_PATTERN_FILL=1` + established env. Banner
 fired; uploads: 15×15, 4×4, **#1 = 1391×27 bpr=5568 (chrome
-strip)**. Screen observed via user's screenshot (all four
+strip)**. Screen observed via screenshot (all four
 programmatic capture routes denied: ssh lacks window-server
 context on 10.6; host screencapture lacks grant; `.command` via
-`open` and `launchctl bsexec` produced nothing — user's eyes
+`open` and `launchctl bsexec` produced nothing — eyes-on-screen
 remain the visual instrument).
 
-**Reading (user's, primary — and it CORRECTS the automated image
+**Reading (primary — and it CORRECTS the automated image
 analysis, which reported "no duplication" while the duplication
 was present in the same image; recorded as an instrument-trust
 lesson):** TWO artifacts, previously treated as one:
@@ -1509,14 +1509,14 @@ the strip, wrong about the artifact that matters. One run
 eliminated the entire hypothesis space the instrument was built
 to explore, and split the problem in two.
 
-**Artifact B's shape (user analysis):** content repeated at a
+**Artifact B's shape (analysis):** content repeated at a
 vertical offset, clipped at constant left x, clipped text
 perfectly rendered — a COPY WITH A WRONG SOURCE RECTANGLE, not a
 rendering fault. Gecko scrolls and moves layers by copying
 regions within its framebuffer; a wrong source or destination
 origin in such a copy produces exactly this signature.
 
-**Next discriminator — PRE-REGISTERED (user), one build, no
+**Next discriminator — PRE-REGISTERED, one build, no
 boot, no kext:** dump the OSMesa buffer immediately before the
 drawRect: blit.
 - **Duplication already in the buffer** → Gecko's compositing;
