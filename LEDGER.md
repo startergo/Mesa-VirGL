@@ -93,6 +93,32 @@ so per-thread contexts on 10.6 = RESTORING the old design ourselves.
   17:54 relaunch survived).
 
 **SOFTPIPE BISECT ATTEMPTED — BLOCKED BY A NEW DEATH CLASS (18:00–18:15):**
+
+**PRE-TSD COMPARISON (18:16–18:24) — TSD LINE VINDICATED; my crash
+attribution flipped twice in one hour (recorded in order):**
+- Pre-TSD fence dylib (b52686ad, mapi files at 503d14cadde^) +
+  softpipe, foreground: **immediate SEGFAULT (exit 139), zero frames**
+  — and its crash report (181841) carries the SAME garbage-PC
+  compositor signature (0x13f13103a) as the TSD-era crashes, in a
+  binary with NO TSD code. My earlier attribution of ALL garbage-PC
+  crashes to the TSD NULL bug was WRONG; the class has ≥2 carriers.
+- **The ladder, re-read:**
+  | dylib | softpipe compositor fate | cause |
+  |---|---|---|
+  | 3565cf02 (async era, 14:40) | 3 min, frame 11, teardown crash | stomp timing luck |
+  | b52686ad (pre-TSD, fence) | immediate garbage-PC segfault | the ORIGINAL two-thread stomp (plain-global dispatch) |
+  | 19d3f756 (TSD, no noop) | garbage-PC ~45 s | MY NULL-table porting bug |
+  | a85609b3/cce52813 (TSD+noop) | **42 s of real layer drawing**, symbolized mid-draw crash | the only config softpipe ever composited |
+- **Conclusions:** the noop fix was load-bearing; the TSD restoration
+  is confirmed directional (pre-TSD is WORSE — the stomp crash
+  returns); the empty-layer-tree verdict from the 18:09:18 crash
+  (softpipe HAS ImageLayers and draws them; virgl composes uniformly
+  zero) STANDS — the carrier is virgl-path-dependent, not Gecko-glue.
+- Artifacts: /tmp/libOSMesa_preTSD.dylib (b52686ad) preserved; guest
+  now runs cce52813 (TSD+noop+fences; 0x600b ×14, pthread_getspecific
+  present). Softpipe's remaining DrawGeometry SIGSEGV (real stack,
+  layers present) is a SEPARATE queued defect — not read against the
+  bisect verdict.
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
