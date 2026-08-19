@@ -62,17 +62,45 @@ gate is a HARD COMPILER REFUSAL, not a dyld assumption. AND modern Mesa
 deleted the pthread-TSD fallback from u_current (TLS-only upstream) —
 so per-thread contexts on 10.6 = RESTORING the old design ourselves.
 
-**NEXT (the frontier, in order):**
-1. **Restore pthread-TSD storage in mapi** (the pre-TLS upstream
-   design): u_current.c/h + glapi.h GET_DISPATCH —
-   `pthread_key_create`/`pthread_getspecific` for
-   dispatch+current-context, per-thread by construction, no TLS needed.
-   ~2 files, surgical; then the same fence-era boot answers everything.
-2. Complete or clear the OMTC-off test (pref
-   `layers.offmainthreadcomposition.enabled=false` is SET in both
-   profiles' user.js RIGHT NOW — one variable at a time).
-3. Pre-registered: partial improvement expected even after the TSD fix
-   (multiple GL threads remain in some Gecko paths).
+**TSD RESTORATION — LANDED AND VERIFIED (17:30–17:56, commit
+`503d14cadde`, dylib `19d3f756479252d233b6319a27ad1888`):**
+- The historical pre-2015 u_current design recovered via
+  `git show 18db13f5865^:src/mapi/u_current.c` and ported under
+  `MAPI_PTHREAD_TSD` (u_thread.h's 10.6 branch): plain-global fast
+  path; ThreadSafe flips 0→1 on a second thread's MakeCurrent (checked
+  from both set entry points, one mutex); pthread_once keys;
+  GET_DISPATCH/GET_CURRENT_CONTEXT via the accessors (Windows shape);
+  dead `_glapi_tls_*` kept for ABI. No pthread_getspecific on the hot
+  path while single-threaded — the historical property, preserved.
+- **VERIFIED on the fence-era boot (no kext change, subst swap only):
+  the object-table error family went to ZERO** — uLayerRects (was
+  ×35), uLayerTransform (was ×35), target mismatches (was ×13) all 0
+  in the first 90 s; stayed 0 across a second run. The two-thread
+  stomp was the carrier of the uniform mismatches. TSD dylib also
+  carries the full fence winsys (0x600b ×14).
+- **Frames STILL uniformly zero** (8 skip-dumps, nonzero=16 = header
+  only) and the window still white — but the remaining census is now
+  PURELY the recorded page-context family (entry 18's open item):
+  glBindTexture target mismatch ×11, webgl_ uniform errors, non-existent
+  texture 2 ×8, glReadPixels incomplete fb — the PAGE's WebGL context,
+  not the compositor's. Transport, sync, per-thread contexts, and the
+  compositor's own program are all fixed and verified; the empty layer
+  tree's last standing carrier is the client-side content path.
+- Cleanup done this run: the OMTC pref removed from both user.js
+  (test was never completed — launch died; recorded as inconclusive).
+- Two browsers died cleanly mid-run without crash reports (16:11,
+  ~17:52) — exit cause unknown; not chased (no crash signature; the
+  17:54 relaunch survived).
+
+**NEXT (the single remaining frontier):** the page-context error family
+vs the empty layer tree — why Gecko's client side never fills the tree
+with working content. Instruments: MOZ_DUMP_PAINTING produced zero
+output (try MOZ_LOG=LayerManager:5 / gfxCriticalNote capture), and the
+softpipe bisect stands ready (same empty face on softpipe says the
+family is Mesa-state-tracker-level, not virgl). The browser is CLOSE:
+every transport-layer bug class of 2026-08-19 is now closed with a
+verified fix (is_busy famine → fences; serialization → fences; uniform
+crossing → TSD).
 
 **Session artifacts:** gate-removal attempt reverted (u_thread.h
 restored); rebuilt dylib f689069c is functionally the fence build
