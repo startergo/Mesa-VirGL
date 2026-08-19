@@ -162,6 +162,17 @@ and the instrument notes:**
    (the five before were about timing; this one invalidates any run).
    FRESH-PROFILE BASELINE is the first action of the next session —
    everything else is uninterpretable until it exists.
+
+**MODULE-NAME VERIFICATION AT CLOSE (operator-directed, from the
+read-only Gecko source — no run spent):** the log module IS "Layers" —
+`platform/gfx/layers/Layers.cpp:69: static LazyLogModule sLog("Layers")`.
+So the silent MOZ_LOG run failed on the ENV FORM, not the name:
+Gecko 52 is the rename boundary era; older builds accept only
+NSPR_LOG_MODULES. The corrected incantation for the next session:
+`NSPR_LOG_MODULES=Layers:5 NSPR_LOG_FILE=/tmp/layers.log` (the FILE
+variable included — without it output can land somewhere unwatched).
+Other gfx modules available if needed: "userfonts" (gfxUserFontSet),
+"gfx2d" (Factory.cpp).
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
