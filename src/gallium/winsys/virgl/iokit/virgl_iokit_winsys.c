@@ -387,6 +387,32 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
 
    iokit_dbg("iokit: submit_cmd cdw=%u\n", cbuf->base.cdw);
 
+   /* Full command-stream dump (FBO-clear hunt, 2026-08-18): the kext's
+    * hex dump caps at 20 dwords and misparses the header layout, so the
+    * guest-side stream was never fully visible. VIRGL_IOKIT_DUMP=1
+    * prints every dword of every submit (capped at 4096 dwords), one
+    * line per 8 dwords, prefixed with the submit size. Header layout
+    * per virgl_protocol.h:152 — cmd | (obj << 8) | (len << 16). */
+   {
+      static bool s_dump = false;
+      static bool s_dump_init = false;
+      if (!s_dump_init) {
+         s_dump_init = true;
+         s_dump = getenv("VIRGL_IOKIT_DUMP") != NULL;
+      }
+      if (s_dump && cbuf->base.cdw > 0) {
+         unsigned n = cbuf->base.cdw;
+         if (n > 4096) n = 4096;
+         fprintf(stderr, "iokit DUMP submit cdw=%u:\n", cbuf->base.cdw);
+         for (unsigned i = 0; i < n; i += 8) {
+            fprintf(stderr, "  [%04u]", i);
+            for (unsigned j = i; j < i + 8 && j < n; j++)
+               fprintf(stderr, " %08x", cbuf->base.buf[j]);
+            fprintf(stderr, "\n");
+         }
+      }
+   }
+
    uint64_t ctx_scalar = iws->ctx_id;
    kr = IOConnectCallMethod(iws->connect, IOKIT_SUBMIT_CMDS,
                             &ctx_scalar, 1,

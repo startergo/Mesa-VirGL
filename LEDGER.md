@@ -15,7 +15,178 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-18 (the marathon: compositor gate fixed+controlled; artifact split, titlebar class closed by pref; wedge mechanism caught host-side, clamped twice; glyph closed; backing table raised; UAF fixed; WebGL2 gate identified; MSAA crash class closed by pref; canvas presentation = the standing open item; correction x2 recorded)
+Last updated: 2026-08-18 (ROOT CAUSE of the canvas/WebGL failure found and pinned by instrument chain: sub-box 3D transfers misplace data because the iokit winsys discards stride/layer_stride/offset and the kext writes zeros on the wire — full-surface-at-origin paths mask it everywhere the desktop works; fix pre-registered across both repos, entry 19)
+
+---
+
+## 2026-08-18 (entry 19) — canvas presentation: mechanism found by source read; readback-pref run pre-registered
+
+**The standing open item (canvas presentation never worked) now has a
+mechanism, established entirely by reading source — no boot yet.** Every
+link read directly, not inferred:
+
+1. **Factory choice** — `GLScreenBuffer::CreateFactory`
+   (powerfox platform/gfx/gl/GLScreenBuffer.cpp:85-95): with LAYERS_OPENGL
+   (our CompositorOGL) + XP_MACOSX + 10.6 SDK, the WebGL canvas front
+   buffer factory is **SurfaceFactory_IOSurface**. The canvas's shared
+   surface is an IOSurface; texture handles are never passed between
+   contexts on this path.
+2. **Producer bind** — SharedSurfaceIO.cpp:128-152 (`BackTextureWithIOSurf`)
+   + :169: `mProdTex` is bound on GL_TEXTURE_RECTANGLE_ARB and backed via
+   `CGLTexImageIOSurface2D(webgl CGL ctx, surf)` — on real CGL the IOSurface
+   becomes the texture's *storage*, so GL renders land in it.
+3. **Frame delivery** — GLScreenBuffer.cpp:440-476 (`AssureBlitted`): at
+   publish the frame is BlitFramebuffer'ed into the ReadBuffer whose
+   attachment is `mProdTex`. `ProducerReleaseImpl` = `mGL->fFlush()`
+   (SharedSurfaceIO.cpp:38-43) — glFlush is the frame-done signal.
+4. **Consumer bind** — SharedSurfaceIO.cpp:180-188 hands
+   SurfaceDescriptorMacIOSurface (by IOSurface ID) to the compositor;
+   MacIOSurfaceTextureHostOGL.cpp:44 and :164 (`BindTexture`) re-bind via
+   `CGLTexImageIOSurface2D(compositor CGL ctx)` on the compositor's own
+   context, per bind.
+5. **Our substitute** — substitute_cgl.c:932+ implements
+   CGLTexImageIOSurface2D as a ONE-WAY CPU upload (surface → texture).
+   So: the producer-side call uploads the freshly-created (empty) surface
+   into a plain Mesa texture; WebGL renders into that Mesa texture (why
+   every in-page GL call passes); **the IOSurface itself never receives a
+   pixel**; the compositor's per-frame upload reads zeros. Zeros + hasAlpha
+   → grey (page background through a=0); zeros + opaque → black. Both
+   observed faces, one cause. Also predicts: webgltest2's FBO ladder
+   passes in-page while the canvas shows the mask — observed.
+
+**Sharing EXONERATED for this item (corrects the Explore agent's summary):**
+GLContextProviderCGL.mm:245-246 (offscreen, `CreateWithFormat`) and :323
+(window) both create contexts with `shareContext:nullptr/nil` — Gecko never
+asks for a CGL share group on cocoa; the IOSurface *is* the cross-context
+vehicle. The substitute's dropped `share` param (substitute_cgl.c:606 passes
+NULL to OSMesaCreateContextExt) is real but cannot be the canvas failure.
+(Mesa-side plumbing exists if ever wanted: osmesa.c:575-681 passes share →
+st_shared; virgl handles are global, virgl_context.c:58-62.)
+
+**RUN PRE-REGISTERED (one variable: the pref):** deploy the handoff
+substitute as-is (tree binary md5 725804ea... == ledger handoff build;
+binary mtimes postdate all sources), add
+`user_pref("webgl.force-layers-readback", true);` to BOTH profiles' user.js,
+kext unchanged (e39300ae), 4 vCPUs, launch with the standard incantation,
+open file:///Users/sl/webgltest.html (clears to RGB 0.2,0.6,1.0 — light
+blue; bg #333; title channel prefix "WGL:").
+Mechanism of the pref: gfxPrefs.h:596 → GLScreenBuffer.cpp:85 keeps the
+factory null → SurfaceFactory_Basic → SharedSurface_Basic →
+CanvasClientSharedSurface::UpdateRenderer sees mType==Basic → CPU readback
+(TexClientFromReadback) → normal texture upload — the path chrome content
+already exercises successfully.
+**ROOT CAUSE FOUND (2026-08-18 late) — sub-box 3D transfers misplace
+data: stride/layer_stride/offset never reach the host.**
+
+The winsys discards them: `virgl_iokit_transfer_put/get`
+(virgl_iokit_winsys.c:239-281) take stride/layer_stride/buf_offset as
+parameters and pass a 9-scalar box {res,level,x,y,z,w,h,d,ctx} to the
+kext; the kext's 0x3008/0x3009 constructors put stride=0 layer_stride=0
+offset=0 on the wire (kernel log: "0x3009 wire: res=263 ...
+stride=0 layer_stride=0 offset=0" on every transfer). vrend's sub-box
+placement is y*stride + x*bpp — with stride=0 every row collapses
+toward offset 0. FULL-surface-at-origin transfers take a sequential
+path that is correct. Hence the exact cleavage observed all session:
+
+- WORKS: 2D desktop refresh (full window at 0,0), chrome presents
+  (full-window readbacks at origin), glGetTexImage full read
+  (120000/120000 magenta), DFB 1x1 read at (0,0), full 400x300
+  readback (all magenta), Gecko's initial full-surface uploads.
+- BROKEN: any read or write with x≠0 or y≠0 — offscreen_min geometry
+  map: probe(0,0)=magenta; (1,0),(0,1),(10,0),(0,10),(399,299),
+  (200,150) ALL zeros. Browser canvas = the same bug: Gecko's
+  shared-surface init (FULL upload) lands its 0xE5 content; every
+  PARTIAL update misplaces host-side → surface shows init content
+  forever (grey/black canvas). THE CANVAS-PRESENTATION ITEM AND THIS
+  ARE ONE BUG.
+
+Correction chain this session (each recorded because believed earlier):
+1. "clears don't land in FBO textures" — WRONG: the CLEAR was always
+   encoded and submitted (submit 1 dword 26: CLEAR buffers=4 color
+   1.0,0.0,1.0,1.0 after SET_FRAMEBUFFER_STATE surface 3 = the
+   texture). The kext's 20-dword hex dump truncated exactly before it.
+2. "reads serve stale guest storage / clean_mask" — WRONG for reads:
+   the 0x3009 readback fires every time; the BYTES come back misplaced.
+3. "the quad landed, the clear didn't" — artifact of (1)+(2).
+4. KEXT STREAM IDENTIFIER (ca69ac4) PARSED WITH THE WRONG HEADER
+   LAYOUT — len<<20|cmd assumed; actual is cmd|(obj<<8)|(len<<16)
+   (virgl_protocol.h:152, verified by decoding live streams). All its
+   zero-hit oversize-scan results are MEANINGLESS. Fix when touched.
+5. The "3s sleep still zeros" async falsification was run against a
+   binary whose clear WAS submitted — so it remains valid evidence
+   AGAINST pure host-async; the fence question (below) stays open but
+   is NOT the current failure.
+
+Decisive instruments (all in cgl-shim/killtest/, deploy to /Users/sl/):
+- offscreen_test.mm — Gecko-style offscreen ctx + FBO/upload/quad/
+  getTexImage/read discriminators (found the cleavage).
+- offscreen_min.mm — minimal clear+read with geometry probes.
+- VIRGL_IOKIT_DUMP=1 (virgl_iokit_winsys.c submit_cmd, committed with
+  the build) — full command-stream dump, 8 dwords/line; this replaced
+  the kext's truncated dump as the stream source of truth.
+Guest-side offset math verified upstream-correct
+(virgl_resource.c:932-933, 551) — the fix is transport-side.
+
+**FIX (pre-registered, spans both repos — NOT yet built):**
+1. Mesa: virgl_iokit_transfer_put/get pass stride, layer_stride,
+   buf_offset (trans->base.stride, trans->l_stride, trans->offset) —
+   extend the scalar array 9→12.
+2. Kext: 0x3008/0x3009 selectors accept 12 scalars and put the real
+   stride/layer_stride/offset on the wire (fields already exist in the
+   virtio-gpu transfer commands — the kext just writes zeros today).
+3. Deploy both together (one boot); rerun offscreen_min — prediction:
+   ALL probes magenta, read(200,150) magenta. Then the browser
+   webgltest.html — prediction: canvas finally shows light blue.
+   Negative control: revert one side → zeros return.
+Related follow-up (queued, not blocking): the Linux reference
+(virtgpu_ioctl.c review, user-directed) shows the real stack's sync is
+fence-based (dma_fence per submit/transfer + VIRTGPU_WAIT on the
+resource resv); our winsys stubs resource_wait/is_busy on the
+"sync-submit" assumption. If post-fix anomalies remain (reads racing
+host execution), the fence mechanism is the design to adopt.
+
+**RUN 1 OUTCOME — pref ENGAGED, verdict stolen by a host-class panic
+(2026-08-18 evening):** launch happened; kernel log carried
+`0x3009 wire: res=283 box=(0,0,0, 400x300x1)` (+ a 2x2 probe at y=298)
+— 400x300 is EXACTLY the webgltest canvas size ⇒ the readback factory
+ran and Mesa pulled the canvas frame host→guest through the kext. Colour
+verdict never reached the screen: the guest PANICKED —
+`panic(cpu 3): "Spinlock acquisition timed out: lock owner active on
+CPU 0x0"` in `_kqueue_scan→_kevent` (fontd); the owner thread
+0xffffff800bbb4260 appears as R9 in CPU 0's dump, which sits in
+`_lapic_interrupt→AppleACPIPlatform` — one CPU stalled in an emulated
+ACPI/lapic interrupt while another spun on its lock. NO VMQemuVGA frames
+in either backtrace; the recorded SMP APIC-timing artifact family, first
+occurrence since the 4-vCPU re-enable. Captured from the UTM serial
+console by the user (panics after the buffer never reach kernel.log on
+disk). AMENDMENT (revised after user direction — my 1-vCPU proposal was
+overtaken): **rerun on 4 vCPU as configured.** Grounds: the panic is not
+caused by the test's variable or our code (no kext frames; pre-existing
+SMP timing artifact), and the canvas verdict is a correctness question
+the CPU count does not touch — the 400x300 readback transfers already
+flowed under 4 vCPU. The artifact is load-correlated in firing
+probability only. 1 vCPU remains the documented fallback if the artifact
+steals another run. P1/P2 unchanged.
+- **P1 (mechanism confirmed):** the canvas region shows LIGHT BLUE on
+  screen — first canvas content ever presented. Title channel unchanged
+  (ctx OK, getError clean). Explicit user visual required (the correction-
+  x2 lesson: ask "what colour is the canvas on screen?" and take the answer
+  literally, or confirm an ambiguous one).
+- **P2 (still grey/black):** write-direction story insufficient or wrong →
+  next instrument: log both CGLTexImageIOSurface2D call sites (producer at
+  canvas creation on the webgl ctx; consumer per frame on the compositor
+  ctx) and verify the Basic factory actually ran (no IOSurface-alias call
+  at canvas creation).
+- **Fix direction (pre-registered, NOT to be built before P1 lands):**
+  write direction in the substitute — on CGLTexImageIOSurface2D record a
+  per-shim-ctx texture↔IOSurface alias (surface ref, dims, stride); on
+  glFlush from an owning ctx, glGetTexImage(GL_TEXTURE_RECTANGLE) →
+  IOSurfaceLock(write) → row-by-row memcpy honouring surface stride →
+  IOSurfaceUnlock. Producer-side only, same thread, same current context
+  (TLS-gate safe); consumer path unchanged. Negative control by env flag:
+  write-back off → grey must return. Cost: one CPU readback per canvas per
+  frame — same family as the chrome IOSurface upload already paid
+  ("correct first, optimize later").
 
 ---
 
