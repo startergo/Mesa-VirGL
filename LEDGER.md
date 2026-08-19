@@ -156,11 +156,45 @@ attribution flipped twice in one hour (recorded in order):**
 3. Text in any softpipe result = uninterpretable (glyph-atlas fault,
    pre-registered).
 
-**Session artifacts:** gate-removal attempt reverted (u_thread.h
-restored); rebuilt dylib f689069c is functionally the fence build
-(0x600b ×14) — guest still runs verified 3196d235; substitute
-2dea3581. /tmp/pf_fence.log = the fence-era census with the
-uLayerRects/uLayerTransform evidence.
+**PRE-TSD A/B + CRASH-CLASS REFRAME (18:15–18:25, after the parallel
+session's softpipe-death series):**
+- **TSD EXONERATED for the softpipe death**: pre-TSD fence dylib
+  (`cce52813`, 0x600b ×14, no TSD symbols) on softpipe died at
+  SECONDS — last log line `gl_interpose_init`, EARLIER than the TSD
+  runs reached. Meanwhile VIRGL on the same dylib survived 60 s+ with
+  the parallel session's STAMP instrument live (`STAMP[29..30] ...
+  survived=0/4` — no stamped pixels survive to present; its own
+  empty-frames datum). The driver-dependence is real; the TSD
+  correlation was coincidence. Softpipe's instant death remains
+  UNATTRIBUTED (candidates: profile crash-storm state, the substitute's
+  new STAMP probe, something in the current subst mix — note the 14:40
+  pre-fence softpipe run DID survive to frame 11).
+- **Garbage-PC compositor crash occurs on PRE-TSD TOO** (18:18:41,
+  crash `powerfox_2026-08-19-181841`, Compositor at 0x13f13103a on
+  cce52813): plain-globals storage yields the same class — a stale
+  other-thread dispatch table jumped mid-swap. **The class IS the
+  two-thread problem; my TSD NULL (fixed in 551def4f885) was one
+  instance, not the cause.** Per-thread storage remains necessary —
+  when TSD returns, the noop-table default must return with it.
+- **LaunchServices SIGABRT family recurring** (18:10:50, 18:19:14):
+  main-thread abort in GetOurLSSessionIDInit — the crash-relaunch/
+  profile-storm era. The operator saw a black safe-mode dialog in this
+  window (chrome-only UI compositing empty).
+- Operator verdict on the visible state: "keep crashing, not working
+  at all" — browsers killed; guest left clean.
+
+**NEXT (revised, in order):**
+1. **Fresh profile first** (the crash-storm state is now a contaminat-
+   ing variable for EVERY launch): `-CreateProfile test` / new profile,
+   then one virgl launch on cce52813 — establishes a clean baseline
+   before any further bisect.
+2. Re-land TSD WITH the noop fix (503d14cadde + 551def4f885 — both
+   commits exist; the working tree currently holds the pre-TSD revert)
+   once the baseline is clean: the garbage-PC class needs per-thread
+   storage in BOTH modes' evidence.
+3. MOZ_LOG=Layers:5 virgl run (release-build route) for the layer-tree
+   fill question; the STAMP probe's survived=0/4 needs the parallel
+   session's instrument read for its own conclusion.
 
 ---
 
