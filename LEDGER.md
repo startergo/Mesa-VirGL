@@ -15,7 +15,7 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-18 (THE FIX LANDED AND VERIFIED — Mesa 0afb1aa + kext a378b9b: canvas shows blue, first canvas content ever presented; the double-tab duplication artifact vanished with the same fix, rewriting its attribution; entry 19)
+Last updated: 2026-08-19 (flip verdict: mirrored strip VANISHES with drop-blit → present-path carrier; but blit-skip blocks the buffer-dump on empty frames and the compositor's programs die to dropped compile batches — the async-submit+fence design is the queued durable fix; entry 19)
 
 ---
 
@@ -177,6 +177,34 @@ kext a378b9b, deployed together, one boot):**
   (virgl_transfer_map_size nr_samples) still dormant-at-0; fence
   design per virtgpu_ioctl.c review still queued for sync hardening;
   webgltest2/3 ladder re-run as regression instruments.
+
+**FLIP VERDICT + PRESENT-PATH SESSION (2026-08-19, kext budget arc):**
+- The mirrored strip (upside-down URL bar + mirrored tab at the
+  window's bottom edge, glyphs inverted, word order intact = pure
+  y→H−y of the top chrome, band exactly toolbar height) VANISHED in
+  the SHIM_DROP_BLIT run (page completely white — no GL content, no
+  strip): the strip's pixels reach the screen ONLY through our
+  present blit. Carrier = present path. Remaining split: composed
+  INTO present_buf by Gecko's GL (its flip-Y math against our buffer
+  convention) vs produced by the blit's CTM — the SHIM_DUMP_BUFFER
+  instrument exists for exactly this, but the blit-skip
+  (first-pixel-transparent, cgl_shim.mm:1144-1155) returns BEFORE the
+  dump block, and in the degraded state every frame skips (empty) —
+  the dump never fires. INSTRUMENT FIX QUEUED: dump-on-skip too.
+- The degraded state itself (sparse frame: black window, white
+  cleared-but-unfilled rectangles, one chrome corner fragment; 58.9k
+  composited frames): compositor running with DEAD programs — a cold
+  TGSI→GLSL→ANGLE→Metal compile exceeded even the kext's 10 s poll
+  budget under host load and its batch was dropped. The budget arc
+  (150→600→6000) proves NO fixed poll survives host-load variance.
+- **DURABLE DESIGN, pre-registered (both repos, next change): async
+  submit + fence** — the Linux virtio-gpu model: submit queues and
+  returns; completion signals via fence; the winsys waits on
+  resource-scoped fences before reuse/readback. Kills the poll
+  class entirely and unblocks long compiles.
+- Full storm anatomy and budget measurements: VMQemuVGA ledger
+  (2026-08-19 entries); killer-batch dumps persist at
+  /Users/sl/pf_dump.log.
 
 **RUN 1 OUTCOME — pref ENGAGED, verdict stolen by a host-class panic
 (2026-08-18 evening):** launch happened; kernel log carried
