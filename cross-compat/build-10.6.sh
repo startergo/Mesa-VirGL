@@ -202,12 +202,17 @@ UNDEF=$(nm -u "$OSMESA" 2>/dev/null | grep -v '^ *$' | wc -l | tr -d ' ')
 echo "    undefined symbols: $UNDEF (all should resolve against libSystem/libcxx)"
 
 if [ "$FORCE_LINK" = "1" ]; then
-    if nm "$OSMESA" 2>/dev/null | grep -q 'virgl_drm_winsys\|virgl_vtest_winsys\|virgl_create_screen'; then
+    # NOTE: grep -q is FORBIDDEN here. Under `set -o pipefail`, grep -q's
+    # early exit SIGPIPEs nm (exit 141) and fails the pipeline on a GOOD
+    # artifact — a flaky false "virgl symbols absent" (observed 2026-08-18:
+    # build succeeded, dylib contained 120 _virgl* T-symbols, verify failed).
+    # Plain grep reads all input; no early exit, no SIGPIPE.
+    if nm "$OSMESA" 2>/dev/null | grep 'virgl_drm_winsys\|virgl_vtest_winsys\|virgl_create_screen' > /dev/null; then
         echo "    virgl: present"
     else
         fail "virgl symbols absent after force-link — GALLIUM_DRIVER=virgl would silently fall back"
     fi
-    if ! nm "$OSMESA" 2>/dev/null | grep -q 'virgl_iokit'; then
+    if ! nm "$OSMESA" 2>/dev/null | grep 'virgl_iokit' > /dev/null; then
         fail "virgl_iokit_winsys symbols absent — GALLIUM_DRIVER=virgl would find the driver but have no iokit transport, falling back through vtest (fails at runtime, no socket)"
     fi
     echo "    virgl_iokit_winsys: present"
