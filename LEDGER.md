@@ -15,7 +15,341 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-19 (flip verdict: mirrored strip VANISHES with drop-blit → present-path carrier; but blit-skip blocks the buffer-dump on empty frames and the compositor's programs die to dropped compile batches — the async-submit+fence design is the queued durable fix; entry 19)
+Last updated: 2026-08-19 night (FENCE ERA LANDED AND VERIFIED (kext bf8d36a + winsys c462bdbb): 25× batch throughput, zero drain-fallbacks/timeouts, DRM VIRTGPU_WAIT contract end-to-end. White→BLACK transition = the compositor now ASSEMBLES and PRESENTS (blit runs) but its program fails: **glUniform3("uLayerRects" vec4-not-vec3) / glUniform1("uLayerTransform" is-matrix) — the compositor's OWN uniforms mismatching = object-table crossing between Gecko's two GL threads. CARRIER HYPOTHESIS: the u_thread.h TLS gate (single-threaded-GL plain globals) — CONFIRMED REQUIRED (Apple clang REFUSES __thread for macos10.6 targets even with -femulated-tls: "thread-local storage is not supported for the current target"; modern Mesa DELETED the pthread-TSD fallback, so per-thread contexts = restoring it ourselves in u_current). OMTC-off pref test incomplete (launch died); pref `layers.offmainthreadcomposition.enabled=false` is STILL SET in both user.js — remove or complete before the next browser test. Next: restore u_current pthread-TSD storage; entry 20 tail)
+
+---
+
+## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
+
+**Fence era (deployed, boot-verified):** kext `bf8d36a` (252700bd) +
+winsys `c462bdbb` — FCE1-framed handle lists per submit, per-resource
+last_seq, 0x600B WAIT block/NOWAIT. **70,922 batches in ~3 min (~400/s,
+25× the pre-fence rate), 0–3 ms each, zero drain-fallback calls, zero
+fence timeouts**, wall 43→18 ms. Both of the day's transport bugs are
+structurally impossible in this design.
+
+**The face changed: WHITE → BLACK.** Per the recorded guard mechanics:
+white = blit SKIPPED (transparent frame, Gecko's white software paint
+stands); black = blit RUNS — the compositor now assembles an opaque
+framebuffer, clears it, and PRESENTS it. The fence era moved the
+compositor from "renders nothing" to "renders an FBO without working
+draws".
+
+**The error census names why — and it is the COMPOSITOR'S OWN program:**
+```
+35 × glUniform3("uLayerRects"@2 has 4 components, not 3)
+35 × glUniform1(uniform "uLayerTransform"@5 is matrix)
+13 × glBindTexture(target mismatch)
+```
+uLayerRects/uLayerTransform are CompositorOGL's layer-quad shader
+uniforms. The program LINKS but its uniform declarations don't match
+Gecko's SET calls — object tables from two contexts crossing. Same
+family as `glFramebufferTexture2D(non-existent texture 2)` (an id-2
+collision) and the target mismatches: ALL object-table errors.
+
+**Carrier hypothesis (operator-named, fits everything incl. the fish
+run's luck): the u_thread.h TLS gate.** 10.6 build defines
+`__THREAD_INITIAL_EXEC` EMPTY → `_glapi_tls_Dispatch/_glapi_tls_Context`
+are PLAIN GLOBALS → Gecko's two GL threads (main chrome ctx + compositor
+thread) stomp each other's current-context/dispatch on every MakeCurrent.
+The 2026-08-18 fish/aquarium run was one-context-lucky timing.
+
+**Gate-removal attempt — the gate's REAL reason found (corrects the
+ledger's own note):** with `-femulated-tls` present in the compile line,
+Apple clang still refuses: `glapi.h:84: error: thread-local storage is
+not supported for the current target` (x86_64-apple-macos10.6). The
+gate is a HARD COMPILER REFUSAL, not a dyld assumption. AND modern Mesa
+deleted the pthread-TSD fallback from u_current (TLS-only upstream) —
+so per-thread contexts on 10.6 = RESTORING the old design ourselves.
+
+**NEXT (the frontier, in order):**
+1. **Restore pthread-TSD storage in mapi** (the pre-TLS upstream
+   design): u_current.c/h + glapi.h GET_DISPATCH —
+   `pthread_key_create`/`pthread_getspecific` for
+   dispatch+current-context, per-thread by construction, no TLS needed.
+   ~2 files, surgical; then the same fence-era boot answers everything.
+2. Complete or clear the OMTC-off test (pref
+   `layers.offmainthreadcomposition.enabled=false` is SET in both
+   profiles' user.js RIGHT NOW — one variable at a time).
+3. Pre-registered: partial improvement expected even after the TSD fix
+   (multiple GL threads remain in some Gecko paths).
+
+**Session artifacts:** gate-removal attempt reverted (u_thread.h
+restored); rebuilt dylib f689069c is functionally the fence build
+(0x600b ×14) — guest still runs verified 3196d235; substitute
+2dea3581. /tmp/pf_fence.log = the fence-era census with the
+uLayerRects/uLayerTransform evidence.
+
+---
+
+## 2026-08-19 (entry 20) — async era deployed; the latency face measured by sample
+
+**Deployment (with kext 45d538e, one pair, one boot — see kext ledger
+for the boot verdict):** subst at `/Users/sl/subst` = libOSMesa.8.dylib
+md5 `3565cf0254c588cdbf0aef0bb1b313c2` (built 13:17 from faea295 source;
+`$0x600a` immediate ×10 confirmed in disassembly), libglapi.0.dylib
+`a12d03e8423694d72687b047b7cdbc6a`, substitute OpenGL binary
+`725804ea25ead810b39fe957940e799a` — IDENTICAL to the previous deploy,
+expected: faea295 touched only winsys code inside libOSMesa; the thin
+CGL wrapper is unchanged. `otool -tvV` on the dylib was the deployment
+check (nm -m is unavailable on this host's nm).
+
+**The run:** browser (launch_pf.sh, GALLIUM_DRIVER=virgl,
+DYLD_FRAMEWORK_PATH=/Users/sl/subst) launched 13:56:15 guest with
+webgltest.html. First 3D submit 13:57:47 (kext worker lazy-started).
+20 visible submits, 92 host OK responses, transfers both directions,
+**zero submit timeouts, zero drain timeouts, zero failures of any class**
+— the dropped-compile class that produced the old white-page face is
+GONE at the kernel.
+
+**But the window stayed WHITE ≥20 guest-min with no chrome** — and the
+mechanism is now sampled, not guessed. `sample` of pid 397 at
+14:01:54 / 14:08:43 / 14:13:55 (guest):
+
+- Main thread: `nsViewManager::Refresh →
+  PCompositorBridgeChild::SendFlushRendering → PR_WaitCondVar` — parked.
+- Compositor thread: `RecvFlushRendering → CompositeToTarget →
+  CompositorOGL::EndFrame → GLContextCGL::SwapBuffers →
+  shim_flushBuffer → {_mesa_ReadPixels (+3505) | st_glFinish →
+  st_manager_flush_frontbuffer → osmesa_st_framebuffer_flush_front →
+  osmesa_read_buffer (+2910)} → virgl_resource_transfer_map →
+  {virgl_iokit_resource_wait (0x600A drain) ~50% of samples |
+  virgl_iokit_transfer_get (0x3009) ~45%} → IOConnectCallMethod →
+  mach_msg_trap`.
+
+The stack MOVES between captures (ReadPixels phase → flush_front phase
+→ back) — not one stuck call: the compositor progresses through
+readbacks at a glacial rate. Model: **each readback = flush_eq submit +
+drain (which waits out the worker's submit latency for that batch) +
+full-frame 0x3009 round-trip**; flushBuffer performs SEVERAL readbacks
+per present (ReadPixels AND the flush_front/read_buffer path);
+host starvation (mediaanalysisd 146–166%, load 7.7–9.5, guest clock 7 min
+behind host) multiplies every leg. One composite ran >12 guest-min
+without returning.
+
+**Attribution discipline:** this is NOT the old white-page face (that
+one had 58.9k compositING frames with dead programs; this one has the
+compositor inside ONE EndFrame that never returns). NOT the 2026-08-13
+AppKit deadlock face (cgl_shim.mm:672-687 — same two-thread posture,
+different block point: kernel round-trips, not [view bounds]). Same
+family as the "transient startup white (~40 s)" but 30× longer.
+
+**Host hygiene learned:** mediaanalysisd respawns through killall/kill
+-9; `launchctl bootout gui/$(id -u)/com.apple.mediaanalysisd` (no sudo)
+stops it. spotlightknowledged/mdworker resisted bootout; `sudo mdutil
+-a -i off` needs the host password (not attempted).
+
+**NEXT (pre-registered):**
+1. Quiet-host relaunch (load <2): prediction — composites complete,
+   window paints, wall ≈ the 133–300 ms era. If white persists on a
+   quiet host, the readback-carries-submit-cost model is falsified;
+   then capture the shim's existing T1–T6 timing splits (they measure
+   exactly these phases, cgl_shim.mm:166-174) live in the window.
+2. Count the readbacks per present: the sample shows ReadPixels AND
+   flush_front→read_buffer in one flushBuffer — audit whether the
+   present path can do ONE readback (or none — the kext-side blit
+   presents without readback on the 2D path).
+3. The blit-skip dump-on-skip instrument (entry 19's queue) gains a new
+   motive: on the white face it would show whether ANY presented buffer
+   was non-empty.
+
+**AFTERNOON ARC (same day, 14:22–14:44) — the arc that rewrites entry 20's
+white-window reading:**
+- **The "stall" is a GRIND, measured:** instrumented relaunch
+  (SHIM_TIMING=1 VIRGL_IOKIT_DEBUG=1, zero code change, pid 1099) —
+  `frame[6604] wall=64–83 ms submit=5.6–16.8 transfer=18.6–49.5
+  lock=0.1 ms size=5536096B`, ~22 fps, 13,214 submits + 13,214
+  transfer_gets (1531×904 full-frame) + **34 transfer_puts (ALL 18×18
+  cursor sprites)** in 5 min. Every "stuck in resource_wait" sample was
+  the dominant phase of a loop, not a block. The main thread spends ~65%
+  of samples in SendFlushRendering (sync wait per composite).
+- **SPARSE-FRAME CONFIRMED, ASYNC ERA, direct evidence:** `blit-skip[1..5]
+  empty frame p0=0x00000000` — frames compose fully transparent, nothing
+  presents, Gecko's white software paint stands. **Falsifies the
+  dropped-compile attribution for emptiness**: zero drops (kext ledger),
+  zero Mesa errors on stderr (virgl run), uploads ride INLINE_WRITE in
+  the 0x6008 batches (put=34 is not by itself diagnostic). 9 min, 8,154
+  frames, still white — "slow startup" is nearly dead as an explanation.
+- **Fresh-connection control (user visually confirmed colors cycling):**
+  test_virgl_clear on its own user client ran frame 1598+ DURING the
+  browser's white grind — device, kext global state, worker, host all
+  healthy. Not a shim-lock convoy either (no mutex-parked threads).
+- **Softpipe bisect (attempted, aborted at 3 min by operator direction):**
+  frame[11] only (CPU raster under TCG), also blit-skip empty at first
+  frames, one `Mesa: error: GL_INVALID_VALUE in glUseProgram`. Operator
+  direction stands and matches prior evidence: **PowerFox is known-good
+  on real GPUs — Gecko-side hunting is OFF; the fish run (2026-08-18,
+  this browser, this path, chrome+content+fish visible) is the
+  known-good reference.**
+- **Corrections banked (mine):** (1) "8 min quiet-host white = structural
+  falsifier" was PREMATURE — killed the run before startup could
+  finish; the instrumented run then proved frames flow. (2) The
+  "no 3D activity for 10 min" reading was the capped-log artifact
+  (kext ledger). (3) Sample snapshots CANNOT distinguish grind from
+  wedge when one phase dominates — only counters (frame[i], put/get
+  counts) can.
+
+**Teardown crash datum (14:41:15, softpipe run pid 1292, ~20 s after
+operator SIGTERM):** `powerfox_2026-08-19-144119_slqemu.crash` —
+EXC_BAD_ACCESS KERN_INVALID_ADDRESS 0x0, Crashed Thread 20 Compositor
+with PC at unmapped `0x000000012c33103a` (jump through garbage, zero
+frames). Main thread was in MessageChannel::Send/PR_WaitCondVar at
+death. Kill-triggered teardown crash — same family as the recorded
+"intermittent teardown crash under RecvFlushRendering" (entry 18),
+new stack face. NOT chased; not the empty-frame question.
+
+**THE OPEN ITEM (sharp form):** frames compose EMPTY with a clean
+transport in BOTH eras (morning sync-6000 white face AND async era) —
+so the async pair did NOT introduce it; it REMOVED the drop class and
+exposed that emptiness has another carrier. The fish run rendered
+content; today's three first-launch-after-boot runs all whited.
+**NEXT (pre-registered, one variable): REVERT BOOT to the fish-run-era
+pair** (sync-submit kext + 0afb1aa-era winsys — the aquarium-run
+configuration) and launch first-after-boot: renders → the async pair is
+the regression (then bisect {drain-before-put, is_busy probe, worker});
+whites → the regression predates async and the fish run's differing
+condition (warm browser? session state?) is what to identify. Second
+rung: dump-on-skip instrument (see whether frames are uniformly
+transparent or have content regions beyond pixel[0]).
+
+**UPLOAD CENSUS + FRAME-RATE PROBE (same day, 14:45–14:58) — famine
+confirmed, starvation FALSIFIED as its carrier:**
+- Census instruments found: CGLTexImageIOSurface2D probe = the MTX
+  counter (substitute_cgl.c:966+, ≤24 logs); winsys put/get via
+  VIRGL_IOKIT_DEBUG; the kext's STREAMXFER window is UNUSABLE for a
+  census (≥500k-px filter only + the known-wrong header layout from
+  the ca69ac4 correction — both limits recorded already).
+- Main-thread samples during the grind (pid 1402): 758/1100 in the
+  SendFlushRendering cond-wait; **ZERO frames in TexImage/TexSubImage/
+  TextureClient/PaintLayer/BuildLayer/DrawTarget anywhere** — Gecko
+  never reaches an upload call. Not asking, not calls-not-landing.
+- **layout.frame_rate=5 probe (pref in both profiles' user.js, since
+  REMOVED):** flush tax gone — main thread now parks in _DPSNextEvent
+  (event-idle, no dirty views), compositor parks on its 5 Hz timer,
+  0.0% CPU, 988 kernel 3D lines in the window (5 Hz composites flow),
+  **window still white**. With CPU available Gecko paints nothing and
+  goes quiescent: the display cycles COMPLETE with nothing dirty —
+  Gecko believes there is nothing to paint. Starvation falsified;
+  five restarts, identical white — the face is era-wide, not
+  per-process state.
+- Startup log of the throttled run: __NSAutoreleaseNoPool spam (early
+  startup), `Mesa: error: GL_INVALID_ENUM in glGetIntegerv(pname=
+  GL_MAJOR_VERSION)` (the recorded compat-3.0 version-query face),
+  missing EGL symbols (expected). stderr silent after ~2 min.
+- **Operator rule banked:** PowerFox known-good on real GPUs — no
+  Gecko-side hunting; the fish run (08-18, this browser, chrome+
+  content+fish visible) is the reference configuration.
+
+**REGRESSION PINNED AND FIXED — is_busy, one line, boot-free A/B
+(15:05–15:18, commit `a88c72eb4b4`):**
+- **The user's regression call was right and my "possibly nothing
+  regressed" hedge was wrong**: last render (aquarium, 08-19 ~10–11)
+  was on `5e5029e` PRE-async; the only deltas to the white face were
+  the async pair; no render ever occurred on it.
+- **Mechanism (code-level, explains every datum):** faea295's
+  `resource_is_busy` = 1 ms drain probe → BUSY under any in-flight
+  batch → with the async compositor batching continuously, always
+  busy → `virgl_resource.c:296` returns VIRGL_TRANSFER_MAP_ERROR for
+  every PIPE_MAP_DONTBLOCK map → Gecko's content uploads (DONTBLOCK)
+  all error silently at the map level → famine (34 cursor puts vs 13k
+  readbacks), empty layer tree, white, zero transport errors.
+- **Boot-free A/B (subst swap only, same async kext):** is_busy →
+  `return false` (drains intact; dylib `fd9a0dd86f99f187a30b8ce58fd5aefb`,
+  `$0x600a` count 10→9 = exactly the probe's call removed). Result:
+  **puts 34→122 in 120 s with content-sized boxes (809×264 chrome
+  strips, 1024×1024 canvas), attachBacking+ctxAttachResource bursts,
+  composite loop fell from ~22 fps free-spin to ~2/s properly
+  interleaved.** FAMINE OVER. Fix committed as `a88c72eb4b4`.
+- **Remaining face (throughput, not correctness):** after the fix, the
+  browser grinds in BURSTS separated by minutes (kernel log: burst of
+  OK uploads at 15:18:03 after a 3.5-min silence; 522 host ops in 8 min;
+  VM itself mostly idle — QEMU ~76% of one core, host load 5.5, no
+  mediaanalysisd). Model: the worker chews compile-carrying batches
+  for minutes each (cold shader-compile chains serialized), every
+  drain eventually SUCCEEDS (hence zero timeout logs — the gaps end
+  when the worker finishes, drain returns success, queued work bursts).
+  Main thread sits 100% in SendFlushRendering during gaps → **window
+  white + mouse dead = the flush wait**, not a wedge. The fish/aquarium
+  era rendered with WARM shaders; today's cold starts pay the full
+  compile bill through the serialized worker.
+- **Build trap recorded (cost ~30 min):** build-10.6.sh's designed
+  ninja link failure RACES the archive jobs under -j4 — deleting a
+  stale object/archive and rebuilding once re-runs the link against
+  the STALE archive (force-link loads whatever exists when ninja
+  stops). Symptom: identical dylib md5 after a source change. Fix:
+  run the script TWICE after touching sources (second run force-links
+  against the fresh archive). VERIFY the binary delta (md5 + symbol/
+  immediate count) after every Mesa build — never trust "rc=0".
+- **Artifacts on hand:** fish kext `dd9b0d713c9bedad8bfb38bce7c40c56`
+  at /tmp/VMQemuVGA_fish.kext (byte-identical to the ledger's named
+  fish-run build — provenance exact; worktree route failed on
+  MacKernelSDK, in-tree `git checkout cb291c9 -- FB/` + build +
+  restore worked); fish dylib attempt was the stale-archive trap
+  above, not rebuilt since — the is_busy fix superseded the need.
+  The revert boot stays QUEUED as the confirmation rung if the
+  is_busy fix's renders regress again.
+
+**HEARTBEAT BOOT + THE REAL ERROR HUNT (16:05–16:15, operator-driven
+pivot: "there is no storm — look for errors, look for the debug log"):**
+- **Heartbeat kext** `b492386f7711310ecc419b5b8cb3151e` (per-batch
+  uncapped "v3d batch done ctx size ms q ret"): boot clean, and the
+  verdict is decisive — **1,354 batches at 0–15 ms each, q=0 always,
+  ret=0x0 always, on a quiet host (load 1.8)**. NO STORM. The
+  compile-storm and starvation theories are both dead; the worker is
+  not the bottleneck. The 3.5-min-burst-gap pattern from the earlier
+  run was a different regime (load 5.5 era) and is NOT reproducible
+  as batch cost.
+- **The errors were in the browser stderr all along** — my earlier
+  `uniq -c` filter buried them under timing-stat lines (reading the
+  artifact with a bad filter = not reading it; recorded as an
+  instrument lesson). The family in pf_hb.log:
+  `glFramebufferTexture2D(non-existent texture 2)` ×2,
+  `glReadPixels(incomplete framebuffer)` ×3, `glUseProgram
+  GL_INVALID_VALUE` ×8, plus the RECORDED page-shader family
+  (webgl_ uniform errors, glBindTexture target mismatch — the
+  2026-08-18 open item). **The new lead: a framebuffer binding to a
+  non-existent texture (#2 = one of a context's first objects) +
+  incomplete-framebuffer readbacks — reads like the COMPOSITOR's own
+  FBO failing to assemble → frames compose transparent → blit-skip →
+  white. Attribution pending** (compositor vs page context); the
+  about:blank A/B was launched but the browser was closed before the
+  census; its one datum: frames were FAST (wall mean 31.9 ms, ~30 fps
+  rolling stats) right up to exit — the compositor runs at speed and
+  still composes nothing.
+- **Linux reference comparison (operator-directed, virtgpu_ioctl.c @
+  3a0dd7ba):** (1) VIRTGPU_WAIT is PER-RESOURCE (gem handle →
+  obj->resv → dma_resv_wait_timeout, 15 s, NOWAIT flag =
+  dma_resv_test_signaled) — our global drain/probe is the divergence
+  that produced BOTH today's bugs; my is_busy=false interim
+  approximates "no fences on this resource" without implementing it.
+  (2) TRANSFER_TO/FROM_HOST ioctls are ASYNC-WITH-FENCE: the command
+  CARRIES a fresh fence, ioctl returns immediately, sync happens at
+  WAIT — our kext's drain-everything-then-poll-inside-the-ioctl is
+  the anti-model and the present path's serializer. (3) Every
+  submit/transfer carries a fence in Linux. **The pre-registered
+  per-resource-fence design is the reference contract, not an
+  optimization.**
+- **Instruments ready:** dump-on-skip built in cgl_shim.mm
+  (SHIM_DUMP_SKIP=n — BMP of skipped "empty" frames; uniformly-zero =
+  famine-consistent (pre-registered), content beyond p0 = the guard
+  is a false-positive filter eating real frames) — needs subst swap,
+  no boot. UTM debug log: STILL not located on disk (find empty);
+  likely needs Debug Log enabled in the VM's UTM settings — the
+  ledger's "path unrecorded" note stands; ask the operator.
+
+**NEXT (pre-registered):**
+1. Deploy dump-on-skip subst; ONE launch (about:blank first — no
+   WebGL context exists there, so any GL errors + empty frames are
+   the COMPOSITOR's alone; then the page). Read the BMPs + the
+   stderr errors side by side.
+2. Attribute `non-existent texture 2` + `incomplete framebuffer` to
+   a context (the dump + about:blank A/B do this); if compositor-side,
+   the chase is the compositor's FBO assembly in OUR stack (format
+   bindings? the storm-anatomy depth-as-color/RGBA-as-ZS family?).
+3. Durable architecture per the Linux reference: per-resource fences
+   (kext: fence ctx + seqno per submit/transfer; winsys: WAIT ioctl
+   semantics per handle) — replaces the global drain AND the
+   is_busy=false interim in one design.
 
 ---
 
