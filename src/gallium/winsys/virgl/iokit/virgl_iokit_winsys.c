@@ -70,6 +70,60 @@ virgl_iokit_debug(void) {
 #define IOKIT_TRANSFER_FROM_3D     0x3009
 
 /* ===================================================================
+ * Census registry (2026-08-20) — SHIM_CONTENT_CENSUS instrumentation.
+ * Tracks every alive hw_res so the flush-time census can read back ALL
+ * color/depth resources, not just the presented front — answers "which
+ * resource holds the compositor's draws" when the front reads zero.
+ * Registry mutex is held across census transfers so a concurrent
+ * destroy cannot free a backing mid-readback (destroys block for the
+ * census duration; debug-run serialization, accepted).
+ * =================================================================== */
+#define CENSUS_REG_MAX 512
+struct census_entry {
+   struct virgl_hw_res *res;   /* raw ptr; validity under the mutex */
+   uint32_t handle, fmt, w, h, size;
+   int alive;
+};
+static struct census_entry s_creg[CENSUS_REG_MAX];
+static pthread_mutex_t s_creg_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int s_creg_overflow = 0;
+
+static void census_register(struct virgl_hw_res *res)
+{
+   pthread_mutex_lock(&s_creg_mtx);
+   for (int i = 0; i < CENSUS_REG_MAX; i++) {
+      if (!s_creg[i].alive) {
+         s_creg[i].res = res;
+         s_creg[i].handle = res->res_handle;
+         s_creg[i].fmt = res->format;
+         s_creg[i].w = res->width;
+         s_creg[i].h = res->height;
+         s_creg[i].size = res->size;
+         s_creg[i].alive = 1;
+         pthread_mutex_unlock(&s_creg_mtx);
+         return;
+      }
+   }
+   if (!s_creg_overflow) {
+      s_creg_overflow = 1;
+      fprintf(stderr, "iokit: CENSUS registry OVERFLOW (>512 alive)\n");
+   }
+   pthread_mutex_unlock(&s_creg_mtx);
+}
+
+static void census_unregister(struct virgl_hw_res *res)
+{
+   pthread_mutex_lock(&s_creg_mtx);
+   for (int i = 0; i < CENSUS_REG_MAX; i++) {
+      if (s_creg[i].alive && s_creg[i].res == res) {
+         s_creg[i].alive = 0;
+         break;
+      }
+   }
+   pthread_mutex_unlock(&s_creg_mtx);
+}
+
+/* ===================================================================
  * Resource lifecycle
  * =================================================================== */
 
@@ -77,6 +131,7 @@ static void
 virgl_iokit_hw_res_destroy(struct virgl_iokit_winsys *iws,
                            struct virgl_hw_res *res)
 {
+   census_unregister(res);
    /* 0x6005 resourceUnref — kext sends RESOURCE_UNREF and also detaches
     * backing if still held (defensive cleanup). */
    uint64_t in[1] = { res->res_handle };
@@ -174,6 +229,13 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
          return NULL;
       }
       res->res_handle = (uint32_t)out[0];
+      /* Resource identity log (2026-08-20): pairs kext handle with
+       * fmt/dims/bind so a flushed handle (e.g. res=287) is identifiable
+       * without decoding the command stream. VIRGL_IOKIT_DEBUG-gated. */
+      iokit_dbg("iokit: res create handle=%u fmt=%u %ux%u bind=0x%x size=%u\n",
+                res->res_handle, res->format, res->width, res->height,
+                res->bind, res->size);
+      census_register(res);
    }
 
    /* 0x6003 attachBackingUser — wires the malloc'd pages into the device.
@@ -625,11 +687,13 @@ static int  virgl_iokit_fence_get_fd(struct virgl_winsys *vws, struct pipe_fence
 /* Rect state lives HERE (libOSMesa) — the substitute re-exports this
  * library, so the shim calls the setter; dependency direction stays
  * one-way. Written from the AppKit-safe main thread, read here. */
+__attribute__((visibility("default")))
 int cgl_shim_host_present_enabled(void);
 static int g_hp_x, g_hp_y, g_hp_w, g_hp_h;
 static volatile int g_hp_valid;
 static int g_hp_mode = -1;
 
+__attribute__((visibility("default")))
 int cgl_shim_host_present_enabled(void)
 {
    if (g_hp_mode < 0)
@@ -637,6 +701,7 @@ int cgl_shim_host_present_enabled(void)
    return g_hp_mode;
 }
 
+__attribute__((visibility("default")))
 int cgl_shim_host_present_rect(int *x, int *y, int *w, int *h)
 {
    if (!cgl_shim_host_present_enabled() || !g_hp_valid)
@@ -645,6 +710,7 @@ int cgl_shim_host_present_rect(int *x, int *y, int *w, int *h)
    return 1;
 }
 
+__attribute__((visibility("default")))
 void cgl_shim_set_host_present_rect(int x, int y, int w, int h)
 {
    g_hp_x = x; g_hp_y = y; g_hp_w = w; g_hp_h = h;
@@ -656,9 +722,72 @@ static void virgl_iokit_flush_frontbuffer(struct virgl_winsys *vws, struct virgl
                                           void *winsys_drawable_handle, struct pipe_box *sub_box)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   static int s_hook_log = 0;
    int x, y, w, h;
+   if (s_hook_log < 5) {
+      s_hook_log++;
+      fprintf(stderr, "iokit: flush_frontbuffer HOOK ctx=%u res=%u lvl=%u fmt=%u %ux%u\n",
+              iws->ctx_id, res ? res->res_handle : 0, level,
+              res ? res->format : 0, res ? res->width : 0, res ? res->height : 0);
+   }
    if (!res || level != 0 || layer != 0)
       return;
+
+   /* CONTENT CENSUS (2026-08-20): under SHIM_CONTENT_CENSUS, read back
+    * EVERY alive color/depth resource (registry) through the device
+    * (transfer_get, full box) and count nonzero 32-bit words. The
+    * presented front reading zero while some OTHER resource holds the
+    * compositor's draws is the identity-mismatch signature. Registry
+    * mutex held across transfers so backings cannot be freed mid-read
+    * (destores serialize behind censuses; debug-run behavior). The
+    * backings are align_malloc'd — NOT zeroed — so uniform zeros after
+    * a get=0 transfer are genuine device content, not a skipped read. */
+   {
+      static int s_census = -1, s_census_log = 0;
+      if (s_census < 0)
+         s_census = (getenv("SHIM_CONTENT_CENSUS") != NULL);
+      if (s_census && s_census_log < 6) {
+         int fired = 0;
+         pthread_mutex_lock(&s_creg_mtx);
+         for (int i = 0; i < CENSUS_REG_MAX && fired < 26; i++) {
+            struct census_entry *e = &s_creg[i];
+            if (!e->alive || !e->res->ptr)
+               continue;
+            /* color fmts 53/54 (B8G8R8A8/R8G8B8A8) + depth 142. No
+             * size floor: a 1x1 drawable front is a live candidate —
+             * the composite may be executing into a stale 1x1 target
+             * (the constant-size batch stream + zero window fb + a
+             * content-bearing 1x1 in an earlier run point there). */
+            if (e->fmt != 53 && e->fmt != 54 && e->fmt != 142)
+               continue;
+            unsigned bpp = util_format_get_blocksize(e->fmt);
+            uint64_t stride = (uint64_t)e->w * bpp;
+            uint64_t need = stride * e->h;
+            if (bpp < 1 || bpp > 8 || need < 4 || need > e->res->size)
+               continue;
+            fired++;
+            struct pipe_box box;
+            memset(&box, 0, sizeof(box));
+            box.width = e->w; box.height = e->h; box.depth = 1;
+            int cr = virgl_iokit_transfer_get(vws, e->res, &box,
+                                              (uint32_t)stride,
+                                              (uint32_t)need, 0, 0);
+            uint32_t total = (uint32_t)(need / 4);
+            const uint32_t *p = (const uint32_t *)e->res->ptr;
+            uint32_t nz = 0, first = 0; int found = 0;
+            for (uint32_t k = 0; k < total; k++) {
+               if (p[k]) { nz++; if (!found) { found = 1; first = k; } }
+            }
+            fprintf(stderr, "iokit: CENSUS res=%u fmt=%u %ux%u bpp=%u get=%d nonzero=%u/%u first_off=%u\n",
+                    e->handle, e->fmt, e->w, e->h,
+                    bpp, cr, nz, total, first * 4u);
+         }
+         pthread_mutex_unlock(&s_creg_mtx);
+         if (fired)
+            s_census_log++;   /* one fire = one flush's batch of reads */
+      }
+   }
+
    if (!cgl_shim_host_present_rect(&x, &y, &w, &h))
       return;
    virgl_iokit_res_wait(iws, res->res_handle);   /* prior 3D complete host-side */

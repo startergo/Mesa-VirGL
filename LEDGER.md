@@ -164,6 +164,99 @@ found and fixed; blit now FIRES end-to-end; wall = host-side verdict:**
   the ST's flush_front resource (res=287) is the resource the
   compositor DRAWS into, or a stale/other drawable); then format
   mismatch in the blit (src_fmt from the geometry table vs actual).
+
+**CONTENT CENSUS INSTRUMENT (Aug 20 evening) — PRE-REGISTERED before
+the run:**
+- Artifacts: dylib `aefe1bc4` (kext UNCHANGED at e44d8598; substitute
+  unchanged). Changes: winsys res-create identity log (handle+fmt+dims+
+  bind, VIRGL_IOKIT_DEBUG-gated); HOOK log extended with fmt/dims;
+  **content census** under `SHIM_CONTENT_CENSUS` — at flush_frontbuffer
+  time, device-side transfer_get of the FULL resource box, nonzero
+  32-bit word count + first nonzero offset, capped 24 fires; osmesa
+  FLUSHFRONT log — context+drawable identity and every allocated
+  attachment (FRONT_LEFT=0, BACK_LEFT=1, DEPTH=4, ACCUM=5). OSMesa's
+  visual is FRONT_LEFT-only (osmesa.c buffer_mask) — there is no BACK
+  attachment, so the flushed front IS the only color attachment of the
+  presenting drawable.
+- Run plan: PowerFox, SHIM_HOST_PRESENT=1 SHIM_CONTENT_CENSUS=1
+  VIRGL_IOKIT_DEBUG=1, log /tmp/pf_census1.log, startup + settle + one
+  page load. The census readback costs ~60-75 ms per fire (bounded at
+  24) — a timing perturbation, not a content perturbation.
+- Predictions, stated before the run:
+  - (a) SOME census nonzero (esp. startup composites) → the front
+    resource DOES receive compositor draws → carrier moves downstream
+    of content (blit src_fmt/coords/dst); a nonzero-then-zero sequence
+    names the moment content stops arriving.
+  - (b) ALL censuses get=0 nonzero=0 → the compositor never draws
+    into the presented drawable → identity problem; count distinct
+    st/drawable pairs in FLUSHFRONT — one pair presenting while zero
+    content means the DRAWING context is a different drawable whose
+    front is never presented.
+  - (c) CENSUS SKIP lines (bpp outside 1..8 or need>size) → the front
+    resource is not a plain color format — format mismatch promoted.
+  - Negative control built in: a census line with get!=0 (transfer
+    failed) is NOT zero-content evidence and must not be counted as
+    (b).
+
+**CENSUS RESULTS (Aug 20 evening — prediction (b) landed, then the
+format hypothesis died in an interleaved probe, then the BLIT itself
+died):**
+- Run 1 (dylib aefe1bc4): ONE st/drawable pair ever presents
+  (st=0x11c1d4000 drawable=0x11c1c3230, statt=0=FRONT_LEFT; OSMesa's
+  visual is FRONT_LEFT-only — there IS no back attachment). Front
+  res=299 fmt=53 1531x904: get=0 nonzero=0/1384024 across 23 flushes.
+  First flush presented a 1x1 front (res=292, nonzero=1/1 — ambiguous:
+  content vs uninitialised-backing garbage).
+- Run 2 (a0813c66, +GL-state dump): vp=1531x904@0,0, scissor DISABLED,
+  draw=0 read=0 (default framebuffer), cm=0xffffffff, depth=0/1 — GL
+  state fully exonerated; front still 0/1384024. One thread
+  (th=0x113c04000), ONE winsys instance (one winsys_wrap ENTRY), one
+  virgl ctx.
+- Formats resolved (this tree): pipe 53 = R8G8B8A8_UNORM (wire 67),
+  pipe 54 = B8G8R8A8_UNORM (wire 1), 142 = Z16_UNORM, 49 = R8_UNORM.
+  The substitute and shim both request OSMESA_RGBA
+  (cgl_shim.mm:683, substitute_cgl.c:623) — the drawable front is RGBA
+  BY OUR CHOICE; Gecko's textures are BGRA.
+- Run 3 (3d640390, registry census): front 346: 0/1384024; DEPTH 347
+  (Z16): 0/692012 — **no rasterisation and no clear EVER touched the
+  window framebuffer**; content EXISTS in res=344 (fmt54 1531x70:
+  107170/107170 = 100%) and res=338 (fmt54 100x100: 10000/10000) —
+  layer surfaces. 26 creates total, zero churn; no second full-window
+  colour resource. 512x512s uncensused (per-fire cap), 1x1 below
+  threshold — a no-floor/no-cap census build (3f09b14c) is deployed
+  but unrun. Only GL errors in-run: 2× GL_INVALID_ENUM
+  glGetIntegerv(GL_MAJOR_VERSION) — the GL 2.1 signature, benign, and
+  a datum that TWO contexts were created.
+- Host debug log in the probe window: zero virglrenderer lines beyond
+  the known "[VREND FORMATS] Skipping 8/16 samples".
+- **Falsified (probe_fmt_renderable v3, interleaved + counterbalanced,
+  3 rounds): the wire-67 rejection hypothesis.** B (1531x904 wire-67
+  CLEAR+full readback): PASS 3/3 — 1384024/1384024 dwords 0xff996633
+  exact. C (wire-1): PASS 3/3 (0xff336699). A (64x64 wire-67): FLAKY —
+  pass/fail/fail, zeros-not-marker (transfer-before-clear candidate;
+  small-resource-only, unresolved). Capset (id=1, v1, 308 B): render
+  mask bits SET for both wire 1 and wire 67. The window-sized RGBA RT
+  clears and reads back deterministically through this kext — the
+  transport and both formats are healthy at this layer.
+- **THE REVERSAL — 0x600C delivery falsified at pixel level:** the
+  probe blitted every config (12 blits, all kr=0x0; SPICE "gl draw"
+  events for all four rects: D's rect re-issued 1328× by the re-blit
+  rule at ~20 Hz, A 25, B 9, C 11) — and the SCREEN SHOWS NOTHING.
+  Host-side capture of the extended display (VM runs there), image
+  checked: Aurora wallpaper + Finder window visible, desktop healthy,
+  NO patch. **A SPICE "gl draw" line is event-level evidence only** —
+  an update of zero pixels is log-indistinguishable from a real one.
+  The earlier "delivery proven end-to-end" claim is RETRACTED to
+  event-level. Mechanism (inference, unverified): the kext's GL blit
+  writes resource 1's HOST copy; the 2D desktop displays from the
+  GUEST backing; nothing bridges them.
+- **Two SEPARATE defects now stand:** (1) 0x600C delivers no pixels
+  (kext-side; fix = kernel relay: transfer_from_3d → kext memcpy
+  (flip+swizzle) → transferToHost2D, all proven paths); (2) the
+  browser's front resource is genuinely EMPTY (census) — the
+  compositor never renders into the presenting drawable's front even
+  though clears/draws work fine at the raw layer. Both must be fixed
+  for a visible window.
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class

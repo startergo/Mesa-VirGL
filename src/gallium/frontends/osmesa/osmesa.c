@@ -59,6 +59,7 @@
 #include "GL/osmesa.h"
 
 #include <stdio.h>
+#include <pthread.h>
 #include <c11/threads.h>
 
 #include "state_tracker/st_context.h"
@@ -393,7 +394,69 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
       if (s_host_present < 0)
          s_host_present = (getenv("SHIM_HOST_PRESENT") != NULL);
       if (s_host_present) {
+         static int s_hp_log = 0;
          struct pipe_context *pipe = osmesa->st->pipe;
+         if (s_hp_log < 5) {
+            s_hp_log++;
+            fprintf(stderr, "osmesa: HOST-PRESENT branch pipe=%p screen=%p\n",
+                    (void*)pipe, pipe ? (void*)pipe->screen : NULL);
+         }
+         /* Attachment census (2026-08-20): SHIM_CONTENT_CENSUS — log
+          * context + drawable identity and every allocated attachment
+          * (index 0 = FRONT_LEFT, 1 = BACK_LEFT, 4 = DEPTH, 5 = ACCUM).
+          * OSMesa's visual is FRONT_LEFT-only, so a non-null att[1]
+          * would itself be a surprise. Correlates with the winsys
+          * create log (handle+fmt+dims) to answer WHICH resource the
+          * compositor's context presents vs what it draws into. */
+         {
+            static int s_cc = -1, s_cc_log = 0;
+            if (s_cc < 0)
+               s_cc = (getenv("SHIM_CONTENT_CENSUS") != NULL);
+            /* per-st cap (not global): a second context presenting
+             * later must still get logged after the first context
+             * exhausts the count */
+            static struct st_context *s_cc_seen[8];
+            static int s_cc_cnt[8];
+            int s_cc_nth = -1;
+            for (int t = 0; t < 8; t++) {
+               if (s_cc_seen[t] == NULL) { s_cc_nth = t; break; }
+               if (s_cc_seen[t] == st) { s_cc_nth = t; break; }
+            }
+            if (s_cc_nth >= 0 && s_cc_cnt[s_cc_nth] < 40) {
+               s_cc_cnt[s_cc_nth]++;
+               if (s_cc_seen[s_cc_nth] == NULL)
+                  s_cc_seen[s_cc_nth] = st;
+               struct gl_context *gc = st->ctx;
+               fprintf(stderr, "osmesa: FLUSHFRONT th=%p st=%p drawable=%p statt=%d",
+                       (void*)pthread_self(), (void*)st, (void*)drawable, (int)statt);
+               for (unsigned i = 0; i < ST_ATTACHMENT_COUNT; i++) {
+                  struct pipe_resource *r = osbuffer->textures[i];
+                  if (r)
+                     fprintf(stderr, " att[%u]=%p fmt=%u %ux%u",
+                             i, (void*)r, r->format, r->width0, r->height0);
+               }
+               /* State that silently produces zero-color-writes with
+                * clean getError: FBO-bound draw buffer (Name != 0),
+                * zero viewport, enabled zero scissor, masked color
+                * writes. Read-only — no device interaction. */
+               if (gc) {
+                  fprintf(stderr,
+                          " vp=%gx%g@%g,%g sc=%s%dx%d@%d,%d draw=%u read=%u cm=0x%x depth=%u/%u",
+                          gc->ViewportArray[0].Width, gc->ViewportArray[0].Height,
+                          gc->ViewportArray[0].X, gc->ViewportArray[0].Y,
+                          (gc->Scissor.EnableFlags & 1u) ? "+" : "-",
+                          gc->Scissor.ScissorArray[0].Width,
+                          gc->Scissor.ScissorArray[0].Height,
+                          gc->Scissor.ScissorArray[0].X,
+                          gc->Scissor.ScissorArray[0].Y,
+                          gc->DrawBuffer ? gc->DrawBuffer->Name : 0xffffffffu,
+                          gc->ReadBuffer ? gc->ReadBuffer->Name : 0xffffffffu,
+                          (unsigned)gc->Color.ColorMask,
+                          (unsigned)gc->Depth.Test, (unsigned)gc->Depth.Mask);
+               }
+               fprintf(stderr, "\n");
+            }
+         }
          if (pipe && pipe->screen &&
              pipe->screen->flush_frontbuffer)
             pipe->screen->flush_frontbuffer(pipe->screen, pipe, res,
