@@ -17,6 +17,35 @@ re-verified at creation time.
 
 Last updated: 2026-08-19 night (FENCE ERA LANDED AND VERIFIED (kext bf8d36a + winsys c462bdbb): 25× batch throughput, zero drain-fallbacks/timeouts, DRM VIRTGPU_WAIT contract end-to-end. White→BLACK transition = the compositor now ASSEMBLES and PRESENTS (blit runs) but its program fails: **glUniform3("uLayerRects" vec4-not-vec3) / glUniform1("uLayerTransform" is-matrix) — the compositor's OWN uniforms mismatching = object-table crossing between Gecko's two GL threads. CARRIER HYPOTHESIS: the u_thread.h TLS gate (single-threaded-GL plain globals) — CONFIRMED REQUIRED (Apple clang REFUSES __thread for macos10.6 targets even with -femulated-tls: "thread-local storage is not supported for the current target"; modern Mesa DELETED the pthread-TSD fallback, so per-thread contexts = restoring it ourselves in u_current). OMTC-off pref test incomplete (launch died); pref `layers.offmainthreadcomposition.enabled=false` is STILL SET in both user.js — remove or complete before the next browser test. Next: restore u_current pthread-TSD storage; entry 20 tail)
 
+
+**HANDOFF SERIALIZATION LANDED + VALIDATED-2/2 + THE INPUT/CONNECTING STALL (09:20–09:50):**
+- Implemented (53b2604050f + hotfix): one global handoff mutex around the
+  whole context switch via a single choke point (shim_osmesa_make_current,
+  all 12+ switch/rebind sites routed); owner tracking logs
+  HANDOFF-VIOLATION on concurrent same-context use; queue lock re-landed
+  (301d44d60b0). LOCK ORDER INVARIANT: sc->lock → handoff → queue.
+- **First build self-deadlocked** (bulk-regex routed the helper's OWN
+  OSMesaMakeCurrent through itself — two stacked helper frames in the
+  sample, dock-stuck). Fixed; substitute 320ad16c.
+- **Validation: 2/2 clean starts** — chrome RENDERED both runs (fields
+  and buttons visible), errs=0 (losing runs showed 11–12 program-not-
+  linked), viol=0 (switch-only serialization sufficient — zero
+  concurrent same-context use observed). 4 more runs queued for the
+  6-count when the guest is next used.
+- **New stall face (both runs): "connecting" on a file:// URL + input
+  fields dead.** Not network (DNS+TCP verified working from the guest:
+  example.com 200). Sample: main thread 83% inside
+  PaintWindow→Refresh (the flush-wait chain), compositor actively
+  inside RecvFlushRendering→CompositeToTarget — composites RUN (chrome
+  stays rendered) but the synchronous flush cycle owns the main
+  thread: event loop starves (typing dead), page-load completion
+  callbacks never run ("connecting" forever on a local file — the
+  docloader park of the prior session is this same stall).
+  Samples: /tmp/v4s.txt, /tmp/ho.txt.
+- **Frontier (unchanged target, new precision): per-flush cost.** The
+  recorded design queue applies: fewer full-frame readbacks per
+  composite (present path), async flush semantics — measure per-flush
+  wall first (shim timing stats) on the next session.
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
