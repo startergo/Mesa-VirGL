@@ -101,6 +101,44 @@ deploy-and-boot — artifacts built, undeployed):**
   rect/coords math is wrong (check HOST-BLIT rect log lines).
   Watch: hostBlit attach/submit FAILs, and the re-blit's cost at tick
   rate (heartbeat logs).
+**HOST-BLIT DEBUG ARC (Aug 20, 13:57–17:20) — three silent dead links
+found and fixed; blit now FIRES end-to-end; wall = host-side verdict:**
+1. **dlsym visibility** (dylib ff1c5258 era): the winsys entry points
+   compiled under Mesa's -fvisibility=hidden — nm shows them as T but
+   they never reach the dylib's export trie, so the substitute's
+   dlsym returned NULL and host_present_mode() silently read 0.
+   Diagnosed by splitting the gates: mode → local getenv in the shim;
+   setter failure → loud log. Fix: visibility("default") on the three
+   (dylib eedc500f). Guest nm failing on the substitute (1-line
+   output) is a 10.6 nm artifact, NOT a stale file (digests matched).
+2. **The chain instrumented link by link** (dylib c68503b0): OSMesa's
+   HOST-PRESENT branch fires (pipe+screen valid) → winsys
+   flush_frontbuffer HOOK fires (res=287, lvl=0) → rect stash fires
+   (1280x821 at (4,44) — plausible desktop coords). All logged.
+3. **The kext never received 0x600C** because the first handler
+   returned kIOReturnNotReady SILENTLY: m_display_resource_id was 0 —
+   setupDisplayResource NEVER RAN (0 log lines) and neither did
+   setscanout (0 lines) — **this boot's desktop runs in VGA
+   compatibility mode** (BAR-0 auto-display; the recorded two-mode
+   note). The live desktop surface = the refresh timer's transfer
+   target = the framebuffer's resource 1 (convention). Fix (kext
+   e44d8598): m_hblit_dst_res — setscanout() records scanout-0
+   bindings; fallback 1; dst attach-cache separate from the 3D res.
+4. **BLIT FIRES**: "hostBlit ctx=3 created (dst res 1)", both
+   attachments OK, BLIT+RESOURCE_FLUSH submitted, zero failure
+   responses, hook fires per flush. **Nothing visible on screen.**
+   Per the pre-registered outcomes this is (b): the carrier is either
+   the host resource's content or a host-side rejection invisible
+   from the guest BY CONSTRUCTION.
+- **WAITING ON: UTM Debug Log toggle** (GUI action, VM settings) —
+  no debug log exists on disk (searched twice). virglrenderer's
+  verdict on a BLIT into a RESOURCE_CREATE_2D resource (the prime
+  suspect: vrend may reject/no-op blits on 2D-created resources) is
+  only visible there. Path gets recorded in the ledger once found.
+- Sub-suspects if the log clears the blit: dims/rect mismatch (1280
+  window on the desktop), src resource 287's content being empty
+  (which would FOLD this into the empty-canvas frontier — the blit
+  faithfully delivering nothing).
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
