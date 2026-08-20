@@ -139,6 +139,31 @@ found and fixed; blit now FIRES end-to-end; wall = host-side verdict:**
   window on the desktop), src resource 287's content being empty
   (which would FOLD this into the empty-canvas frontier — the blit
   faithfully delivering nothing).
+**HOST-SIDE BLIT CONFIRMED WORKING (Aug 20 ~18:00, host-side proof):**
+- **UTM debug log FOUND (the standing gap closes): the VMs live in
+  ~/Documents — the log is `Snow Leopard.utm/Data/debug.log`** (the
+  container Documents only holds Public/; every earlier search looked
+  in the wrong tree, sandboxed views made it emptier still). Debug Log
+  was ON all along; **the log is 2.9 GB** (the recorded growth hazard
+  ×10 — truncate before it re-enacts the 35 GB incident).
+- **The tail catches the blit in the act:**
+  `display-2:0: gl draw 1280x821+123+61` — SPICE received a display
+  update of EXACTLY the shim's stashed window rect (1280x821),
+  interleaved with the desktop refresh draws (1680x1050+0+0). Zero
+  virglrenderer errors in the window — the BLIT is accepted and
+  executes. **Delivery is proven end-to-end; the readback-free present
+  path works.**
+- Per the pre-registered outcomes this is (b): the carrier of the
+  invisible window is THE RESOURCE'S CONTENT — the blit faithfully
+  delivers what the compositor's front resource holds, and that is
+  empty. **The empty-canvas frontier and the blit converge: delivery
+  solved, content is the one remaining question.**
+- Sub-suspects for the content, in order: what the compositor renders
+  into its front resource (the one-glClear page + clean getError +
+  white canvas datum says even a clear doesn't arrive — check whether
+  the ST's flush_front resource (res=287) is the resource the
+  compositor DRAWS into, or a stale/other drawable); then format
+  mismatch in the blit (src_fmt from the geometry table vs actual).
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
