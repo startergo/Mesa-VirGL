@@ -144,6 +144,9 @@ shim_CGLDestroyContext(CGLContextObj ctx)
  * =================================================================== */
 
 void *g_mesa = NULL;
+/* Host-side blit entry points in libOSMesa's winsys (2026-08-19). */
+int  (*p_cgl_shim_host_present_enabled)(void) = NULL;
+void (*p_cgl_shim_set_host_present_rect)(int, int, int, int) = NULL;
 
 /* Cached Mesa function pointers — set once by gl_interpose_init().
  * Non-static: cgl_shim.mm needs to call Mesa directly via these pointers
@@ -180,6 +183,10 @@ static void gl_interpose_init(void)
         return;
     }
 #define GL_DLSYM(name) p_##name = (void *)dlsym(g_mesa, #name)
+    p_cgl_shim_host_present_enabled =
+        (int (*)(void))dlsym(g_mesa, "cgl_shim_host_present_enabled");
+    p_cgl_shim_set_host_present_rect =
+        (void (*)(int, int, int, int))dlsym(g_mesa, "cgl_shim_set_host_present_rect");
     GL_DLSYM(glBegin);
     GL_DLSYM(glClear);
     GL_DLSYM(glClearColor);

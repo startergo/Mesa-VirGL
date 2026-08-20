@@ -146,10 +146,19 @@ shim_osmesa_make_current(struct shim_ctx *sc)
  * framework re-exports that library). The drawRect path (main thread,
  * AppKit-safe) calls the setter; flushBuffer gates readback on the
  * mode. --- */
-extern "C" int  cgl_shim_host_present_enabled(void);
-extern "C" void cgl_shim_set_host_present_rect(int x, int y, int w, int h);
+/* Defined in libOSMesa's winsys; resolved via the same dlopen/dlsym
+ * path as every other Mesa symbol (the substitute does not link
+ * libOSMesa at build time). */
+extern "C" void *g_mesa;
+extern int  (*p_cgl_shim_host_present_enabled)(void);
+extern void (*p_cgl_shim_set_host_present_rect)(int, int, int, int);
 static inline int host_present_mode(void) {
-    return cgl_shim_host_present_enabled();
+    if (!p_cgl_shim_host_present_enabled) return 0;
+    return p_cgl_shim_host_present_enabled();
+}
+static inline void set_host_rect(int x, int y, int w, int h) {
+    if (p_cgl_shim_set_host_present_rect)
+        p_cgl_shim_set_host_present_rect(x, y, w, h);
 }
 
 /* --- Associated-object key for per-NSOpenGLContext shim state --- */
@@ -1226,9 +1235,7 @@ static void shim_blit_present_buf(id view)
             int hx = (int)sx;
             /* top-left desktop Y: screen height − bottom − view height */
             int hy = (int)(screenH - syBl - vr.size.height);
-            cgl_shim_set_host_present_rect(hx, hy,
-                                           (int)vr.size.width,
-                                           (int)vr.size.height);
+            set_host_rect(hx, hy, (int)vr.size.width, (int)vr.size.height);
             static int s_rect_log = 0;
             if (s_rect_log < 5) {
                 s_rect_log++;
