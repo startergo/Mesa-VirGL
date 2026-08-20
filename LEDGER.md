@@ -46,6 +46,25 @@ Last updated: 2026-08-19 night (FENCE ERA LANDED AND VERIFIED (kext bf8d36a + wi
   recorded design queue applies: fewer full-frame readbacks per
   composite (present path), async flush semantics — measure per-flush
   wall first (shim timing stats) on the next session.
+**SCREENSHOT DATUM + THE PER-FLUSH NUMBER (09:50–09:57):**
+- **A one-glClear page (no shaders at all) reports cleared + getError
+  0x0 and the canvas is STILL WHITE** — the page-shader family is
+  REMOVED as a necessary ingredient of the empty-canvas problem. The
+  frontier reframes to: the delivery path between a correct GL result
+  and the canvas. Title-bar cautions (non-findings): webgl2:FAILED is
+  expected (GL 2.1/GLSL 1.20 cannot back WebGL2's ES-3.0-class
+  context); renderer:"Mozilla" is Gecko's sanitised string — says
+  nothing about virgl vs software.
+- **Per-flush wall measured (v4 run, rolling stats): mean 130–138 ms,
+  min 18, max 342 — split submit 44–68 ms + transfer 61–76 ms; lock
+  0.1 ms.** Against the ~16 ms the event loop needs: even the best
+  flush exceeds it; the synchronous wait per display cycle is UI death
+  (input dead, "connecting" forever), not slowness. The 5.5 MB/frame ×
+  22 fps ≈ 120 MB/s guest-side copy sits IN FRONT of the event loop.
+  **Host-side blit is thereby promoted from performance idea to THE
+  fix for the stall**; the submit half (44–68 ms vs the fence era's
+  0–3 ms batches) is per-flush fence round trips under TCG — the
+  second fix target.
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
