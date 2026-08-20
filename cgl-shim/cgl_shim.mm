@@ -128,12 +128,28 @@ shim_osmesa_make_current(struct shim_ctx *sc)
         sc->owned = 1;
         sc->owner_th = pthread_self();
         pthread_setspecific(g_cur_sc_key, sc);
-        shim_osmesa_make_current(sc);
+        /* The ONLY raw OSMesaMakeCurrent — a bulk-regex once routed this
+         * through the helper itself: self-recursion, self-deadlock on the
+         * non-recursive mutex (the dock-stuck run, two stacked helper
+         * frames in the sample). */
+        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
+                          sc->width, sc->height);
     } else {
         pthread_setspecific(g_cur_sc_key, NULL);
-        shim_osmesa_make_current(NULL);
+        OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
     }
     pthread_mutex_unlock(&g_gl_handoff);
+}
+
+/* --- HOST-SIDE BLIT support (2026-08-19): the window's desktop rect
+ * and mode live in libOSMesa's winsys (one-way dependency — this
+ * framework re-exports that library). The drawRect path (main thread,
+ * AppKit-safe) calls the setter; flushBuffer gates readback on the
+ * mode. --- */
+extern "C" int  cgl_shim_host_present_enabled(void);
+extern "C" void cgl_shim_set_host_present_rect(int x, int y, int w, int h);
+static inline int host_present_mode(void) {
+    return cgl_shim_host_present_enabled();
 }
 
 /* --- Associated-object key for per-NSOpenGLContext shim state --- */
@@ -873,7 +889,8 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     static int s_stamp_log = 0;
     uint32_t stamp_val = 0;
     uint32_t post[4] = {0, 0, 0, 0};
-    int stamp_ok = (sc->render_buf && sc->width >= 16 && sc->height >= 16);
+    int stamp_ok = (!host_present_mode() && sc->render_buf &&
+                    sc->width >= 16 && sc->height >= 16);
     if (stamp_ok) {
         s_stamp_frame++;
         stamp_val = 0xCAFE0000u | ((uint32_t)s_stamp_frame & 0xFFFFu);
@@ -893,7 +910,13 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * host; the guest-side OSMesa buffer only gets the pixels when a
      * TRANSFER_FROM_HOST_3D fires. softpipe renders directly into the
      * guest buffer and doesn't need this. Without it, present_buf stays
-     * zero-filled and the window shows white. */
+     * zero-filled and the window shows white.
+     * HOST-PRESENT MODE: the front buffer goes to the display via the
+     * GPU-side blit (winsys flush_frontbuffer → kext 0x600C) — skip the
+     * readback entirely (the measured 61-76 ms per-flush transfer half
+     * IS this copy). The STAMP probe measures readback survival and is
+     * meaningless without it; skipped with it. */
+    if (!host_present_mode())
     p_glReadPixels(0, 0, sc->width, sc->height, GL_RGBA, GL_UNSIGNED_BYTE,
                    sc->render_buf);
 
@@ -1183,6 +1206,39 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 
 static void shim_blit_present_buf(id view)
 {
+    /* HOST-SIDE BLIT rect stash: this runs on the MAIN thread inside
+     * the AppKit display cycle — the only AppKit-geometry-safe point.
+     * Convert the view's frame to desktop coordinates (origin
+     * top-left, matching the scanout resource) and publish for the
+     * winsys flush_frontbuffer. In host-present mode the CG blit is
+     * skipped entirely — the GPU-side blit delivers the content. */
+    if (host_present_mode()) {
+        NSView *v = (NSView *)view;
+        NSWindow *win = [v window];
+        if (win) {
+            NSRect vr = [v frame];
+            NSRect wr = [win frame];
+            /* view origin (bottom-left, window coords) → screen:
+             * window frame origin + view offset. */
+            CGFloat sx = wr.origin.x + vr.origin.x;
+            CGFloat syBl = wr.origin.y + vr.origin.y;
+            CGFloat screenH = [[NSScreen mainScreen] frame].size.height;
+            int hx = (int)sx;
+            /* top-left desktop Y: screen height − bottom − view height */
+            int hy = (int)(screenH - syBl - vr.size.height);
+            cgl_shim_set_host_present_rect(hx, hy,
+                                           (int)vr.size.width,
+                                           (int)vr.size.height);
+            static int s_rect_log = 0;
+            if (s_rect_log < 5) {
+                s_rect_log++;
+                fprintf(stderr, "cgl_shim: HOST-BLIT rect %.0fx%.0f at (%d,%d)\n",
+                        vr.size.width, vr.size.height, hx, hy);
+            }
+        }
+        return;   /* no CG blit — content arrives via the GPU blit */
+    }
+
     /* SHIM_DROP_BLIT (Mesa-VirGL LEDGER, dump-verdict follow-up):
      * the 2026-08-16 dump showed Gecko's composite CLEAN while the
      * screen duplicates — the blit is the suspect. Early-return

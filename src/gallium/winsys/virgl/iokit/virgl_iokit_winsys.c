@@ -611,9 +611,63 @@ static struct pipe_fence_handle *virgl_iokit_cs_create_fence(struct virgl_winsys
 static bool virgl_iokit_fence_wait(struct virgl_winsys *vws, struct pipe_fence_handle *f, uint64_t timeout) { return true; }
 static void virgl_iokit_fence_reference(struct virgl_winsys *vws, struct pipe_fence_handle **dst, struct pipe_fence_handle *src) { *dst = src; }
 static int  virgl_iokit_fence_get_fd(struct virgl_winsys *vws, struct pipe_fence_handle *f) { return -1; }
+/* HOST-SIDE BLIT (2026-08-19, the recorded design): the front buffer
+ * is presented by a GPU-side VIRGL_CCMD_BLIT into the desktop scanout
+ * resource at the window's rect (kext 0x600C) — no 5.5 MB guest
+ * readback (measured per-flush wall 130 ms mean; the transfer half IS
+ * the readback). The shim stashes the window's desktop rect from the
+ * AppKit-safe main thread (drawRect) and exposes it via
+ * cgl_shim_host_present_rect(); without a valid rect (host-present
+ * mode off, or before the first drawRect) this is a no-op and the
+ * legacy readback path stands. CONTRACT: fence-wait the resource
+ * first — prior 3D work must be complete host-side before the blit
+ * reads it. */
+/* Rect state lives HERE (libOSMesa) — the substitute re-exports this
+ * library, so the shim calls the setter; dependency direction stays
+ * one-way. Written from the AppKit-safe main thread, read here. */
+int cgl_shim_host_present_enabled(void);
+static int g_hp_x, g_hp_y, g_hp_w, g_hp_h;
+static volatile int g_hp_valid;
+static int g_hp_mode = -1;
+
+int cgl_shim_host_present_enabled(void)
+{
+   if (g_hp_mode < 0)
+      g_hp_mode = (getenv("SHIM_HOST_PRESENT") != NULL);
+   return g_hp_mode;
+}
+
+int cgl_shim_host_present_rect(int *x, int *y, int *w, int *h)
+{
+   if (!cgl_shim_host_present_enabled() || !g_hp_valid)
+      return 0;
+   *x = g_hp_x; *y = g_hp_y; *w = g_hp_w; *h = g_hp_h;
+   return 1;
+}
+
+void cgl_shim_set_host_present_rect(int x, int y, int w, int h)
+{
+   g_hp_x = x; g_hp_y = y; g_hp_w = w; g_hp_h = h;
+   g_hp_valid = 1;
+}
+
 static void virgl_iokit_flush_frontbuffer(struct virgl_winsys *vws, struct virgl_cmd_buf *cbuf,
                                           struct virgl_hw_res *res, unsigned level, unsigned layer,
-                                          void *winsys_drawable_handle, struct pipe_box *sub_box) { }
+                                          void *winsys_drawable_handle, struct pipe_box *sub_box)
+{
+   struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
+   int x, y, w, h;
+   if (!res || level != 0 || layer != 0)
+      return;
+   if (!cgl_shim_host_present_rect(&x, &y, &w, &h))
+      return;
+   virgl_iokit_res_wait(iws, res->res_handle);   /* prior 3D complete host-side */
+   uint64_t in[5] = { res->res_handle, (uint64_t)x, (uint64_t)y,
+                      (uint64_t)w, (uint64_t)h };
+   IOConnectCallMethod(iws->connect, 0x600C /* hostBlit3D */,
+                       in, 5, NULL, 0,
+                       NULL, NULL, NULL, NULL);
+}
 
 /* ===================================================================
  * destroy

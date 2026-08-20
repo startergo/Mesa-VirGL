@@ -383,6 +383,25 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
       pp_run(osmesa->pp, res, res, zsbuf);
    }
 
+   /* HOST-SIDE BLIT (2026-08-19): in host-present mode the front
+    * buffer is presented by the GPU-side blit (pipe screen
+    * flush_frontbuffer → virgl winsys → kext 0x600C) — the guest
+    * snapshot (the measured 61-76 ms per-flush transfer half) is
+    * skipped. Env-gated alongside the shim's SHIM_HOST_PRESENT. */
+   {
+      static int s_host_present = -1;
+      if (s_host_present < 0)
+         s_host_present = (getenv("SHIM_HOST_PRESENT") != NULL);
+      if (s_host_present) {
+         struct pipe_context *pipe = osmesa->st->pipe;
+         if (pipe && pipe->screen &&
+             pipe->screen->flush_frontbuffer)
+            pipe->screen->flush_frontbuffer(pipe->screen, pipe, res,
+                                            0, 0, NULL, 0, NULL);
+         return true;
+      }
+   }
+
    /* Snapshot the color buffer to the user's buffer. */
    bpp = util_format_get_blocksize(osbuffer->visual.color_format);
    if (osmesa->user_row_length)
