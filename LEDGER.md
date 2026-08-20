@@ -201,21 +201,29 @@ TIME; the confound lesson landed exactly as the operator framed it:**
   unlinked by 18:37:32 while its writer lived — something cleans
   /tmp/pf_*.log on the guest (possibly the parallel session). Flagged.
 
-**SESSION CLOSE, FINAL DATUM (19:05–19:10):** operator navigated —
-**every new page is white all over** (chrome composites; page content
-never does). Main-thread sample at 16 min: ~95% in
-SendFlushRendering's wait, ZERO parser/layout/docshell frames; log
-carries no page-load traces. The frontier is now exactly ONE question:
-**why page-content layers never paint while chrome layers do** — and
-the census is nearly clean on this path (no GL errors), so the failure
-sits BEFORE GL: the content side never submits (layout/paint never
-schedules — the flush-wait ownership of the main thread is the prime
-suspect, the day's original starvation reading returning at the
-page-content level). Browser LEFT RUNNING on baseline2 for the
-operator. Next session: URL-bar/title-channel interaction test,
-main-thread starvation measurement (layout.frame_rate throttle
-revisited WITH the working config), and the content-paint scheduling
-question.
+**FRAME-RATE STARVATION TEST (19:16) — INCONCLUSIVE, but surfaced the
+day's sharpest crash (full symbols, our code):**
+- Run died at 31 s (crash `powerfox_2026-08-19-191644`):
+```
+Compositor SIGSEGV:
+0  libOSMesa virgl_transfer_queue_clear + 242
+1  libOSMesa virgl_flush_eq + 105
+2  libOSMesa st_glFlush + 46
+3  libOSMesa _mesa_make_current + 252
+```
+- Code read: the transfer queue is PER-CONTEXT (`ctx->queue`,
+  virgl_context.c:1084) with **NO LOCKING anywhere in its API**
+  (virgl_transfer_queue.c — clear/unmap/add_internal all bare). Under
+  the pre-TSD globals-stomp, cross-thread touches of one context's
+  queue were accidentally serialized; TSD removed the accident and the
+  race now crashes during a cross-thread MakeCurrent's implicit flush
+  (st_glFlush of the thread's previous context). **TSD-EXPOSED hole
+  in the virgl driver — not a TSD-port defect.**
+- **NEXT (before re-running the starvation test):** enumerate which
+  transfer-queue operations can execute off the owning thread
+  (make_current flush path is proven one); add locking with that map —
+  not a bolt-on mutex. THEN re-run layout.frame_rate=5 on baseline2
+  (the test itself never reached measurement).
 - **Free checks first (banked):** sharelist conclusively dormant —
   n=6 context creations in the TSD-era run, ALL share=0x0 (Gecko never
   passes a share context on this build; observation over source read).
