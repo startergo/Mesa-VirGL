@@ -65,6 +65,42 @@ Last updated: 2026-08-19 night (FENCE ERA LANDED AND VERIFIED (kext bf8d36a + wi
   fix for the stall**; the submit half (44–68 ms vs the fence era's
   0–3 ms batches) is per-flush fence round trips under TCG — the
   second fix target.
+**HOST-SIDE BLIT IMPLEMENTED (late session; network died before the
+deploy-and-boot — artifacts built, undeployed):**
+- Kext `9c907d8` (binary 31a042b2): 0x600C selector → `hostBlit3D` —
+  kext-owned display-blit ctx (lazy; BOTH resources CTX_ATTACHed),
+  VIRGL_CCMD_BLIT (cmd 16, len 21; header 0x00150010) with **src-Y
+  INVERTED** for the GL→scanout flip, dst format B8G8R8A8_UNORM, src
+  fmt/dims from the geometry table (new userResourceFmt accessor),
+  RESOURCE_FLUSH after. **Overwrite rule:** transferToHost2D calls
+  hostBlitReissueIfIntersecting — any guest transfer intersecting the
+  stored window rect re-issues the blit (guest memory never holds the
+  window's pixels; ~17 ms refresh cadence would erase it otherwise).
+- Mesa `959f1d86038` + `9265b1acd54`: winsys flush_frontbuffer
+  IMPLEMENTED (was an empty stub — the vtable hole): fence-waits the
+  resource (contract: prior 3D complete host-side before the blit
+  reads) then calls 0x600C with the window rect. OSMesa's front
+  snapshot AND the shim's forced glReadPixels both gated off under
+  SHIM_HOST_PRESENT (the 61-76 ms transfer half of the 130 ms
+  per-flush wall). Rect state lives in the WINSYS (one-way dep — the
+  substitute dlsym-resolves the entry points, not link-time); the
+  shim's drawRect (AppKit-safe main thread) computes view→desktop
+  coords (top-left, screen height − bottom − height) and calls the
+  setter; in host-present mode drawRect skips the CG blit.
+- Artifacts BUILT: kext 31a042b2 (in build/Release), dylib ff1c5258,
+  substitute (96K, dlsym build). **UNDEPLOYED — the guest went
+  unreachable mid-scp (mDNS dead AND sl-ip timeout; the recorded
+  reachability≠state class; NOT a guest-crash conclusion until
+  checked at the display).**
+- Pre-registered for the boot: (a) window content appears IN PLACE on
+  the desktop (desktop intact around it) → delivery path confirmed as
+  the empty-canvas carrier AND the transfer split collapses (~0);
+  (b) nothing appears → the host resource's content is wrong → the
+  carrier is upstream of delivery (what the compositor renders into
+  the front resource); (c) fullscreen-browser artifacts → the
+  rect/coords math is wrong (check HOST-BLIT rect log lines).
+  Watch: hostBlit attach/submit FAILs, and the re-blit's cost at tick
+  rate (heartbeat logs).
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
