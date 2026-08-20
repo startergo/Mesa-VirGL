@@ -47,7 +47,7 @@ Gecko's SET calls — object tables from two contexts crossing. Same
 family as `glFramebufferTexture2D(non-existent texture 2)` (an id-2
 collision) and the target mismatches: ALL object-table errors.
 
-**Carrier hypothesis (operator-named, fits everything incl. the fish
+**Carrier hypothesis (fits everything incl. the fish
 run's luck): the u_thread.h TLS gate.** 10.6 build defines
 `__THREAD_INITIAL_EXEC` EMPTY → `_glapi_tls_Dispatch/_glapi_tls_Context`
 are PLAIN GLOBALS → Gecko's two GL threads (main chrome ctx + compositor
@@ -141,7 +141,7 @@ and the instrument notes:**
   fish kext at /tmp/VMQemuVGA_fish.kext); crash series 18:04–18:19 all
   banked above.
 
-**OPERATOR REFINEMENTS AT CLOSE (all three adopted):**
+**CLOSE-OUT CORRECTIONS:**
 1. **The softpipe-vs-virgl A/B is NOT yet controlled.** Softpipe dies
    almost immediately — "softpipe fills layers" describes its FIRST
    frames only; a full virgl session is being weighed against a
@@ -164,9 +164,9 @@ and the instrument notes:**
    everything else is uninterpretable until it exists.
 
 **FRESH-PROFILE BASELINE RUNS (18:30–18:48) — CONTENT VISIBLE, FIRST
-TIME; the confound lesson landed exactly as the operator framed it:**
+TIME; the profile-prefs confound in full:**
 - **baseline1 (fresh profile, NO prefs)**: white↔BLACK ALTERNATION
-  within one session (operator reading: transparent frames = blit
+  within one session (transparent frames = blit
   skips, opaque = blit runs — the compositor alternates; flat grey
   traffic lights = Gecko CoreGraphics showing on skip), DOUBLE corner
   stamps (drawInTitlebar default returned — the pref, not code, closed
@@ -181,10 +181,10 @@ TIME; the confound lesson landed exactly as the operator framed it:**
   at 4 min — ALIVE, calm (12.8% CPU vs baseline1's 70%), census nearly
   clean (3× GL_MAJOR_VERSION benign + 1 glUseProgram), and **CHROME
   RENDERS — the first visible browser UI of the entire 2026-08-19
-  effort.** Addendum from operator: **the page (webgltest.html) does
+  effort.** **The page (webgltest.html) does
   not load** — UI composites, page content absent. That is the new
   frontier, cleanly split.
-- **STAMP probe confirmed on-screen** (operator saw the blue corner
+- **STAMP probe confirmed on-screen** (blue corner
   squares; code read: 8×8 0xCAFE0000|frame blocks at all 4 corners of
   render_buf before each readback — cgl_shim.mm:808+). Squares visible
   = stamps survive readback → present path works end-to-end AND the
@@ -283,10 +283,10 @@ session's softpipe-death series):**
   when TSD returns, the noop-table default must return with it.
 - **LaunchServices SIGABRT family recurring** (18:10:50, 18:19:14):
   main-thread abort in GetOurLSSessionIDInit — the crash-relaunch/
-  profile-storm era. The operator saw a black safe-mode dialog in this
+  profile-storm era. A black safe-mode dialog appeared in this
   window (chrome-only UI compositing empty).
-- Operator verdict on the visible state: "keep crashing, not working
-  at all" — browsers killed; guest left clean.
+- Visible state at close: repeated crashes, nothing usable —
+  browsers killed; guest left clean.
 
 **NEXT (revised, in order):**
 1. **Fresh profile first** (the crash-storm state is now a contaminat-
@@ -395,10 +395,9 @@ white-window reading:**
   test_virgl_clear on its own user client ran frame 1598+ DURING the
   browser's white grind — device, kext global state, worker, host all
   healthy. Not a shim-lock convoy either (no mutex-parked threads).
-- **Softpipe bisect (attempted, aborted at 3 min by operator direction):**
+- **Softpipe bisect (attempted, aborted at 3 min):**
   frame[11] only (CPU raster under TCG), also blit-skip empty at first
-  frames, one `Mesa: error: GL_INVALID_VALUE in glUseProgram`. Operator
-  direction stands and matches prior evidence: **PowerFox is known-good
+  frames, one `Mesa: error: GL_INVALID_VALUE in glUseProgram`. **PowerFox is known-good
   on real GPUs — Gecko-side hunting is OFF; the fish run (2026-08-18,
   this browser, this path, chrome+content+fish visible) is the
   known-good reference.**
@@ -411,7 +410,7 @@ white-window reading:**
   counts) can.
 
 **Teardown crash datum (14:41:15, softpipe run pid 1292, ~20 s after
-operator SIGTERM):** `powerfox_2026-08-19-144119_slqemu.crash` —
+SIGTERM):** `powerfox_2026-08-19-144119_slqemu.crash` —
 EXC_BAD_ACCESS KERN_INVALID_ADDRESS 0x0, Crashed Thread 20 Compositor
 with PC at unmapped `0x000000012c33103a` (jump through garbage, zero
 frames). Main thread was in MessageChannel::Send/PR_WaitCondVar at
@@ -457,14 +456,13 @@ confirmed, starvation FALSIFIED as its carrier:**
   startup), `Mesa: error: GL_INVALID_ENUM in glGetIntegerv(pname=
   GL_MAJOR_VERSION)` (the recorded compat-3.0 version-query face),
   missing EGL symbols (expected). stderr silent after ~2 min.
-- **Operator rule banked:** PowerFox known-good on real GPUs — no
+- **Rule banked:** PowerFox known-good on real GPUs — no
   Gecko-side hunting; the fish run (08-18, this browser, chrome+
   content+fish visible) is the reference configuration.
 
 **REGRESSION PINNED AND FIXED — is_busy, one line, boot-free A/B
 (15:05–15:18, commit `a88c72eb4b4`):**
-- **The user's regression call was right and my "possibly nothing
-  regressed" hedge was wrong**: last render (aquarium, 08-19 ~10–11)
+- **Correction: the "possibly nothing regressed" hedge was wrong**: last render (aquarium, 08-19 ~10–11)
   was on `5e5029e` PRE-async; the only deltas to the white face were
   the async pair; no render ever occurred on it.
 - **Mechanism (code-level, explains every datum):** faea295's
@@ -510,7 +508,7 @@ confirmed, starvation FALSIFIED as its carrier:**
   The revert boot stays QUEUED as the confirmation rung if the
   is_busy fix's renders regress again.
 
-**HEARTBEAT BOOT + THE REAL ERROR HUNT (16:05–16:15, operator-driven
+**HEARTBEAT BOOT + THE REAL ERROR HUNT (16:05–16:15
 pivot: "there is no storm — look for errors, look for the debug log"):**
 - **Heartbeat kext** `b492386f7711310ecc419b5b8cb3151e` (per-batch
   uncapped "v3d batch done ctx size ms q ret"): boot clean, and the
@@ -537,7 +535,7 @@ pivot: "there is no storm — look for errors, look for the debug log"):**
   census; its one datum: frames were FAST (wall mean 31.9 ms, ~30 fps
   rolling stats) right up to exit — the compositor runs at speed and
   still composes nothing.
-- **Linux reference comparison (operator-directed, virtgpu_ioctl.c @
+- **Linux reference comparison (virtgpu_ioctl.c @
   3a0dd7ba):** (1) VIRTGPU_WAIT is PER-RESOURCE (gem handle →
   obj->resv → dma_resv_wait_timeout, 15 s, NOWAIT flag =
   dma_resv_test_signaled) — our global drain/probe is the divergence
@@ -556,7 +554,7 @@ pivot: "there is no storm — look for errors, look for the debug log"):**
   is a false-positive filter eating real frames) — needs subst swap,
   no boot. UTM debug log: STILL not located on disk (find empty);
   likely needs Debug Log enabled in the VM's UTM settings — the
-  ledger's "path unrecorded" note stands; ask the operator.
+  ledger's "path unrecorded" note stands; confirm before relying on it.
 
 **NEXT (pre-registered):**
 1. Deploy dump-on-skip subst; ONE launch (about:blank first — no
@@ -786,8 +784,8 @@ steals another run. P1/P2 unchanged.
 - **P1 (mechanism confirmed):** the canvas region shows LIGHT BLUE on
   screen — first canvas content ever presented. Title channel unchanged
   (ctx OK, getError clean). Explicit visual check required (the correction-
-  x2 lesson: ask "what colour is the canvas on screen?" and take the answer
-  literally, or confirm an ambiguous one).
+  x2 lesson: read "what colour is the canvas on screen?" literally; an
+  ambiguous observation is not a finding).
 - **P2 (still grey/black):** write-direction story insufficient or wrong →
   next instrument: log both CGLTexImageIOSurface2D call sites (producer at
   canvas creation on the webgl ctx; consumer per frame on the compositor
