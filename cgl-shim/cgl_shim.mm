@@ -77,6 +77,65 @@ static inline void set_current_ctx(NSOpenGLContext *ctx) {
     pthread_setspecific(tls_key_current, ctx);
 }
 
+/* ===================================================================
+ * CGL-EMULATION HANDOFF SERIALIZATION (2026-08-19) — the WindowServer
+ * atomicity Gecko is entitled to. Real CGL contexts are server-side;
+ * switching contexts is atomic w.r.t. every other thread. Our
+ * in-process Mesa has _mesa_make_current performing the OUTGOING
+ * context's implicit flush (st_glFlush → virgl_flush_eq → transfer
+ * queue) before installing the new one — a window in which another
+ * thread's MakeCurrent/draws on the same context race the flush. That
+ * window is the startup program-not-linked family and the 19:16
+ * transfer-queue crash (crash powerfox_2026-08-19-191644).
+ *
+ * LOCK ORDERING INVARIANT: flushBuffer's sc->lock → handoff →
+ * (Mesa-internal queue lock). flushBuffer legitimately re-binds via
+ * this helper while holding sc->lock; the handoff critical section
+ * calls ONLY OSMesaMakeCurrent (pure Mesa — it cannot reach back into
+ * any shim_ctx lock), so the order is never inverted.
+ *
+ * OWNING-THREAD TRACKING: per-thread current shim_ctx via pthread key
+ * (10.6 has no usable __thread for this target). A MakeCurrent on a
+ * context still owned by a DIFFERENT thread logs HANDOFF-VIOLATION —
+ * concurrent same-context use, which real CGL tolerated server-side
+ * and we do not. Zero violations across validation ⇒ switch-only
+ * serialization is sufficient; violations ⇒ escalate to skip-flush.
+ * =================================================================== */
+static pthread_mutex_t g_gl_handoff = PTHREAD_MUTEX_INITIALIZER;
+static pthread_key_t g_cur_sc_key;
+static pthread_once_t g_cur_sc_once = PTHREAD_ONCE_INIT;
+static void g_cur_sc_init(void) { pthread_key_create(&g_cur_sc_key, NULL); }
+
+extern "C" void
+shim_osmesa_make_current(struct shim_ctx *sc)
+{
+    pthread_once(&g_cur_sc_once, g_cur_sc_init);
+    pthread_mutex_lock(&g_gl_handoff);
+    struct shim_ctx *prev = (struct shim_ctx *)pthread_getspecific(g_cur_sc_key);
+    if (prev && prev != sc) {
+        prev->owned = 0;               /* this thread releases its old context */
+    }
+    if (sc) {
+        if (sc->owned && !pthread_equal(sc->owner_th, pthread_self())) {
+            static int s_viol = 0;
+            if (s_viol < 10) {
+                s_viol++;
+                fprintf(stderr, "cgl_shim: HANDOFF-VIOLATION[%d]: context %p "
+                        "still owned by another thread at MakeCurrent — "
+                        "concurrent same-context use\n", s_viol, (void*)sc);
+            }
+        }
+        sc->owned = 1;
+        sc->owner_th = pthread_self();
+        pthread_setspecific(g_cur_sc_key, sc);
+        shim_osmesa_make_current(sc);
+    } else {
+        pthread_setspecific(g_cur_sc_key, NULL);
+        shim_osmesa_make_current(NULL);
+    }
+    pthread_mutex_unlock(&g_gl_handoff);
+}
+
 /* --- Associated-object key for per-NSOpenGLContext shim state --- */
 static char kShimCtxKey;  /* address used as unique key, not the value */
 #define SHIM_CTX_ASSOC_KEY (&kShimCtxKey)
@@ -412,8 +471,7 @@ extern "C" void cgl_shim_present_from_cgl(void *scv)
     if (sc->osmesa_ctx && sc->render_buf) {
         /* Render with the (pre-swap) render buffer current, so the
          * readback captures this frame's output. */
-        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
-                          sc->width, sc->height);
+        shim_osmesa_make_current(sc);
         substitute_cgl_tls_set((CGLContextObj)sc);
     }
     if (p_glFinish) p_glFinish();
@@ -425,8 +483,7 @@ extern "C" void cgl_shim_present_from_cgl(void *scv)
     sc->render_buf = sc->present_buf;
     sc->present_buf = tmp;
     if (sc->osmesa_ctx && sc->render_buf)
-        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
-                          sc->width, sc->height);
+        shim_osmesa_make_current(sc);
 
     NSView *view = (NSView *)sc->view;
     NSData *bufData = [NSData dataWithBytesNoCopy:sc->present_buf
@@ -598,7 +655,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     }
 
     alloc_buffers(sc, 1, 1);
-    OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE, 1, 1);
+    shim_osmesa_make_current(sc);
     substitute_cgl_tls_set((CGLContextObj)sc);
     /* Dispatch probe right after OSMesaMakeCurrent: did it install a real
      * dispatch table, or is _glapi_tls_Dispatch still the no-op table? */
@@ -634,7 +691,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 + (void)shim_clearCurrentContext
 {
     set_current_ctx(nil);
-    OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
+    shim_osmesa_make_current(NULL);
     substitute_cgl_tls_set(NULL);
 }
 
@@ -643,8 +700,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     struct shim_ctx *sc = get_shim_ctx(self);
     if (sc && sc->osmesa_ctx && sc->render_buf) {
         set_current_ctx(self);
-        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
-                          sc->width, sc->height);
+        shim_osmesa_make_current(sc);
         substitute_cgl_tls_set((CGLContextObj)sc);
     } else {
         /* Fall through to original for non-shim contexts. */
@@ -657,7 +713,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     struct shim_ctx *sc = get_shim_ctx(self);
     if (sc) {
         set_current_ctx(nil);
-        OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
+        shim_osmesa_make_current(NULL);
         substitute_cgl_tls_set(NULL);
     } else {
         [self shim_clearDrawable];
@@ -715,8 +771,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         if (pthread_mutex_trylock(&sc->lock) == 0) {
             free_buffers(sc);
             alloc_buffers(sc, vp_rs[2], vp_rs[3]);
-            OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                              GL_UNSIGNED_BYTE, vp_rs[2], vp_rs[3]);
+            shim_osmesa_make_current(sc);
             substitute_cgl_tls_set((CGLContextObj)sc);
             pthread_mutex_unlock(&sc->lock);
         } else {
@@ -979,14 +1034,13 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * THE correctness-critical step: without this, subsequent rendering
      * writes into the buffer the main thread is reading. */
     {
-        GLboolean mc_ret = OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                                              GL_UNSIGNED_BYTE, sc->width, sc->height);
+        shim_osmesa_make_current(sc);
         substitute_cgl_tls_set((CGLContextObj)sc);
         static int s_swap_mc_log = 0;
         if (s_swap_mc_log < 5) {
             s_swap_mc_log++;
-            fprintf(stderr, "cgl_shim: swap_mc[%d] ret=%d buf=%p %dx%d\n",
-                    s_swap_mc_log, (int)mc_ret, (void*)sc->render_buf,
+            fprintf(stderr, "cgl_shim: swap_mc[%d] buf=%p %dx%d\n",
+                    s_swap_mc_log, (void*)sc->render_buf,
                     sc->width, sc->height);
         }
     }
@@ -1589,9 +1643,7 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
                 free_buffers(sc0);
                 alloc_buffers(sc0, (int)b.size.width, (int)b.size.height);
                 if (sc0->osmesa_ctx && sc0->render_buf)
-                    OSMesaMakeCurrent(sc0->osmesa_ctx, sc0->render_buf,
-                                      GL_UNSIGNED_BYTE, sc0->width,
-                                      sc0->height);
+                    shim_osmesa_make_current(sc0);
                 pthread_mutex_unlock(&sc0->lock);
                 fprintf(stderr, "cgl_shim: DRAWRECT_PRESENT resized to "
                         "%dx%d\n", sc0->width, sc0->height);
@@ -1608,9 +1660,7 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
                 (struct shim_ctx *)[scv pointerValue];
             if (sc && sc->present_buf) {
                 if (sc->osmesa_ctx && sc->render_buf) {
-                    OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                                      GL_UNSIGNED_BYTE, sc->width,
-                                      sc->height);
+                    shim_osmesa_make_current(sc);
                     substitute_cgl_tls_set((CGLContextObj)sc);
                 }
                 if (p_glFinish) p_glFinish();
@@ -1623,9 +1673,7 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
                 sc->render_buf = sc->present_buf;
                 sc->present_buf = tmp;
                 if (sc->osmesa_ctx && sc->render_buf)
-                    OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf,
-                                      GL_UNSIGNED_BYTE, sc->width,
-                                      sc->height);
+                    shim_osmesa_make_current(sc);
                 /* store for the blit below (same as shim_present) */
                 NSData *bufData =
                     [NSData dataWithBytesNoCopy:sc->present_buf

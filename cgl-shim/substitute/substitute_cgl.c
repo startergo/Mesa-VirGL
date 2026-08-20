@@ -79,6 +79,11 @@ static void *g_real_gl = NULL;
  * OSMesa-derivation.
  * ----------------------------------------------------------------------- */
 static pthread_key_t g_tls_cgl;
+/* CGL-emulation handoff serialization (2026-08-19): defined in
+ * cgl_shim.mm — one global mutex making context switches atomic, with
+ * owner tracking for HANDOFF-VIOLATION detection. */
+extern void shim_osmesa_make_current(struct shim_ctx *sc);
+
 static int g_tls_cgl_ok = 0;
 
 void substitute_cgl_tls_set(CGLContextObj ctx)
@@ -643,7 +648,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
     sc->last_view_w = -1;
     sc->last_view_h = -1;
 
-    OSMesaMakeCurrent(osmesa, sc->render_buf, GL_UNSIGNED_BYTE, 1, 1);
+    shim_osmesa_make_current(sc);   /* creation bind — uniform path */
 
     shim_register(sc);
 
@@ -724,7 +729,7 @@ CGLError
 CGLSetCurrentContext(CGLContextObj ctx)
 {
     if (!ctx) {
-        OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
+        shim_osmesa_make_current(NULL);
         substitute_cgl_tls_set(NULL);
         /* Clear the real side too, so neither kind lingers. */
         static CGLError (*real)(CGLContextObj);
@@ -735,8 +740,7 @@ CGLSetCurrentContext(CGLContextObj ctx)
 
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
-        OSMesaMakeCurrent(sc->osmesa_ctx, sc->render_buf, GL_UNSIGNED_BYTE,
-                          sc->width, sc->height);
+        shim_osmesa_make_current(sc);
         substitute_cgl_tls_set(ctx);
         return kCGLNoError;
     }

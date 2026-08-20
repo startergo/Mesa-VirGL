@@ -52,6 +52,19 @@ struct shim_ctx {
      * to callers as CGLLockContext's backing mutex. */
     pthread_mutex_t lock;
 
+    /* CGL-emulation handoff ownership (2026-08-19): real CGL contexts
+     * live server-side and context switches are atomic w.r.t. other
+     * threads; Gecko relies on that. The substitute's in-process Mesa
+     * must provide the same: shim_osmesa_make_current() takes the
+     * global handoff mutex around the WHOLE switch (outgoing context's
+     * implicit flush included — it lives inside _mesa_make_current).
+     * These fields track the owner for violation detection: a
+     * MakeCurrent arriving while another thread still owns the context
+     * means concurrent same-context use (which real CGL tolerated and
+     * we do not) — logged, never fatal. */
+    pthread_t owner_th;
+    int owned;
+
     /* Public CGL lock (CGLLockContext/CGLUnlockContext). MUST be a
      * separate mutex from `lock`: Gecko calls CGLLockContext around
      * -flushBuffer on the SAME thread (nsChildView::DoRemoteComposition,
