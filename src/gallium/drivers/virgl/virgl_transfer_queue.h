@@ -26,7 +26,6 @@
 
 #include "pipe/p_defines.h"
 #include "util/list.h"
-#include "util/simple_mtx.h"
 
 struct virgl_cmd_buf;
 struct virgl_screen;
@@ -39,19 +38,6 @@ struct virgl_transfer_queue {
    struct virgl_context *vctx;
    struct virgl_cmd_buf *tbuf;
    uint32_t num_dwords;
-   /* CROSS-THREAD LOCK (2026-08-19): the queue is per-context and its
-    * API was bare — legal under the GL one-thread-per-context contract
-    * EXCEPT the MakeCurrent handoff window: the implicit st_glFlush of
-    * the OLD context (make_current → virgl_flush_eq → clear) can race
-    * another thread beginning work on the same context (unmap /
-    * extend_buffer mutating the same list/hash). Under the pre-TSD
-    * globals-stomp the race was accidentally serialized; TSD exposed
-    * it — crash powerfox_2026-08-19-191644 (SIGSEGV in clear +242).
-    * Every PUBLIC entry takes this lock; internal helpers (add_internal,
-    * perform_action, compare_and_perform_action, find_overlap when
-    * called internally) run under the caller's hold — simple_mtx is
-    * NOT recursive, so only public entries lock. */
-   simple_mtx_t lock;
 };
 
 void virgl_transfer_queue_init(struct virgl_transfer_queue *queue,

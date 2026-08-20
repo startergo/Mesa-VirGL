@@ -271,7 +271,6 @@ void virgl_transfer_queue_init(struct virgl_transfer_queue *queue,
    queue->num_dwords = 0;
 
    list_inithead(&queue->transfer_list);
-   simple_mtx_init(&queue->lock, mtx_plain);
 
    if ((vs->caps.caps.v2.capability_bits & VIRGL_CAP_TRANSFER) &&
         vs->vws->supports_encoded_transfers)
@@ -287,15 +286,12 @@ void virgl_transfer_queue_fini(struct virgl_transfer_queue *queue)
 
    memset(&iter, 0, sizeof(iter));
 
-   simple_mtx_lock(&queue->lock);
    iter.action = transfer_put;
    perform_action(queue, &iter);
-   simple_mtx_unlock(&queue->lock);
 
    if (queue->tbuf)
       vws->cmd_buf_destroy(queue->tbuf);
 
-   simple_mtx_destroy(&queue->lock);
    queue->vs = NULL;
    queue->vctx = NULL;
    queue->tbuf = NULL;
@@ -310,7 +306,6 @@ int virgl_transfer_queue_unmap(struct virgl_transfer_queue *queue,
    /* We don't support copy transfers in the transfer queue. */
    assert(!transfer->copy_src_hw_res);
 
-   simple_mtx_lock(&queue->lock);
    /* Attempt to merge multiple intersecting transfers into a single one. */
    if (transfer->base.resource->target == PIPE_BUFFER) {
       memset(&iter, 0, sizeof(iter));
@@ -321,7 +316,6 @@ int virgl_transfer_queue_unmap(struct virgl_transfer_queue *queue,
    }
 
    add_internal(queue, transfer);
-   simple_mtx_unlock(&queue->lock);
    return 0;
 }
 
@@ -331,7 +325,6 @@ int virgl_transfer_queue_clear(struct virgl_transfer_queue *queue,
    struct list_iteration_args iter;
 
    memset(&iter, 0, sizeof(iter));
-   simple_mtx_lock(&queue->lock);
    if (queue->tbuf) {
       uint32_t prior_num_dwords = cbuf->cdw;
       cbuf->cdw = 0;
@@ -348,7 +341,6 @@ int virgl_transfer_queue_clear(struct virgl_transfer_queue *queue,
    }
 
    queue->num_dwords = 0;
-   simple_mtx_unlock(&queue->lock);
 
    return 0;
 }
@@ -356,16 +348,11 @@ int virgl_transfer_queue_clear(struct virgl_transfer_queue *queue,
 bool virgl_transfer_queue_is_queued(struct virgl_transfer_queue *queue,
                                     struct virgl_transfer *transfer)
 {
-   bool queued;
-
-   simple_mtx_lock(&queue->lock);
-   queued = virgl_transfer_queue_find_overlap(queue,
-                                              transfer->hw_res,
-                                              transfer->base.level,
-                                              &transfer->base.box,
-                                              false);
-   simple_mtx_unlock(&queue->lock);
-   return queued;
+   return virgl_transfer_queue_find_overlap(queue,
+                                            transfer->hw_res,
+                                            transfer->base.level,
+                                            &transfer->base.box,
+                                            false);
 }
 
 bool
@@ -376,15 +363,11 @@ virgl_transfer_queue_extend_buffer(struct virgl_transfer_queue *queue,
 {
    struct virgl_transfer *queued;
    struct pipe_box box;
-   bool extended;
 
    u_box_1d(offset, size, &box);
-   simple_mtx_lock(&queue->lock);
    queued = virgl_transfer_queue_find_overlap(queue, hw_res, 0, &box, true);
-   if (!queued) {
-      simple_mtx_unlock(&queue->lock);
+   if (!queued)
       return false;
-   }
 
    assert(queued->base.resource->target == PIPE_BUFFER);
    assert(queued->hw_res_map);
@@ -392,8 +375,6 @@ virgl_transfer_queue_extend_buffer(struct virgl_transfer_queue *queue,
    memcpy((uint8_t *)queued->hw_res_map + offset, data, size);
    u_box_union_2d(&queued->base.box, &queued->base.box, &box);
    queued->offset = queued->base.box.x;
-   extended = true;
 
-   simple_mtx_unlock(&queue->lock);
-   return extended;
+   return true;
 }
