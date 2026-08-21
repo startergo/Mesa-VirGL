@@ -316,6 +316,30 @@ IT WAS THE CONTAMINATED CONFIGURATION.**
   only, no census/debug) is still pending.
 - **The single remaining blocker for a visible browser window is 0x600C
   delivery** (kext relay, task-shaped in the VMQemuVGA ledger).
+
+**RELAY LANDED — THE WINDOW RENDERS (Aug 20 late night):**
+- Kext relay (VMQemuVGA a18dd2b, binaries 8f3f31ac→66cab1cc→1457c200):
+  transfer_from_3d → kernel row memcpy → transferToHost2D. First build
+  wrote BAR-0 while the display reads m_fb_backing (pool now carries
+  caller-owned backings); second build flipped (readback bytes are
+  ALREADY top-down — every probe config was flip-blind, a uniform clear
+  is orientation-invariant — INSTRUMENT LESSON: orientation needs a
+  directional pattern, uniform colour cannot test it); identity row
+  order + R↔B swizzle (wire 67→1) landed it.
+- **User-observed: the browser window renders real, upright, legible
+  content through SHIM_HOST_PRESENT=1** — colours right, layout intact,
+  the start page fully drawn. First time pixels flowed end-to-end.
+- REMAINING: constant flicker = two writers, one rect — the relay
+  writes the desktop scanout BELOW WindowServer, which recomposites the
+  window region from its view backing. Architectural, not a relay bug.
+  Recorded direction: present into the WINDOW'S CGS surface via the
+  existing IOAccelSurface path (WriteLock/Flush/WindowServer-composite
+  — built and proven for 2D); the missing piece is the GA CFPlugIn
+  (app-side accelerator attach; the same gap that stopped readfb at
+  IOCreatePlugInInterfaceForService). First time the accelerator work
+  and the GL work converge on one next step.
+- Residual: the browser dies silently every few minutes (3× today,
+  mode-independent — relay, CG-blit, census; zero crash reports).
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
