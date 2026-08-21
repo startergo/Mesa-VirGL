@@ -153,12 +153,25 @@ extern "C" void *g_mesa;
 extern int  (*p_cgl_shim_host_present_enabled)(void);
 extern void (*p_cgl_shim_set_host_present_rect)(int, int, int, int);
 static inline int host_present_mode(void) {
-    if (!p_cgl_shim_host_present_enabled) return 0;
-    return p_cgl_shim_host_present_enabled();
+    /* The mode is env-only — read locally, no cross-library call. The
+     * dlsym'd winsys pointer failed to resolve in the first host-blit
+     * run (0 HOST-BLIT rect lines with drawRect firing — silent NULL);
+     * the mode gate must not depend on it. */
+    static int m = -1;
+    if (m < 0) m = (getenv("SHIM_HOST_PRESENT") != NULL);
+    return m;
 }
 static inline void set_host_rect(int x, int y, int w, int h) {
     if (p_cgl_shim_set_host_present_rect)
         p_cgl_shim_set_host_present_rect(x, y, w, h);
+    else {
+        static int s_warn = 0;
+        if (s_warn < 3) {
+            s_warn++;
+            fprintf(stderr, "cgl_shim: HOST-PRESENT rect setter UNRESOLVED "
+                    "(dlsym failed) — blit cannot fire\n");
+        }
+    }
 }
 
 /* --- Associated-object key for per-NSOpenGLContext shim state --- */
@@ -751,6 +764,35 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     if (!sc || !sc->osmesa_ctx) {
         [self shim_flushBuffer];  /* original for non-shim */
         return;
+    }
+
+    /* Per-context flush accounting (2026-08-20): the empty-front census
+     * shows ONE context's drawable resized to the window while the other
+     * stayed 1x1 — the composite renders into one pixel. This answers,
+     * per shim_ctx: does it ever enter flushBuffer, with what viewport,
+     * at what buffer dims, from which thread. Separates "compositor
+     * never flushes" from "flushes with vp=0/1x1" from "lookup fails". */
+    {
+        static struct { struct shim_ctx *sc; int n; } s_acc[8];
+        int slot = -1;
+        for (int i = 0; i < 8; i++) {
+            if (s_acc[i].sc == sc) { slot = i; break; }
+            if (s_acc[i].sc == NULL) {
+                slot = i; s_acc[i].sc = sc; s_acc[i].n = 0;
+                break;
+            }
+        }
+        if (slot >= 0 && s_acc[slot].n < 12) {
+            s_acc[slot].n++;
+            GLint vpq[4] = {0, 0, 0, 0};
+            if (sc->osmesa_ctx) p_glGetIntegerv(GL_VIEWPORT, vpq);
+            fprintf(stderr,
+                    "cgl_shim: FLUSHACC sc=%p osmesa=%p th=%p #%d dims=%dx%d vp=(%d,%d,%d,%d)\n",
+                    (void *)sc, (void *)sc->osmesa_ctx,
+                    (void *)pthread_self(), s_acc[slot].n,
+                    sc->width, sc->height,
+                    vpq[0], vpq[1], vpq[2], vpq[3]);
+        }
     }
 
     /* Probe: viewport BEFORE resize check. If viewport=(0,0,800,600) here,

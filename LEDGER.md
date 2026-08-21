@@ -257,6 +257,65 @@ died):**
   compositor never renders into the presenting drawable's front even
   though clears/draws work fine at the raw layer. Both must be fixed
   for a visible window.
+
+**CONFIGURATION CONTAMINATION FOUND AND CLEANED (Aug 20 ~20:15) — the
+empty-front readings were taken under contaminated prefs:**
+- Active profile `vo791f0w.default-…` prefs.js carried
+  `layers.offmainthreadcomposition.enabled=false` AND
+  `layout.frame_rate=5` — BOTH flagged earlier as pending removal,
+  never removed (backup: prefs.js.backup-omtc). Every census, probe,
+  and timing run of 2026-08-20 inherited them.
+- Sharelist hypothesis ELIMINATED by source first: both call sites
+  pass the share correctly (substitute_cgl.c:619-624,
+  cgl_shim.mm:682-685) and Gecko 52's CGL provider NEVER shares by
+  design (GLContextProviderCGL.mm:246 `shareContext:nullptr`, :323
+  nil — every path). Observed share=0x0 ×2 is correct Gecko behavior.
+- FLUSHACC (substitute c44438db, per-sc flush accounting): ONE
+  shim_ctx ever enters -flushBuffer (sc=0x11b327280, main thread
+  0x113d81000, dims 1x1→1531x904 at flush #2). The SECOND context
+  NEVER presents. Drawer ≠ presenter — with OMTC OFF this is the
+  configuration, not a fault: main-thread legacy GL presents, the
+  other context renders textures (fmt54 strip/tiles = chrome into
+  textures for the CPU/CG compositor).
+- **Contamination reach:** the main-thread starvation diagnosis (83%
+  PaintWindow, per-flush 130 ms "UI death", the urgency behind
+  host-present) was measured under OMTC-off + frame_rate=5 and may
+  describe the pref rather than the stack. Re-take both on the clean
+  profile.
+- PRE-REGISTERED for the clean-prefs runs: (5A, census env, debug on)
+  — (a) a SECOND st presents via flush_front with a 1531x904 front
+  carrying census-nonzero content → empty-front was configuration;
+  remaining blocker = 0x600C delivery only; (b) unchanged single
+  presenter with an empty front → configuration exonerated, the
+  substitute-side drawable/present hunt continues. ALSO re-take in 5A:
+  a 10 s `sample` of the browser (main-thread PaintWindow share was
+  the OMTC-off datum). (5B, SHIM_HOST_PRESENT only — no census, no
+  debug prints) — clean per-flush timing stats for the 130 ms wall
+  re-take; numbers under debug printing are provisional.
+
+**CLEAN-PREFS RUN 5A/5C (Aug 20 ~20:20) — THE EMPTY FRONT IS RESOLVED:
+IT WAS THE CONTAMINATED CONFIGURATION.**
+- Prefs removed (backup prefs.js.backup-omtc): offmainthreadcomposition
+  + frame_rate. Same dylib (3f09b14c), same substitute (c44438db).
+- Census: **front res=436 (fmt53 1531x904): nonzero=1384024/1384024 —
+  100% CONTENT. Depth res=437: 692012/692012 — 100%, real
+  rasterisation.** Strip 434 100%, 1x1 content. The compositor renders
+  the window framebuffer correctly when the prefs are absent. The
+  empty-front "defect" was OMTC-off making the GL contexts
+  texture-renderers for a CPU/CG compositor that never wrote the
+  drawable — drawer≠presenter was the configuration, not a fault.
+- Still ONE presenting st (40/40 flush_fronts, st=0x11add2000) — now
+  drawing. (Prediction (a) partially landed: content yes; second
+  presenter no.)
+- Residuals: the 5b run died silently ~60 s in (no crash report, log
+  ends mid-flow); the 5c relaunch was ALIVE at 2 min — not
+  immediately reproducible, unexplained, recorded. Sample of 5c
+  (10 s): PaintWindow ≈ 1485/2785 ≈ 53% of main-thread samples vs 83%
+  under contamination — PROVISIONAL (census transfers ≈ 4×60-75 ms per
+  flush perturb); the clean timing re-take (run 5B: SHIM_HOST_PRESENT
+  only, no census/debug) is still pending.
+- **The single remaining blocker for a visible browser window is 0x600C
+  delivery** (kext relay, task-shaped in the VMQemuVGA ledger).
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
