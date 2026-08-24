@@ -392,7 +392,10 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
    {
       static int s_host_present = -1;
       if (s_host_present < 0)
-         s_host_present = (getenv("SHIM_HOST_PRESENT") != NULL);
+         s_host_present = (getenv("SHIM_HOST_PRESENT") != NULL)
+                       || (getenv("SHIM_ZERO_COPY") != NULL); /* RUNG 67:
+                          the zero-copy present rides the same flush
+                          path; the winsys picks 0x600F over 0x600C */
       if (s_host_present) {
          static int s_hp_log = 0;
          struct pipe_context *pipe = osmesa->st->pipe;

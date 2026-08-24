@@ -788,6 +788,26 @@ static void virgl_iokit_flush_frontbuffer(struct virgl_winsys *vws, struct virgl
       }
    }
 
+   /* RUNG 67 — the zero-copy present, FIRST (before the host-present
+    * rect gate — it needs no rect; geometry from the resource): bind
+    * the 3D resource to the scanout + flush per frame; the host
+    * composites directly, NO readback. Presentation is FULLSCREEN
+    * (SET_SCANOUT maps the resource rect to the whole display).
+    * SHIM_ZERO_COPY gates it; the default stays the proven relay. */
+   {
+      static int s_zcp = -1;
+      if (s_zcp < 0)
+         s_zcp = (getenv("SHIM_ZERO_COPY") != NULL);
+      if (s_zcp) {
+         virgl_iokit_res_wait(iws, res->res_handle);
+         uint64_t zi[3] = { res->res_handle,
+                            (uint64_t)res->width, (uint64_t)res->height };
+         IOConnectCallMethod(iws->connect, 0x600F /* scanoutPresent3D */,
+                             zi, 3, NULL, 0,
+                             NULL, NULL, NULL, NULL);
+         return;
+      }
+   }
    if (!cgl_shim_host_present_rect(&x, &y, &w, &h))
       return;
    virgl_iokit_res_wait(iws, res->res_handle);   /* prior 3D complete host-side */
