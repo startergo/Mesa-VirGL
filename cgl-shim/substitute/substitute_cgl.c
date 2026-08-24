@@ -927,7 +927,85 @@ CGLSetParameter(CGLContextObj ctx, CGLContextParameter pname, const GLint *param
     if (real) return real(ctx, pname, params);
     return kCGLNoError;
 }
-CGL_FORWARD(CGLSetSurface, CGLError, (CGLContextObj ctx, GLuint read_write, GLuint surface_id, GLenum surface_type, GLint width, GLint height), (ctx, read_write, surface_id, surface_type, width, height))
+/* CGLSetSurface — MILESTONE 3 (2026-08-21): the system hands us the
+ * WINDOW'S CGS SURFACE ID here (docs/ga-cfplugin.md). Intercepted, not
+ * forwarded (the real Apple GL must not attach to our OSMesa context's
+ * token): record the id, lazily start the GA session, and bind the
+ * surface via AllocateSurface — the kernel relay then presents into
+ * the WINDOW'S surface (single source of truth; WindowServer
+ * composites; the flicker-era desktop-scanout writes retire). */
+#include <IOKit/IOKitLib.h>
+#include <IOKit/IOCFPlugIn.h>
+#include <IOKit/graphics/IOGraphicsInterface.h>
+
+static struct {
+    IOCFPlugInInterface** plug;
+    void* obj;                          /* the COM object */
+    IOGraphicsAcceleratorInterface* vt; /* vtable (deref once) */
+    int state;                          /* 0=untried 1=ok 2=failed */
+    IOBlitSurface surf;
+    GLuint bound_id;
+} g_ga;
+
+static void ga_session_init(void)
+{
+    io_service_t fb;
+    CFMutableDictionaryRef m;
+    SInt32 score = 0;
+    kern_return_t kr;
+
+    if (g_ga.state != 0) return;
+    g_ga.state = 2;
+
+    m = IOServiceMatching("VMVirtIOFramebuffer");
+    if (!m) return;
+    fb = IOServiceGetMatchingService(kIOMasterPortDefault, m);
+    if (fb == IO_OBJECT_NULL) return;
+
+    kr = IOCreatePlugInInterfaceForService(
+        fb, kIOGraphicsAcceleratorTypeID, kIOGraphicsAcceleratorInterfaceID,
+        &g_ga.plug, &score);
+    if (kr != KERN_SUCCESS || !g_ga.plug) return;
+
+    HRESULT qrc = (*g_ga.plug)->QueryInterface(
+        g_ga.plug, CFUUIDGetUUIDBytes(kIOGraphicsAcceleratorInterfaceID),
+        (LPVOID*)&g_ga.obj);
+    if (qrc != S_OK || !g_ga.obj) return;
+
+    /* COM shape: the object's first field is the vtable pointer. */
+    g_ga.vt = *(IOGraphicsAcceleratorInterface***)g_ga.obj;
+
+    if (g_ga.vt->Probe(g_ga.obj, NULL, fb, &score) != kIOReturnSuccess)
+        return;
+    if (g_ga.vt->Start(g_ga.obj, NULL, fb) != kIOReturnSuccess)
+        return;
+
+    memset(&g_ga.surf, 0, sizeof(g_ga.surf));
+    g_ga.surf.pixelFormat = kIO32BGRAPixelFormat;
+    g_ga.state = 1;
+    IOObjectRelease(fb);
+}
+
+CGLError CGLSetSurface(CGLContextObj ctx, GLuint read_write,
+                       GLuint surface_id, GLenum surface_type,
+                       GLint width, GLint height)
+{
+    (void)ctx; (void)read_write; (void)surface_type; (void)width; (void)height;
+    ga_session_init();
+    if (g_ga.state == 1 && surface_id && surface_id != g_ga.bound_id) {
+        IOReturn rc = g_ga.vt->AllocateSurface(
+            g_ga.obj, kIOBlitHasCGSSurface, &g_ga.surf, (void*)(uintptr_t)surface_id);
+        if (rc == kIOReturnSuccess) {
+            g_ga.bound_id = surface_id;
+            fprintf(stderr, "substitute_cgl: GA surface %u BOUND — relay "
+                            "presents into the window surface\n", surface_id);
+        } else {
+            fprintf(stderr, "substitute_cgl: GA AllocateSurface(%u) -> 0x%x\n",
+                    surface_id, rc);
+        }
+    }
+    return kCGLNoError;
+}
 CGL_FORWARD(CGLSetVirtualScreen, CGLError, (CGLContextObj ctx, GLint screen), (ctx, screen))
 /* CGLTexImageIOSurface2D: implemented as a CPU upload into the current
  * OSMesa context. Never forwarded — forwarding passes our shim_ctx
