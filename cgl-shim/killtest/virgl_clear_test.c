@@ -60,7 +60,7 @@ static int check_clear(OSMesaContext ctx, const char *name,
     CHECK(p0, "first");
     CHECK(pLast, "last");
 
-    /* PRRT_kwDOPZhcm86uEfbH (PR review): a clear must paint EVERY
+    /* a clear must paint EVERY
      * pixel. The old first/last-only check missed anything in between
      * (partial clears, tiled damage, row-stride faults). Scan the
      * whole buffer; report the first bad pixel with its index and
@@ -93,7 +93,7 @@ static int check_clear(OSMesaContext ctx, const char *name,
     }
 
     if (ok) {
-        /* PRRT_kwDOPZhcm86uEfdE: buffer is OSMESA_BGRA ([B,G,R,A]), so
+        /* buffer is OSMESA_BGRA ([B,G,R,A]), so
          * (p[2], p[1], p[0]) is R,G,B — print it under the right
          * label; expected stays RGB(r,g,b). */
         fprintf(stdout, "PASS [%s]: first=RGB(%d,%d,%d) last=RGB(%d,%d,%d) "

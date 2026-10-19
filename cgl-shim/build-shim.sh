@@ -116,7 +116,7 @@ echo "  [2/4] clang    cgl_interpose.c"
 clang "${COMMON_CFLAGS[@]}" \
     -c "$SHIM_DIR/cgl_interpose.c" -o "$SHIM_DIR/cgl_interpose.o"
 
-# PRRT_kwDOPZhcm86uEfb_: compile the stub source here. Until now the
+# compile the stub source here. Until now the
 # link used a hand-built substitute_stub.o and NOTHING compiled the .c
 # next to it — edits to the source silently could not affect the dylib.
 # The .o is gitignored, so this just refreshes a local artifact.
@@ -145,7 +145,7 @@ clang++ "${COMMON_CFLAGS[@]}" \
     -Wl,-rpath,@loader_path \
     -Wl,-rpath,@loader_path/../"$BUILD_DIR"/src/gallium/targets/osmesa \
     -Wl,-rpath,@loader_path/../"$BUILD_DIR"/src/mapi/shared-glapi
-# PRRT_kwDOPZhcm86uEfau: cgl_shim.dylib sits in cgl-shim/, so the repo
+# cgl_shim.dylib sits in cgl-shim/, so the repo
 # root is ONE level up from @loader_path — the old ../.. escaped the
 # checkout and never pointed at $BUILD_DIR (which lives at the root).
 

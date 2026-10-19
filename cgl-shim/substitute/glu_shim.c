@@ -119,7 +119,7 @@ int gluScaleImage(GLenum format,
 
     /* General box filter: each output pixel averages the source block it
      * covers. (Halving falls out exactly.)
-     * PRRT_kwDOPZhcm86uEfZf (PR review): the previous implementation
+     * the previous implementation
      * scattered each source pixel with floor(s*hOut/hIn) bounds but
      * divided each output by a floor(dy*hIn/hOut) block — inverse
      * bucketings that disagree at non-integer ratios, so an output's

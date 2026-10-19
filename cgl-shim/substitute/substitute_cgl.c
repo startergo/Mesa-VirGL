@@ -137,7 +137,7 @@ static void substitute_init(void)
 /* Forward a CGL call to the real OpenGL. Lazy dlsym on first call.
  * Logs every call so we can see which forwards Gecko actually exercises —
  * observed rather than predicted. Same technique as the XUL symbol census.
- * PRRT_kwDOPZhcm86uEfdu (PR review): OFF by default (the survey is done);
+ * OFF by default (the survey is done);
  * opt in with SHIM_CGL_FWD_LOG=1, like the other instruments. */
 static int g_cgl_fwd_log = -1;  /* resolved once from the environment */
 static int cgl_fwd_log_on(void)
@@ -327,7 +327,7 @@ void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose,
 /* RUNG 128e3: the scalar family the app actually calls — same
  * shape as the existing exports, forwarding via walk_mesa_fn,
  * first-24-calls logged to the stub log (the (B) uniform table).
- * PRRT_kwDOPZhcm86uEfdx (PR review): opt-in only, same gate as the
+ * opt-in only, same gate as the
  * rest of rung 128 (VMGLD_R128E) — no /var/log writes in production
  * processes that did not ask for the instrument. */
 static int s_128e3 = 0;
@@ -734,7 +734,7 @@ CGLDestroyContext(CGLContextObj ctx)
 {
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
-        /* PRRT_kwDOPZhcm86uEfZS (PR review): destroying the CURRENT
+        /* destroying the CURRENT
          * context is legal — real CGL then has none current. Clear BOTH
          * bindings this file maintains BEFORE unregistering and freeing:
          * the OSMesa/GLAPI current (else every later gl* call dispatches
@@ -1182,7 +1182,7 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             return kCGLBadContext;
         }
 
-        /* PRRT_kwDOPZhcm86uEfb0: the SHIM_PATTERN_FILL mode must be
+        /* the SHIM_PATTERN_FILL mode must be
          * decided BEFORE the lock — the pattern path writes the
          * surface through the CPU, so it needs a read-write lock
          * (options 0), not the read-only lock the plain upload path
@@ -1299,14 +1299,14 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
                            width, height, 0, format, type, base);
             p_glPixelStorei(GL_UNPACK_ROW_LENGTH, save_rowlen);
             p_glPixelStorei(GL_UNPACK_ALIGNMENT, save_align);
-            /* PRRT_kwDOPZhcm86uEfcC (PR review): no glGetError here.
+            /* no glGetError here.
              * GL error state is global and read-destructive: checking
              * "did our own upload fail" consumes the application's
              * pending error (and any earlier one) — the app would
              * never see it. The upload was issued under a valid lock
              * and surface; the return below is based on that alone. */
         }
-        /* PRRT_kwDOPZhcm86uEfcI: the lock must be released whenever it
+        /* the lock must be released whenever it
          * was taken — including the declined-upload paths (null base,
          * non-positive width/height) that previously returned with the
          * surface still locked. */

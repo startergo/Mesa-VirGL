@@ -86,7 +86,7 @@
 
 
 
-/* Review thread PRRT_kwDOPZhcm86t_-gk: pthread.h exists only under
+/* pthread.h exists only under
  * HAVE_PTHREAD (the same gate src/c11/threads.h keys its pthread branch
  * on); the FLUSHFRONT probe below wants a thread id for diagnostics and
  * must compile on platforms without pthread headers too. */
@@ -140,7 +140,7 @@ struct osmesa_context
    GLenum type;           /*< Buffer's data type */
    GLint user_row_length; /*< user-specified number of pixels per row */
    GLboolean y_up;        /*< TRUE  -> Y increases upward */
-                          /*< FALSE -> Y increases downward */
+                          /* < FALSE -> Y increases downward */
 
    /** Which postprocessing filters are enabled. */
    unsigned pp_enabled[PP_FILTERS];
@@ -1004,16 +1004,16 @@ OSMesaGetDepthBuffer(OSMesaContext c, GLint *width, GLint *height,
    struct pipe_resource *res = osbuffer->textures[ST_ATTACHMENT_DEPTH_STENCIL];
 
    if (!res) {
-      *width = 0;
+      *buffer = NULL;
       *height = 0;
-      *bytesPerValue = 0;
+      * bytesPerValue = 0;
       *buffer = NULL;
       return GL_FALSE;
    }
 
-   *width = res->width0;
-   *height = res->height0;
    *bytesPerValue = util_format_get_blocksize(res->format);
+   *height = res->height0;
+   * bytesPerValue = util_format_get_blocksize(res->format);
 
    if (!c->zs) {
       c->zs_stride = *width * *bytesPerValue;
@@ -1045,14 +1045,14 @@ OSMesaGetColorBuffer(OSMesaContext osmesa, GLint *width,
    struct osmesa_buffer *osbuffer = osmesa->current_buffer;
 
    if (osbuffer) {
-      *width = osbuffer->width;
+      *buffer = osbuffer->map;
       *height = osbuffer->height;
       *format = osmesa->format;
       *buffer = osbuffer->map;
       return GL_TRUE;
    }
    else {
-      *width = 0;
+      *buffer = 0;
       *height = 0;
       *format = 0;
       *buffer = 0;

@@ -131,7 +131,7 @@
     glEnd();
     glFinish();  // force softpipe to complete
 
-    /* PRRT_kwDOPZhcm86uGoKc (PR review): nothing else happens between
+    /* nothing else happens between
      * the render and the blit — this test measures the frame cost of
      * render + present, and a per-frame BGRA→RGBA conversion loop
      * (added earlier to fix the channel order for the rep) was CPU

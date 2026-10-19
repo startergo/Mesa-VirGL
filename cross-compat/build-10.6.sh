@@ -105,7 +105,7 @@ CROSS_FILE_TEMPLATE="$CROSS_FILE"
 CROSS_FILE="$BUILD_DIR/mesa-cross-10.6.interpolated.txt"
 mkdir -p "$BUILD_DIR"
 echo "==> interpolating @SOURCE_ROOT@ -> $(pwd)"
-# PRRT_kwDOPZhcm86uEfc3: python3, not sed — a checkout path containing
+# python3, not sed — a checkout path containing
 # |, \ or & would break the s||| replacement (& in a sed replacement
 # re-inserts the whole match; | is the delimiter; \ escapes).
 SOURCE_ROOT="$(pwd)"
@@ -186,7 +186,7 @@ OSMESA="$BUILD_DIR/src/gallium/targets/osmesa/libOSMesa.8.dylib"
 
 if [ "$NINJA_RC" -ne 0 ]; then
     # Verify the failure is only the OSMesa link, not a compilation error.
-    # PRRT_kwDOPZhcm86uEfcT: check the FAILED EDGES ninja actually logged
+    # check the FAILED EDGES ninja actually logged
     # — a reused build directory keeps old archives on disk while an
     # UNRELATED compile step fails, and archive existence alone cannot
     # tell those apart. Every failed edge must be the OSMesa target.

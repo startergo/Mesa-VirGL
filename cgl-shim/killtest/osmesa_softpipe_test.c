@@ -61,7 +61,7 @@ static int check_clear(OSMesaContext ctx, const char *name,
     CHECK(pLast, "last");
 
     if (ok) {
-        /* PRRT_kwDOPZhcm86uEfdE: buffer is OSMESA_BGRA ([B,G,R,A]), so
+        /* buffer is OSMESA_BGRA ([B,G,R,A]), so
          * (p[2], p[1], p[0]) is R,G,B — print it under the right
          * label; expected stays RGB(r,g,b). */
         fprintf(stdout, "PASS [%s]: first=RGB(%d,%d,%d) last=RGB(%d,%d,%d) "

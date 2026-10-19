@@ -32,7 +32,7 @@
 #include <pthread.h>
 #endif
 
-/* Review thread PRRT_kwDOPZhcm86t_-hS: same gate as osmesa.c's
+/* same gate as osmesa.c's
  * osmesa_dbg_thread() — pthread.h only under HAVE_PTHREAD, so this file
  * still builds where pthread headers do not exist. */
 static const void *

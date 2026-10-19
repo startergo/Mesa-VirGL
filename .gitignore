@@ -1,16 +1,16 @@
 .cache
 .vscode*
-*.pyc
-*.pyo
-*.out
+* .pyc
+* .pyo
+* .out
 /build
 /build-106
 .venv/
 
 # OS clutter, editor/patch leftovers
 **/.DS_Store
-*.o.tmp
-*.orig
+* .o.tmp
+* .orig
 # Build outputs of cgl-shim/build-shim.sh and cgl-shim/substitute/build-substitute.sh
 # (cgl-shim/substitute_stub.o is a hand-built input: build-shim.sh links it, nothing compiles it)
 cgl-shim/cgl_shim.o
@@ -27,7 +27,7 @@ cgl-shim/substitute/OpenGL.framework/
 # Local development ledger (not published)
 /LEDGER.md
 
-# PRRT_kwDOPZhcm86uEfbO: Apple proprietary binary extracted by
+# Apple proprietary binary extracted by
 # cgl-shim/substitute/prepare_real_opengl.sh — never commit it.
 cgl-shim/substitute/libOpenGL_real_x86_64/
 cgl-shim/substitute/libOpenGL_real_x86_64

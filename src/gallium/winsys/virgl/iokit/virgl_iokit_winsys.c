@@ -476,7 +476,7 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
                                NULL, NULL, NULL, NULL);
       if (kr != KERN_SUCCESS) {
          fprintf(stderr, "virgl_iokit: 0x6003 attachBackingUser FAIL 0x%x\n", kr);
-         /* PRRT_kwDOPZhcm86uEfZn / PRRT_kwDOPZhcm86uEfbr (PR review):
+         /*
           * the 3D path already census_register()ed this res — take it
           * out of the registry BEFORE freeing it, or the entry stays
           * alive with a dangling pointer for the next census flush

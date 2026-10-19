@@ -45,7 +45,7 @@ call_once_context_free(void *p)
 static void
 call_once_context_key_init(void)
 {
-   /* Review thread PRRT_kwDOPZhcm86uAnOQ: pthread_once marks this
+   /* pthread_once marks this
     * routine done whether or not it succeeded, so a failed key creation
     * is permanent — and the key variable keeps its zero initialization,
     * after which every pthread_getspecific/pthread_setspecific would use
@@ -82,7 +82,7 @@ call_once_context_get(void)
          }
       }
       if (!ctx) {
-         /* Review thread PRRT_kwDOPZhcm86uD451: a shared fallback here
+         /* a shared fallback here
           * would reintroduce exactly the cross-flag overwrite this
           * per-thread context exists to prevent (wrong data to the
           * callback — an uninitialized simple_mtx in use). Both failure

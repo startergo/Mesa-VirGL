@@ -5,7 +5,7 @@
  * rendering use case. virgl_video.c references these five functions;
  * they must resolve at link time.
  *
- * PRRT_kwDOPZhcm86uEfbx (PR review): these are NOT all unreachable.
+ * these are NOT all unreachable.
  * virgl registers vl_video_buffer_is_format_supported as the screen's
  * is_video_format_supported (virgl_screen.c:1193) — a capability
  * PROBE. A video frontend (VA-API/VDPAU style) probing the screen
@@ -71,7 +71,7 @@ vl_video_buffer_is_format_supported(struct pipe_screen *screen,
                                     int format,
                                     int profile,
                                     int entrypoint) {
-    /* PRRT_kwDOPZhcm86uEfbx: capability query — answer it instead of
+    /* capability query — answer it instead of
      * killing the process (registered as virgl's screen
      * is_video_format_supported; see the header comment). */
     (void)screen; (void)format; (void)profile; (void)entrypoint;

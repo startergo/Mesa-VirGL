@@ -8,7 +8,7 @@ set -euo pipefail
 GUEST=sl@slqemu.local
 OUT=/Users/macbookpro/Mesa-VirGL/cgl-shim/substitute
 
-# PRRT_kwDOPZhcm86uEfbO: Apple's OpenGL binary is PROPRIETARY — this
+# Apple's OpenGL binary is PROPRIETARY — this
 # fetch must land only in a local, untracked path. cgl-shim/substitute/
 # libOpenGL_real_x86_64 is .gitignored for this reason; a copy was
 # committed to this branch by accident once — do not re-add it, and ask

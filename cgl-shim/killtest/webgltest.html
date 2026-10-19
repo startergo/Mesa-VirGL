@@ -17,7 +17,7 @@ var gl = gl2 || c.getContext("webgl") || c.getContext("experimental-webgl");
 if (!gl) {
     log("webgl1: FAILED — no context at all");
 } else {
-    /* PRRT_kwDOPZhcm86uEfc9: say WHICH context is being reported —
+    /* say WHICH context is being reported —
      * when webgl2 succeeded, gl is the webgl2 context, and the old
      * unconditional "webgl1: OK" line reported webgl2's version under
      * a webgl1 label. */

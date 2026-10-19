@@ -104,7 +104,7 @@ shim_CGLFlushDrawable(CGLContextObj ctx)
 {
     struct shim_ctx *s = shim_lookup(ctx);
     if (s) {
-        /* Review PRRT_kwDOPZhcm86YKBwS: this was a bare glFinish() — the
+        /* this was a bare glFinish() — the
          * frame was never swapped or presented, so a caller using raw CGL
          * against a shim context got a frozen window while the
          * -flushBuffer path worked. Present through the same entry the
@@ -174,7 +174,7 @@ extern void glUniform4f(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
  * glUniform* calls pass through here BEFORE any engine
  * transformation — log every 4f upload's first vec4. */
 void   (*p_glUniform4fv)(GLint, GLsizei, const GLfloat*);
-/* PRRT_kwDOPZhcm86uEfZY: the scalar glUniformNf interposers forward to
+/* the scalar glUniformNf interposers forward to
  * Mesa the same way glUniform4fv does — without these the scalar calls
  * fell through to the system GL (RTLD_NEXT) and uniform values set on a
  * shim context were dropped. */
@@ -187,7 +187,7 @@ void   (*p_glClearColor)(GLclampf, GLclampf, GLclampf, GLclampf);
 void   (*p_glColor3f)(GLfloat, GLfloat, GLfloat);
 void   (*p_glDisable)(GLenum);
 void   (*p_glEnd)(void);
-/* PRRT_kwDOPZhcm86uEfbS: every rung-128 diagnostic is OPT-IN via
+/* every rung-128 diagnostic is OPT-IN via
  * VMGLD_R128E, checked once per process. Before this, the scalar
  * uniform family (ULOG128), the dlsym probe (ip_dlsym) and the init
  * banner all wrote app uniform values / pointer addresses to
@@ -419,7 +419,7 @@ GL_IP_VOID(glViewport,    (GLint a, GLint b, GLsizei c, GLsizei d), (a,b,c,d))
 static void diag_glViewport(GLint a, GLint b, GLsizei c, GLsizei d) {
     static int logged = 0;
     OSMesaContext osmc = OSMesaGetCurrentContext();
-    /* Review PRRT_kwDOPZhcm86Yova8: the probe must not dereference p_*
+    /* the probe must not dereference p_*
      * when libOSMesa failed to load (gl_interpose_init leaves them NULL).
      * Gate the whole one-shot block on what it calls, so the function
      * still reaches the Apple fallback below. */

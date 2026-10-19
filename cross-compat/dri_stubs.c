@@ -41,7 +41,7 @@ void driParseConfigFiles(struct driOptionCache *cache,
 
 /* driQueryOptionb: query boolean option value.
  * Real signature (xmlconfig.h): returns unsigned char, 2nd param is const char *.
- * PRRT_kwDOPZhcm86uEfZb: return the DECLARED defaults of
+ * return the DECLARED defaults of
  * src/gallium/drivers/virgl/virgl_driinfo.h.in for the option names
  * virgl_screen.c queries — a real driParseConfigFiles with no drirc
  * leaves exactly these in the cache (gles_emulate_bgra and

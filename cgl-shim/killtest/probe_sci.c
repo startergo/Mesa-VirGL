@@ -9,7 +9,7 @@
  * wrapper ever existed in the substitute (no wrapper function, no
  * _glScissor export, SHIM_SCISSOR_LOG read by nothing) — that outcome
  * was unreachable, so the banner logic was removed
- * (PRRT_kwDOPZhcm86uEfbX). The zero-scissor-lines ambiguity was
+ * The zero-scissor-lines ambiguity was
  * resolved the other way: Gecko makes zero glScissor calls
  * (substitute_cgl.c).
  *
@@ -43,7 +43,7 @@ int main(void)
     f(0, 0, 64, 64);
     f(0, 0, 64, 64);   /* same rect: exercises the dedup path */
     f(8, 16, 32, 32);  /* changed rect */
-    /* PRRT_kwDOPZhcm86uEfbX: there IS no wrapper to be bound — the
+    /* there IS no wrapper to be bound — the
      * substitute never defined a glScissor wrapper, never exported
      * _glScissor and never read SHIM_SCISSOR_LOG (the 2026-08-17
      * ambiguity was resolved the other way: "Gecko makes zero

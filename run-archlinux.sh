@@ -15,7 +15,7 @@
 # - Requires appropriate guest OS and 3dfx drivers
 
 # Mesa-VirGL Library Setup - Use custom built Mesa-VirGL libraries
-# PRRT_kwDOPZhcm86uEfck: derive the Homebrew paths instead of pinning
+# derive the Homebrew paths instead of pinning
 # one Cellar version (9.2.2-3dfx_26 disappears on the next upgrade).
 # Override anything through the environment.
 MESA_VIRGL_LIB="${MESA_VIRGL_LIB:-/opt/mesa-virgl/lib}"
@@ -85,7 +85,7 @@ else
 fi
 
 echo ""
-# PRRT_kwDOPZhcm86uEfbk: the speculative guest-configuration notes
+# the speculative guest-configuration notes
 # (originally ~540 echo lines) printed on EVERY launch. They are kept
 # in full but only shown when VERBOSE_NOTES=1 is set; normal launches
 # print just the status output.
@@ -870,7 +870,7 @@ esac
 
 # Display and SPICE configuration
 if [ "$USE_VNC" = "1" ]; then
-    # PRRT_kwDOPZhcm86uEfao (PR review): VNC is a 2D display backend —
+    # VNC is a 2D display backend —
     # there is no GL consumer for the scanout, so a GL-backed
     # virtio-gpu-gl device would still initialize virgl contexts it can
     # never present and pin hostmem. Downgrade to the plain virtio-gpu
@@ -941,7 +941,7 @@ fi
 AUDIO="-audiodev coreaudio,id=audio0 -device intel-hda -device hda-duplex,audiodev=audio0"
 USB="-device qemu-xhci -device usb-kbd -device virtio-mouse-pci"  # Add VirtIO mouse for better integration
 SERIAL=""  # virtio-serial-pci will be added with clipboard configuration to avoid duplication
-# PRRT_kwDOPZhcm86uEfcu: the monitor is OFF by default — a loopback TCP
+# the monitor is OFF by default — a loopback TCP
 # port is reachable by every local user. Opt in with USE_MONITOR=1; it
 # then binds a 0600 Unix socket in $TMPDIR (owner-only).
 MONITOR=""
@@ -950,7 +950,7 @@ if [ "${USE_MONITOR:-0}" = "1" ]; then
     MONITOR="-monitor unix:$MON_SOCK,server,nowait"
     echo "QEMU monitor: unix socket $MON_SOCK (mode 600)"
 fi
-# PRRT_kwDOPZhcm86uEfcz: guest SSH forwards from LOOPBACK only by
+# guest SSH forwards from LOOPBACK only by
 # default (hostfwd=tcp:: binds every interface — the guest's sshd would
 # be reachable from the network). SSH_BIND_ALL=1 restores the old open
 # binding.
@@ -997,7 +997,7 @@ if [ "$USE_VNC" != "1" ]; then
     export SDL_RENDER_SCALE_POLICY=0  # Stretch to fill (ignore aspect ratio)
 
     # Additional scaling fixes - Force window to fill completely
-    # PRRT_kwDOPZhcm86uGoKf: SDL reads env vars named like the hint
+    # SDL reads env vars named like the hint
     # itself — always SDL_<HINT> (SDL_HINT_RENDER_LOGICAL_SIZE_MODE is
     # the C macro, "SDL_RENDER_LOGICAL_SIZE_MODE" the variable); the
     # prefix-less names in this block were no-ops.
@@ -1016,7 +1016,7 @@ if [ "$USE_VNC" != "1" ]; then
     export SDL_RENDER_DRIVER=opengl
     export SDL_RENDER_OPENGL_SHADERS=1
     export SDL_RENDER_VSYNC=0  # Disable VSync for maximum performance
-# PRRT_kwDOPZhcm86uEfbd: SDL reads env vars named like the hint itself —
+# SDL reads env vars named like the hint itself —
 # SDL_RENDER_DRIVER, not SDL_HINT_RENDER_DRIVER. Names that are not SDL
 # hints at all (SDL_VIDEO_WINDOW_SCALE_MODE, SDL_VIDEO_ASPECT_RATIO_MODE,
 # SDL_VIDEO_WINDOW_SCALE, SDL_RENDER_SCALE_MODE, SDL_VIDEO_WINDOW_FORCE_SCALE,
@@ -1057,7 +1057,7 @@ if [ "$USE_VNC" != "1" ]; then
     
     # Advanced Mesa performance tuning - Optimized for OpenGL 4.6 Compatibility
     export MESA_NO_ERROR=1  # Skip error checking for performance
-    # PRRT_kwDOPZhcm86uEfaP (PR review): no MESA_GLTHREAD here. This
+    # no MESA_GLTHREAD here. This
     # launcher's Mesa stack is this repo's build, whose GL dispatch is
     # the restored single-threaded TSD mode (see
     # cross-compat/build_10.6.md: "correct only if nothing calls into
