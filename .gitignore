@@ -5,3 +5,20 @@
 *.out
 /build
 .venv/
+
+# OS clutter, editor/patch leftovers
+**/.DS_Store
+*.o.tmp
+*.orig
+# Build outputs of cgl-shim/build-shim.sh and cgl-shim/substitute/build-substitute.sh
+# (cgl-shim/substitute_stub.o is a hand-built input: build-shim.sh links it, nothing compiles it)
+cgl-shim/cgl_shim.o
+cgl-shim/cgl_interpose.o
+cgl-shim/cgl_shim.dylib
+cgl-shim/substitute/cgl_shim.o
+cgl-shim/substitute/cgl_interpose.o
+cgl-shim/substitute/substitute_cgl.o
+cgl-shim/substitute/glu_shim.o
+cgl-shim/substitute/OpenGL.framework/
+# Local Claude Code settings
+.claude/
