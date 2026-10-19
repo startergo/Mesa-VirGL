@@ -262,12 +262,14 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
        * copy_transfer_from_host, then we can return here with proper map.
        *
        * A/B gate: also require vctx->supports_staging. virgl_can_use_staging
-       * (which sets res->use_staging) is gated on host caps only; this flag
-       * is gated on vws->supports_encoded_transfers + host caps. Without
-       * the vctx check here, the staging path is taken but
-       * virgl_staging_map asserts supports_staging — they desync when
-       * supports_encoded_transfers=0. This gate makes the path choice
-       * robust to either setting. */
+       * (which sets res->use_staging) is gated on host caps AND
+       * vws->supports_encoded_transfers (see its comment above: without
+       * encoded transfers the staging allocation is a 1-byte placeholder
+       * that a direct-readback fallback would overflow); this flag is
+       * gated on vws->supports_encoded_transfers + host caps in
+       * virgl_context_init. Without the vctx check here, the two could
+       * desync when supports_encoded_transfers=0. This gate makes the path
+       * choice robust to either setting. */
       if (res->use_staging && vctx->supports_staging) {
          if (xfer->base.usage & PIPE_MAP_READ)
             return VIRGL_TRANSFER_MAP_READ_FROM_STAGING;
