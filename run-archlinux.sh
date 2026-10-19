@@ -846,6 +846,18 @@ esac
 
 # Display and SPICE configuration
 if [ "$USE_VNC" = "1" ]; then
+    # PRRT_kwDOPZhcm86uEfao (PR review): VNC is a 2D display backend —
+    # there is no GL consumer for the scanout, so a GL-backed
+    # virtio-gpu-gl device would still initialize virgl contexts it can
+    # never present and pin hostmem. Downgrade to the plain virtio-gpu
+    # device the browser-compatibility branches already use; VNC output
+    # keeps working through the 2D path.
+    case "$VGA_DEVICE" in
+        *virtio-gpu-gl-pci*)
+            VGA_DEVICE="-device virtio-gpu-pci"
+            echo "Using non-GL virtio-gpu for VNC mode (no GL display consumer for virtio-gpu-gl)"
+            ;;
+    esac
     DISPLAY="-display vnc=:1"
     SPICE_DISPLAY=""
     echo "Using VNC display on localhost:5901 (set USE_VNC=1)"
@@ -1003,8 +1015,14 @@ if [ "$USE_VNC" != "1" ]; then
     
     # Advanced Mesa performance tuning - Optimized for OpenGL 4.6 Compatibility
     export MESA_NO_ERROR=1  # Skip error checking for performance
-    export MESA_GLTHREAD=true  # Enable multi-threaded OpenGL
-    export mesa_glthread=true  # Alternative name
+    # PRRT_kwDOPZhcm86uEfaP (PR review): no MESA_GLTHREAD here. This
+    # launcher's Mesa stack is this repo's build, whose GL dispatch is
+    # the restored single-threaded TSD mode (see
+    # cross-compat/build_10.6.md: "correct only if nothing calls into
+    # the GL dispatch from multiple threads concurrently") — a GL
+    # worker thread re-enters the dispatch on a second thread. This
+    # file already clears MESA_GLTHREAD at the "Clear any existing MESA
+    # 4.6 overrides" block; keep it cleared. GALLIUM_THREAD=0 stays.
     export GALLIUM_THREAD=0  # Disable Gallium threading (can conflict with glthread)
     export MESA_EXTENSION_OVERRIDE="+GL_ARB_compatibility +GL_ARB_vertex_program +GL_ARB_fragment_program +GL_ARB_shader_objects +GL_ARB_vertex_shader +GL_ARB_fragment_shader"  # Force compatibility extensions
     
