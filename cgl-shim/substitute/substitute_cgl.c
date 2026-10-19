@@ -719,6 +719,18 @@ CGLDestroyContext(CGLContextObj ctx)
 {
     struct shim_ctx *sc = shim_lookup(ctx);
     if (sc) {
+        /* PRRT_kwDOPZhcm86uEfZS (PR review): destroying the CURRENT
+         * context is legal — real CGL then has none current. Clear BOTH
+         * bindings this file maintains BEFORE unregistering and freeing:
+         * the OSMesa/GLAPI current (else every later gl* call dispatches
+         * through the destroyed Mesa context) and the substitute TSD
+         * (else CGLGetCurrentContext's TSD path answers the freed
+         * pointer as a "foreign" context). */
+        if (sc->osmesa_ctx && OSMesaGetCurrentContext() == sc->osmesa_ctx)
+            shim_osmesa_make_current(NULL);
+        if (g_tls_cgl_ok &&
+            pthread_getspecific(g_tls_cgl) == (void *)sc)
+            substitute_cgl_tls_set(NULL);
         shim_unregister(sc);
         if (sc->osmesa_ctx) OSMesaDestroyContext(sc->osmesa_ctx);
         free(sc->render_buf);
