@@ -28,6 +28,7 @@
 #include <sys/time.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>   /* rung276: monotonic clock for the quarantine */
 #include <IOKit/IOKitLib.h>
 
 /* Diagnostic instrumentation gate. Set VIRGL_IOKIT_DEBUG=1 in the guest
@@ -168,9 +169,28 @@ static size_t s_bk_qbytes;
  * hard cap BK_QMAX still forces eviction (logged). */
 static uint64_t bk_now_ms(void)
 {
-   struct timeval tv;
-   gettimeofday(&tv, NULL);
-   return (uint64_t)tv.tv_sec * 1000u + (uint64_t)tv.tv_usec / 1000u;
+   /* rung276 (PR review t3cau): MONOTONIC. gettimeofday() follows the
+    * wall clock, and in this VM the wall clock steps backward (NTP at
+    * boot, host suspend/resume). A backward step makes
+    * (now - s_bk_q[k].ms) wrap to ~2^64 ms and every entry read as
+    * older-than-hold — the eviction loop would munmap backings the kext
+    * still holds inside its r270 deferred release, the exact hazard the
+    * hold exists to prevent. mach_absolute_time never moves backward
+    * (Apple: "monotonic ... unaffected by wall clock adjustments"), so
+    * only the elapsed time is compared; the epoch is irrelevant. */
+   static mach_timebase_info_data_t s_tbi;
+   static int s_have_tbi = 0;
+   if (!s_have_tbi) {
+      if (mach_timebase_info(&s_tbi) != KERN_SUCCESS) {
+         /* x86_64 macOS timebase is 1/1; a failure leaves abs == ns. */
+         s_tbi.numer = 1;
+         s_tbi.denom = 1;
+      }
+      s_have_tbi = 1;
+   }
+   uint64_t abs = mach_absolute_time();
+   return (uint64_t)((double)abs * (double)s_tbi.numer /
+                     (double)s_tbi.denom / 1000000.0);
 }
 
 static void bk_config(void)
