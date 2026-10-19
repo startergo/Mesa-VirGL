@@ -140,8 +140,9 @@ struct memstream {
     char  **bufp;    /* caller's out-pointer                      */
     size_t *sizep;   /* caller's out-size                         */
     char   *buf;     /* current buffer (may be NULL if unused)    */
-    size_t  len;     /* bytes written so far                      */
+    size_t  len;     /* high-water mark: bytes written so far     */
     size_t  cap;     /* allocated capacity (>= len + 1)           */
+    size_t  pos;     /* current write cursor (fseek target)       */
 };
 
 /*
@@ -168,31 +169,49 @@ static int memstream_reserve(struct memstream *st, size_t need)
     st->cap = newcap;
     st->buf[st->len] = '\0'; /* keep the invariant: buf[len] == '\0' */
     *st->bufp  = st->buf;
-    *st->sizep = st->len;
+    *st->sizep = st->pos;   /* the cursor is the reported size (see below) */
     return 0;
 }
 
-/* funopen write callback: append `len` bytes from `data`. Return 0 on
- * success, -1 on error (funopen treats nonzero write return as failure). */
+/* funopen write callback: write `len` bytes at the current cursor.
+ * funopen(3) gives the callback write(2) calling conventions, so it must
+ * return the number of bytes written; returning 0 is a SHORT WRITE and
+ * stdio turns it into an error — measured on this stdio family: a
+ * callback returning 0 makes fflush()/fclose() return EOF, and any write
+ * larger than the stdio buffer returns 0 from fwrite() with ferror() set
+ * (fwrite=0/65536). Return len, or -1 on error. */
 static int memstream_write(void *cookie, const char *data, int len)
 {
     if (len < 0) { errno = EINVAL; return -1; }
     struct memstream *st = (struct memstream *)cookie;
     size_t ulen = (size_t)len;
-    /* Guard against size_t overflow on st->len + ulen. */
-    if (ulen > (size_t)-1 - st->len) { errno = ENOMEM; return -1; }
-    if (memstream_reserve(st, st->len + ulen) != 0)
+    /* Guard against size_t overflow on st->pos + ulen. */
+    if (ulen > (size_t)-1 - st->pos) { errno = ENOMEM; return -1; }
+    if (memstream_reserve(st, st->pos + ulen) != 0)
         return -1;
-    memcpy(st->buf + st->len, data, ulen);
-    st->len += ulen;
+    if (st->pos > st->len) {
+        /* A seek past the end opened a hole: zero-fill it, as glibc's
+         * open_memstream does (the gap reads as '\0'). */
+        memset(st->buf + st->len, 0, st->pos - st->len);
+        st->len = st->pos;
+    }
+    memcpy(st->buf + st->pos, data, ulen);
+    st->pos += ulen;
+    if (st->pos > st->len) st->len = st->pos;
     st->buf[st->len] = '\0';
     *st->bufp  = st->buf;
-    *st->sizep = st->len;
-    return 0;
+    /* *sizep is the CURSOR, as on the native implementation (measured):
+     * write 11, fseek(0), write 2 -> *sizep == 2 after fflush/fclose, and
+     * the bytes past the cursor stay in the buffer (buf[2] == 'l'). */
+    *st->sizep = st->pos;
+    return len;
 }
 
-/* funopen seek callback. open_memstream is seekable; seeking updates the
- * logical size and zero-fills any gap. The returned cursor is the new write
+/* funopen seek callback. open_memstream is seekable; the cursor is a
+ * separate field from the high-water mark so that a write after
+ * fseek(SEEK_SET) OVERWRITES from the cursor instead of appending, and
+ * SEEK_CUR / ftell report the cursor. Seeking past the end extends the
+ * buffer and zero-fills the gap. The returned cursor is the new write
  * offset. */
 static fpos_t memstream_seek(void *cookie, fpos_t offset, int whence)
 {
@@ -200,7 +219,7 @@ static fpos_t memstream_seek(void *cookie, fpos_t offset, int whence)
     fpos_t base;
     switch (whence) {
         case SEEK_SET: base = 0;                break;
-        case SEEK_CUR: base = (fpos_t)st->len;  break;
+        case SEEK_CUR: base = (fpos_t)st->pos;  break;
         case SEEK_END: base = (fpos_t)st->len;  break;
         default: errno = EINVAL; return -1;
     }
@@ -215,9 +234,10 @@ static fpos_t memstream_seek(void *cookie, fpos_t offset, int whence)
         memset(st->buf + st->len, 0, (size_t)newpos - st->len);
         st->len = (size_t)newpos;
     }
+    st->pos = (size_t)newpos;
     st->buf[st->len] = '\0';
     *st->bufp  = st->buf;
-    *st->sizep = st->len;
+    *st->sizep = st->pos;
     return newpos;
 }
 
@@ -239,7 +259,7 @@ static int memstream_close(void *cookie)
         st->buf[st->len] = '\0';
     }
     *st->bufp  = st->buf;
-    *st->sizep = st->len;
+    *st->sizep = st->pos;
     free(st);
     return 0;
 }
