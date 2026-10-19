@@ -16,8 +16,10 @@
  * gluScaleImage, gluErrorString, and the matrix helpers. Implemented
  * against Mesa's functions (same p_* pointers as the rest of the
  * substitute; the few extras dlsym'd lazily from the already-open
- * libOSMesa). Pixel-store state is saved/restored around every upload
- * — the context-global lesson (GL_UNPACK_ROW_LENGTH bug, 2026-08-13).
+ * libOSMesa). GL_UNPACK_ALIGNMENT is saved and restored around every
+ * upload; other pixel-store state is left untouched (this file never
+ * sets it) — the context-global lesson (GL_UNPACK_ROW_LENGTH bug,
+ * 2026-08-13).
  * Simplified box filter, not pixel-identical to Apple's GLU — visual
  * equivalence, not bit-equivalence, is the bar.
  *
@@ -279,7 +281,6 @@ void gluLookAt(GLdouble eyex, GLdouble eyey, GLdouble eyez,
         0, 0, 0, 1
     };
     s_glMultMatrixf(m);
-    s_glRotatef(180.0f, 0.0f, 1.0f, 0.0f);
     s_glTranslatef((float)-eyex, (float)-eyey, (float)-eyez);
 }
 
@@ -293,8 +294,8 @@ void gluPickMatrix(GLdouble x, GLdouble y, GLdouble width, GLdouble height,
     m[0]  = (float)(viewport[2] / width);
     m[5]  = (float)(viewport[3] / height);
     m[10] = 1.0f;
-    m[12] = (float)(viewport[2] + 2.0 * (viewport[0] - x) / width);
-    m[13] = (float)(viewport[3] + 2.0 * (viewport[1] - y) / height);
+    m[12] = (float)((viewport[2] + 2.0 * (viewport[0] - x)) / width);
+    m[13] = (float)((viewport[3] + 2.0 * (viewport[1] - y)) / height);
     m[15] = 1.0f;
     s_glMultMatrixf(m);
 }

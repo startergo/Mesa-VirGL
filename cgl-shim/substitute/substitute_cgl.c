@@ -1016,12 +1016,19 @@ CGLSetParameter(CGLContextObj ctx, CGLContextParameter pname, const GLint *param
     return kCGLNoError;
 }
 /* CGLSetSurface — MILESTONE 3 (2026-08-21): the system hands us the
- * WINDOW'S CGS SURFACE ID here (docs/ga-cfplugin.md). Intercepted, not
+ * window's CGS SURFACE ID here (docs/ga-cfplugin.md). Intercepted, not
  * forwarded (the real Apple GL must not attach to our OSMesa context's
  * token): record the id, lazily start the GA session, and bind the
  * surface via AllocateSurface — the kernel relay then presents into
- * the WINDOW'S surface (single source of truth; WindowServer
- * composites; the flicker-era desktop-scanout writes retire). */
+ * the window's surface (single source of truth; WindowServer
+ * composites; the flicker-era desktop-scanout writes retire).
+ *
+ * ABI: this is the four-argument private SPI the system actually calls
+ * — CGLSetSurface(ctx, layerID, contextID, sid) (WebKit PAL's
+ * CGLSPI.h shape: CGLLayerID/CGLContextID/CGLSurfaceID are uint32_t).
+ * The old six-argument prototype read the caller's registers at the
+ * wrong offsets and ended up binding the LAYER/WINDOW id as the
+ * surface. The surface to bind is the FOURTH argument, sid. */
 #include <IOKit/IOKitLib.h>
 #include <IOKit/IOCFPlugIn.h>
 #include <IOKit/graphics/IOGraphicsInterface.h>
@@ -1074,22 +1081,21 @@ static void ga_session_init(void)
     IOObjectRelease(fb);
 }
 
-CGLError CGLSetSurface(CGLContextObj ctx, GLuint read_write,
-                       GLuint surface_id, GLenum surface_type,
-                       GLint width, GLint height)
+CGLError CGLSetSurface(CGLContextObj ctx, uint32_t layerID,
+                       uint32_t contextID, uint32_t sid)
 {
-    (void)ctx; (void)read_write; (void)surface_type; (void)width; (void)height;
+    (void)ctx; (void)layerID; (void)contextID;
     ga_session_init();
-    if (g_ga.state == 1 && surface_id && surface_id != g_ga.bound_id) {
+    if (g_ga.state == 1 && sid && sid != g_ga.bound_id) {
         IOReturn rc = g_ga.vt->AllocateSurface(
-            g_ga.obj, kIOBlitHasCGSSurface, &g_ga.surf, (void*)(uintptr_t)surface_id);
+            g_ga.obj, kIOBlitHasCGSSurface, &g_ga.surf, (void*)(uintptr_t)sid);
         if (rc == kIOReturnSuccess) {
-            g_ga.bound_id = surface_id;
+            g_ga.bound_id = sid;
             fprintf(stderr, "substitute_cgl: GA surface %u BOUND — relay "
-                            "presents into the window surface\n", surface_id);
+                            "presents into the window surface\n", sid);
         } else {
             fprintf(stderr, "substitute_cgl: GA AllocateSurface(%u) -> 0x%x\n",
-                    surface_id, rc);
+                    sid, rc);
         }
     }
     return kCGLNoError;
