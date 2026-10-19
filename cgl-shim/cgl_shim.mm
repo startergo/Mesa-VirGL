@@ -933,9 +933,23 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 
 + (NSOpenGLContext *)shim_currentContext
 {
-    /* Gecko's IsCurrent() compares this against its own mContext pointer.
-     * Must return the actual NSOpenGLContext*, not a token. */
-    return get_current_ctx();
+    NSOpenGLContext *ctx = get_current_ctx();
+    if (ctx) {
+        /* Gecko's IsCurrent() compares this against its own mContext pointer.
+         * Must return the actual NSOpenGLContext*, not a token. */
+        return ctx;
+    }
+    /* YKBwO (PR review): a native (non-shim) context can be current —
+     * -makeCurrentContext's fallback path calls the ORIGINAL IMP for
+     * contexts the shim did not take over (registry full, no OSMesa
+     * context), and that path never touches our TLS. With the TLS empty,
+     * returning nil here hid a genuinely current native context, which is
+     * exactly what the "fall back to the original IMP" design promised
+     * would keep working. swizzle_class_method used
+     * method_exchangeImplementations, so the original IMP lives under the
+     * shim selector — calling it through the class re-enters Apple's
+     * +currentContext, not this method. */
+    return [NSOpenGLContext shim_currentContext];
 }
 
 + (void)shim_clearCurrentContext
