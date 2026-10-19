@@ -221,9 +221,23 @@ if [ "$FORCE_LINK" = "1" ]; then
     # own libc++. Mesa's C++ (GLSL compiler) is entirely internal; the
     # GL entry points are C. No C++ symbols cross the ABI boundary.
     LIBCXX_DIR="$(cd "$(dirname "$0")/libcxx/lib" && pwd)"
+    # Shell-quote the archives inserted into the eval'd link command (review
+    # ZZBKM): LINK_CMD is re-executed with `eval`, so a checkout path that
+    # contains whitespace arrives at the linker split into several argv words
+    # and the link fails. Substitute a placeholder through sed (no path text
+    # passes through a sed replacement, which would also eat `\`, `&`, `|`),
+    # then quote the real paths for the shell. python3 is already required
+    # above (mako), and shlex-style quoting is one line there.
     PATCHED=$(printf '%s' "$PATCHED" \
-        | sed "s|-Wl,-reexport_library,[^ ]*libc++.1.dylib|$LIBCXX_DIR/libc++.a|g" \
-        | sed "s|-Wl,-reexport_library,[^ ]*libc++abi.dylib|$LIBCXX_DIR/libc++abi.a|g")
+        | sed "s|-Wl,-reexport_library,[^ ]*libc++.1.dylib|@LIBCXX_A@|g" \
+        | sed "s|-Wl,-reexport_library,[^ ]*libc++abi.dylib|@LIBCXXABI_A@|g")
+    PATCHED=$(printf '%s' "$PATCHED" | python3 -c '
+import sys
+cmd = sys.stdin.read()
+for tok, path in (("@LIBCXX_A@", sys.argv[1]), ("@LIBCXXABI_A@", sys.argv[2])):
+    cmd = cmd.replace(tok, "\x27" + path.replace("\x27", "\x27\\\x27\x27") + "\x27")
+sys.stdout.write(cmd)
+' "$LIBCXX_DIR/libc++.a" "$LIBCXX_DIR/libc++abi.a")
     PATCHED="$PATCHED -nostdlib++"
 
     ( cd "$BUILD_DIR" && eval "$PATCHED" )
