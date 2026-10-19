@@ -340,6 +340,8 @@ struct shim_timing_state {
 static struct shim_timing_state g_timing;
 static mach_timebase_info_data_t g_timebase;
 static int g_timing_verbose = 0;
+/* Yovbk (PR review): guards every g_timing field (flush path and drawRect). */
+static pthread_mutex_t g_timing_mtx = PTHREAD_MUTEX_INITIALIZER;
 static double g_warmup_secs = SHIM_TIMING_WARMUP_DEFAULT_SECS;
 
 static double shim_ticks_to_ms(uint64_t ticks)
@@ -442,6 +444,15 @@ static void shim_timing_record_flush(struct shim_ctx *sc)
     }
 
     if (g_timing.warmup_settled) {
+        /* Yovbk (PR review): flushBuffer runs on Gecko's compositor thread
+         * AND the GL thread, and shim_timing_record_draw updates
+         * g_timing.blit from the main thread, so these updates race: torn
+         * min/max, a mean that drifts, and a window_count that can be seen
+         * crossing the threshold twice. One mutex for the whole timing
+         * struct (g_timing_mtx, also taken in shim_timing_record_draw) —
+         * held for a few hundred ns per frame, nothing compared to the
+         * readback it is measuring. */
+        pthread_mutex_lock(&g_timing_mtx);
         if (have_wall) shim_stats_update(&g_timing.wall,     wall_d);
         shim_stats_update(&g_timing.submit,   submit_d);
         shim_stats_update(&g_timing.transfer, transfer_d);
@@ -464,11 +475,13 @@ static void shim_timing_record_flush(struct shim_ctx *sc)
             shim_stats_reset(&g_timing.blit);
             g_timing.window_count = 0;
         }
+        pthread_mutex_unlock(&g_timing_mtx);
     }
 }
 
 /* Called from shim_drawRect — logs blit cost (if verbose) and folds into
- * rolling stats. Single main thread, so no lock needed. */
+ * rolling stats. drawRect is main-thread only, but the flush threads read and
+ * RESET g_timing.blit under g_timing_mtx, so this update takes it too. */
 static void shim_timing_record_draw(uint64_t blit_ticks)
 {
     if (g_timing_verbose) {
@@ -476,7 +489,9 @@ static void shim_timing_record_draw(uint64_t blit_ticks)
                 shim_ticks_to_ms(blit_ticks));
     }
     if (g_timing.warmup_settled) {
+        pthread_mutex_lock(&g_timing_mtx);
         shim_stats_update(&g_timing.blit, blit_ticks);
+        pthread_mutex_unlock(&g_timing_mtx);
     }
 }
 
