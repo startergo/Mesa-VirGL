@@ -1223,17 +1223,20 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * Sentinels distinguish "wrote zeros" from "didn't write". */
     {
         static int s_diag_log = 0;
-        if (s_diag_log < 5) {
+        /* Yovbg (PR review): gated on g_timing_verbose (the same env as the
+         * timing prints) AND no p_glGetError() any more — glGetError CLEARS
+         * the pending error, so a diagnostic probe on the application's
+         * context was eating its error state. */
+        if (g_timing_verbose && s_diag_log < 5) {
             s_diag_log++;
             uint32_t scratch[4] = {0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF};
             shim_readback(2, 2, scratch);
-            GLenum err1 = p_glGetError ? p_glGetError() : 0;
             GLint vp[4] = {0};
             if (p_glGetIntegerv) p_glGetIntegerv(GL_VIEWPORT, vp);
             fprintf(stderr, "cgl_shim: diag[%d] scratch=(0x%08x,0x%08x,0x%08x,0x%08x) "
-                    "glError=0x%x viewport=(%d,%d,%d,%d)\n",
+                    "viewport=(%d,%d,%d,%d)\n",
                     s_diag_log, scratch[0], scratch[1], scratch[2], scratch[3],
-                    err1, vp[0], vp[1], vp[2], vp[3]);
+                    vp[0], vp[1], vp[2], vp[3]);
         }
     }
 
