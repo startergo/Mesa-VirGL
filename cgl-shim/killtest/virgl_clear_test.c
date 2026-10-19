@@ -70,7 +70,7 @@ static int check_clear(OSMesaContext ctx, const char *name,
 }
 
 int main(void) {
-    fprintf(stdout, "osmesa_softpipe_test starting\n");
+    fprintf(stdout, "virgl_clear_test starting\n");
     fflush(stdout);
 
     OSMesaContext ctx = OSMesaCreateContextExt(OSMESA_BGRA, 16, 0, 0, NULL);
