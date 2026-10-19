@@ -84,12 +84,13 @@ int main(void) {
 
     int fail = 0;
 
-    /* Clear A: green-dominant — non-boundary values per LEDGER convention */
-    fail |= check_clear(ctx, "clearA", 0.20f, 0.40f, 0.60f, 1.0f,
+    /* Clear A: green-dominant — non-boundary values per LEDGER convention.
+     * (fail +=, not |=, so the RESULT line counts both failures — YKBwh.) */
+    fail += check_clear(ctx, "clearA", 0.20f, 0.40f, 0.60f, 1.0f,
                          51, 102, 153);
 
     /* Clear B: red-dominant */
-    fail |= check_clear(ctx, "clearB", 0.80f, 0.20f, 0.40f, 1.0f,
+    fail += check_clear(ctx, "clearB", 0.80f, 0.20f, 0.40f, 1.0f,
                          204, 51, 102);
 
     OSMesaDestroyContext(ctx);
