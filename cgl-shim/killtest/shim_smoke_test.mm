@@ -29,6 +29,7 @@
     int mFrameCount;
 }
 - (void)renderFrame:(NSTimer *)t;
+- (void)stopAnimation;
 @end
 
 @implementation ShimTestView
@@ -99,19 +100,29 @@
     }
 }
 
+- (void)stopAnimation {
+    /* YQzAl (PR review): a repeating NSTimer retains its target and the run
+     * loop retains the timer, so the only place that ever invalidated it was
+     * this view's dealloc — which cannot run while the timer holds the view.
+     * Stop it from windowWillClose instead. */
+    [mTimer invalidate];
+}
+
 - (void)dealloc {
     [mTimer invalidate];
     if (mCtx) { [mCtx clearDrawable]; [mCtx release]; mCtx = nil; }
+    [mTimer release];
     if (mFmt) { [mFmt release]; mFmt = nil; }
     [super dealloc];
 }
 
 @end
 
-@interface ShimTestAppDelegate : NSObject <NSApplicationDelegate> {
+@interface ShimTestAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate> {
     NSWindow *mWin;
     ShimTestView *mView;
 }
+- (void)windowWillClose:(NSNotification *)n;
 @end
 
 @implementation ShimTestAppDelegate
@@ -128,6 +139,10 @@
                       defer:NO];
     [mWin setTitle:@"CGL Shim Smoke Test"];
     [mWin setReleasedWhenClosed:NO];
+    /* YQzAl (PR review): the view's timer retains the view, so the window
+     * must tell it to stop; otherwise the view (and its GL context) outlives
+     * the window and is never deallocated. */
+    [mWin setDelegate:self];
 
     mView = [[ShimTestView alloc] initWithFrame:[[mWin contentView] bounds]];
     [mView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -137,8 +152,14 @@
     fprintf(stderr, "shim_smoke_test: window created, view installed\n");
 }
 
+- (void)windowWillClose:(NSNotification *)n {
+    (void)n;
+    [mView stopAnimation];
+}
+
 - (void)dealloc {
     [mWin release];
+    [mView release];   /* YQzAu (PR review): was never released */
     [super dealloc];
 }
 
