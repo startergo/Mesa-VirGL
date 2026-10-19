@@ -4,7 +4,7 @@
  *
  * Derived from virgl_vtest_winsys.h: the IOKit winsys replaces vtest's
  * Unix-socket transport with IOConnectCallMethod against the VMQemuVGA
- * kext's VMVirtIOGPUUserClient (selectors 0x6000-0x6009).
+ * kext's VMVirtIOGPUUserClient (selectors 0x6000-0x600F).
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),

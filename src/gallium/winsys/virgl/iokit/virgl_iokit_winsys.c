@@ -506,8 +506,20 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
       lifelog("virgl_iokit: 0x6009 ctx=%u res=%u -> 0x%x\n",
               (unsigned)iws->ctx_id, (unsigned)res->res_handle, kr);
       if (kr != KERN_SUCCESS) {
-         fprintf(stderr, "virgl_iokit: WARN 0x6009 ctxAttachResource FAIL 0x%x\n", kr);
-         /* Non-fatal for now — matches probeTransport3D's behavior. */
+         fprintf(stderr, "virgl_iokit: 0x6009 ctxAttachResource FAIL 0x%x — "
+                 "resource %u unusable in ctx %u, failing create\n",
+                 kr, (unsigned)res->res_handle, (unsigned)iws->ctx_id);
+         /* Fatal: without the ctx attach, any later command referencing
+          * this handle (SET_FRAMEBUFFER_STATE on a surface built on it,
+          * or a draw binding it) hits the kext's illegal-resource path.
+          * Same cleanup as the 0x6003 failure above. */
+         census_unregister(res);
+         uint64_t unref_in[1] = { res->res_handle };
+         IOConnectCallMethod(iws->connect, IOKIT_RESOURCE_UNREF,
+                             unref_in, 1, NULL, 0, NULL, NULL, NULL, NULL);
+         bk_free(res->ptr, size);
+         FREE(res);
+         return NULL;
       }
    }
 
@@ -750,15 +762,18 @@ virgl_iokit_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
 static struct { uint32_t handle, cdw, cres, gen; void *cbuf; void *tid; unsigned char already; } s_r251[R251_RING];
 static volatile unsigned s_r251_n, s_r251_gen, s_r251_inflight, s_r251_overlap;
 static void *s_r251_last_tid;
-/* VIRGL_IOKIT_R251=0 turns the whole instrument off (ring, overlap, submit
- * walk) for the on/off A/B: does 251's own cost hide the race? Read once. */
+/* VIRGL_IOKIT_R251=1 turns the instrument ON (ring, overlap, submit
+ * walk); it is OFF by default — the walk costs a full command-stream
+ * scan on every submit and the banner is stderr noise in production.
+ * Read once per process. */
 static int r251_on(void)
 {
    static int v = -1;
    if (v < 0) {
       const char *e = getenv("VIRGL_IOKIT_R251");
-      v = !(e && *e == '0');
-      fprintf(stderr, "rung251: instrument %s (VIRGL_IOKIT_R251=%s)\n", v ? "ON" : "OFF", e ? e : "unset");
+      v = (e && *e == '1');
+      if (v)
+         fprintf(stderr, "rung251: instrument %s (VIRGL_IOKIT_R251=%s)\n", v ? "ON" : "OFF", e ? e : "unset");
    }
    return v;
 }
@@ -1024,7 +1039,7 @@ virgl_iokit_get_caps(struct virgl_winsys *vws, struct virgl_drm_caps *caps)
     * then called through it unguarded. Defaults stand, the
     * caller sees a caps-less screen instead of a crash. */
    if (!iws || !iws->connect) {
-      fprintf(stderr, "virgl_iokit: get_caps REFUSED — no "
+      iokit_dbg("virgl_iokit: get_caps REFUSED — no "
               "connection (host virtio timeout class); "
               "caps stay at defaults\n");
       return 0;   /* r174a's intent: defaults stand, screen continues.
@@ -1156,19 +1171,31 @@ int cgl_shim_host_present_enabled(void)
 }
 
 __attribute__((visibility("default")))
+static pthread_mutex_t g_hp_mtx = PTHREAD_MUTEX_INITIALIZER;
 int cgl_shim_host_present_rect(int *x, int *y, int *w, int *h)
 {
-   if (!cgl_shim_host_present_enabled() || !g_hp_valid)
+   int ok;
+   /* Written from the AppKit main thread (view bounds), read from the
+    * GL thread inside submit/flush — a plain 4-word copy can tear
+    * against a concurrent set; take the (nanosecond-scale) lock. */
+   if (!cgl_shim_host_present_enabled())
       return 0;
-   *x = g_hp_x; *y = g_hp_y; *w = g_hp_w; *h = g_hp_h;
-   return 1;
+   pthread_mutex_lock(&g_hp_mtx);
+   ok = g_hp_valid;
+   if (ok) {
+      *x = g_hp_x; *y = g_hp_y; *w = g_hp_w; *h = g_hp_h;
+   }
+   pthread_mutex_unlock(&g_hp_mtx);
+   return ok ? 1 : 0;
 }
 
 __attribute__((visibility("default")))
 void cgl_shim_set_host_present_rect(int x, int y, int w, int h)
 {
+   pthread_mutex_lock(&g_hp_mtx);
    g_hp_x = x; g_hp_y = y; g_hp_w = w; g_hp_h = h;
    g_hp_valid = 1;
+   pthread_mutex_unlock(&g_hp_mtx);
 }
 
 static void virgl_iokit_flush_frontbuffer(struct virgl_winsys *vws, struct virgl_cmd_buf *cbuf,
