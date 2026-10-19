@@ -816,6 +816,19 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
    struct virgl_iokit_cmd_buf *cbuf = virgl_iokit_cmd_buf(_cbuf);
    kern_return_t kr;
 
+   /* rung277 (PR review t3cbN): a resource-only emit_res(..., write_buf =
+    * false) can poison a cbuf whose cdw is still 0 — add_res's REALLOC
+    * failed with no handle written into the blob. The empty-buffer return
+    * below would then keep poisoned set AND keep the res_bo references, so
+    * the NEXT submit, a valid batch, is the one that gets dropped (and the
+    * failed batch's references leak until then). Clear it here with the
+    * same cleanup the drop path does; there is nothing to submit. */
+   if (cbuf->poisoned && cbuf->base.cdw == 0) {
+      virgl_iokit_release_all_res(iws, cbuf);
+      memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
+      cbuf->poisoned = 0;
+   }
+
    if (cbuf->base.cdw == 0)
       return 0;
 
