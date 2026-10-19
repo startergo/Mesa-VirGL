@@ -54,6 +54,8 @@
 
 #ifdef MAPI_PTHREAD_TSD
 #include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "util/simple_mtx.h"
 #endif
 
@@ -114,8 +116,22 @@ static pthread_once_t tsd_once = PTHREAD_ONCE_INIT;
 static void
 tsd_keys_create(void)
 {
-   pthread_key_create(&tsd_dispatch_key, NULL);
-   pthread_key_create(&tsd_context_key, NULL);
+   /* PRRT_kwDOPZhcm86uEfZv (PR review): same rule as the u_call_once TSD
+    * keys (fixed for PRRT_kwDOPZhcm86uAnOQ): a failed key creation must
+    * never be marked ready — pthread_once will not rerun this routine,
+    * the key variable keeps its zero init, and every later
+    * pthread_getspecific/pthread_setspecific would touch a key id this
+    * file never created. On Darwin key ids are process-global TSD
+    * slots: a foreign slot's value would be returned AS THE GL DISPATCH
+    * TABLE and calls would jump through it, and setspecific would
+    * overwrite another subsystem's per-thread state. Both failures are
+    * EAGAIN (PTHREAD_KEYS_MAX) or ENOMEM — abort at the cause. */
+   if (pthread_key_create(&tsd_dispatch_key, NULL) != 0 ||
+       pthread_key_create(&tsd_context_key, NULL) != 0) {
+      fprintf(stderr, "u_current: pthread_key_create failed - GL "
+              "dispatch TSD unavailable, aborting\n");
+      abort();
+   }
    tsd_keys_ready = 1;
 }
 
