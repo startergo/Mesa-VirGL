@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>WGL2</title></head>
+<body style="font:14px monospace;background:#333;color:#eee">
+<canvas id="c" width="400" height="300" style="border:1px solid #888"></canvas>
+<pre id="out"></pre>
+<script>
+var out = document.getElementById("out");
+var logbuf = "";
+function log(s) { out.textContent += s + "\n"; logbuf += s + " | ";
+                  document.title = "WGL2: " + logbuf.substring(0, 220); }
+var c = document.getElementById("c");
+var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+if (!gl) { log("no ctx"); } else {
+  log("ctx OK");
+  // Step 1: clear default framebuffer to RED
+  gl.clearColor(0.9, 0.1, 0.1, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  log("default clear RED");
+  // Step 2: create FBO + texture, clear it to BLUE
+  var tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  // only level 0 is uploaded below; the default
+  // min filter (NEAREST_MIPMAP_LINEAR) would make the texture
+  // INCOMPLETE and the sampler would return black — the "canvas should
+  // be BLUE" check would then fail for a reason that is not the bug
+  // under test. Non-mipmapped filters make a level-0-only texture
+  // complete.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 400, 300, 0, gl.RGBA,
+                gl.UNSIGNED_BYTE, null);
+  var fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
+                          gl.TEXTURE_2D, tex, 0);
+  var fbs = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  log("FBO status: " + (fbs == gl.FRAMEBUFFER_COMPLETE ? "COMPLETE" :
+                        "0x" + fbs.toString(16)));
+  gl.clearColor(0.1, 0.3, 0.95, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  log("FBO clear BLUE");
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  // Step 3: draw the FBO texture over the default fb via a quad
+  var vs = "attribute vec2 p; varying vec2 uv;" +
+           "void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.,1.);}";
+  var fs = "precision mediump float; varying vec2 uv;" +
+           "uniform sampler2D u_t;" +
+           "void main(){gl_FragColor=texture2D(u_t,uv);}";
+  function sh(t, s) { var h = gl.createShader(t); gl.shaderSource(h, s);
+                       gl.compileShader(h);
+    if (!gl.getShaderParameter(h, gl.COMPILE_STATUS))
+      log("shader fail: " + gl.getShaderInfoLog(h));
+    return h; }
+  var pr = gl.createProgram();
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs));
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(pr);
+  log("program link: " + (gl.getProgramParameter(pr, gl.LINK_STATUS) ?
+                          "OK" : "FAIL " + gl.getProgramInfoLog(pr)));
+  gl.useProgram(pr);
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(
+      [-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  var loc = gl.getAttribLocation(pr, "p");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  var ul = gl.getUniformLocation(pr, "u_t");
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.uniform1i(ul, 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  log("quad drawn from FBO tex — canvas should be BLUE if FBO worked");
+  var e;
+  while ((e = gl.getError()) != gl.NO_ERROR) log("GL err 0x" + e.toString(16));
+  log("errors flushed");
+  // LAST-OP DISCRIMINATOR: green direct-to-default-fb as the final op
+  gl.clearColor(0.0, 0.9, 0.0, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  log("final GREEN clear done — canvas should be GREEN if last-op presents");
+}
+</script>
+</body>
+</html>

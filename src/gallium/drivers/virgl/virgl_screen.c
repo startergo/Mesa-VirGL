@@ -1162,7 +1162,6 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    if (config && config->options) {
       driParseConfigFiles(config->options, config->options_info, 0, "virtio_gpu",
                           NULL, NULL, NULL, 0, NULL, 0);
-
       screen->tweak_gles_emulate_bgra =
             driQueryOptionb(config->options, VIRGL_GLES_EMULATE_BGRA);
       screen->tweak_gles_apply_bgra_dest_swizzle =
@@ -1172,6 +1171,18 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
       screen->tweak_l8_srgb_readback =
             driQueryOptionb(config->options, VIRGL_FORMAT_L8_SRGB_ENABLE_READBACK);
       screen->shader_sync = driQueryOptionb(config->options, VIRGL_SHADER_SYNC);
+   } else {
+      /* No DRI config on the OSMesa/iokit path — sw_screen_create_named
+       * calls virgl_create_screen(vws, NULL), so the driQueryOption*
+       * calls above never run and the tweak fields would keep the
+       * struct's zero init. Apply the DECLARED defaults of
+       * virgl_driinfo.h.in — the same values a real driParseConfigFiles
+       * with no drirc leaves in the cache. */
+      screen->tweak_gles_emulate_bgra = true;
+      screen->tweak_gles_apply_bgra_dest_swizzle = true;
+      screen->tweak_gles_tf3_value = 1024;
+      screen->tweak_l8_srgb_readback = false;
+      screen->shader_sync = false;
    }
    screen->tweak_gles_emulate_bgra &= !(virgl_debug & VIRGL_DEBUG_NO_EMULATE_BGRA);
    screen->tweak_gles_apply_bgra_dest_swizzle &= !(virgl_debug & VIRGL_DEBUG_NO_BGRA_DEST_SWIZZLE);

@@ -52,6 +52,13 @@
 #include "util/u_thread.h"
 #include "u_current.h"
 
+#ifdef MAPI_PTHREAD_TSD
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "util/simple_mtx.h"
+#endif
+
 #ifndef MAPI_MODE_UTIL
 
 #include "table.h"
@@ -66,6 +73,173 @@ extern void (*__glapi_noop_table[])(void);
 #define stub_init_once() init_glapi_relocs_once()
 
 #endif
+
+#ifdef MAPI_PTHREAD_TSD
+/* ===================================================================
+ * PTHREAD-TSD RESTORATION (2026-08-19) — the pre-2015 upstream design
+ * (u_current.c before "THREADS was always defined, remove it"), ported
+ * to the modern symbol names. Apple clang REFUSES TLS for
+ * x86_64-apple-macos10.6 even with -femulated-tls, so the gate above
+ * makes _glapi_tls_* plain globals — and Gecko runs GL on two threads
+ * (main chrome context + compositor thread), stomping each other's
+ * current-context/dispatch on every MakeCurrent. The 2026-08-19 fence-
+ * era error census is that stomp's object-table signature
+ * (uLayerRects/uLayerTransform uniform mismatches, non-existent
+ * texture 2, target mismatches).
+ *
+ * Historical shape, preserved deliberately:
+ *  - single-threaded fast path = PLAIN globals (_glapi_Dispatch /
+ *    _glapi_Context) — no pthread_getspecific on the hot path while
+ *    one thread holds GL;
+ *  - ThreadSafe flips 0→1 forever the moment a MakeCurrent arrives
+ *    from a DIFFERENT thread; from then on storage is per-thread TSD;
+ *  - the thread check runs from the set entry points (the "call this
+ *    periodically from MakeCurrent" contract), under one mutex;
+ *  - keys are created once (pthread_once) with a destructor slot.
+ * The dead _glapi_tls_* globals stay defined for ABI compatibility
+ * (glapi-symbols.txt lists them optional; nothing reads them here).
+ * =================================================================== */
+
+/* dead ABI symbols — see block comment */
+struct _glapi_table *_glapi_tls_Dispatch;
+void *_glapi_tls_Context;
+
+/* single-threaded fast-path storage (the same names the non-TSD build
+ * keeps as dead compat symbols — here they are the real globals) */
+const struct _glapi_table *_glapi_Dispatch;
+const void *_glapi_Context;
+
+static pthread_key_t tsd_dispatch_key, tsd_context_key;
+static int tsd_keys_ready;
+static pthread_once_t tsd_once = PTHREAD_ONCE_INIT;
+
+static void
+tsd_keys_create(void)
+{
+   /* A failed key creation must never be marked ready: pthread_once
+    * will not rerun this routine, the key variable keeps its zero
+    * initialization, and every later pthread_getspecific/
+    * pthread_setspecific would touch a key id this file never created.
+    * On Darwin key ids are process-global small-integer TSD slots, so
+    * id 0 can be another subsystem's live key: its per-thread value
+    * would be returned as our GL dispatch table (arbitrary calls
+    * through it), and our writes would corrupt that subsystem's state.
+    * Creation fails only with the process out of TSD slots (EAGAIN,
+    * PTHREAD_KEYS_MAX) or out of memory (ENOMEM) — die at the cause
+    * before any TSD access. */
+   if (pthread_key_create(&tsd_dispatch_key, NULL) != 0 ||
+       pthread_key_create(&tsd_context_key, NULL) != 0) {
+      fprintf(stderr, "u_current: pthread_key_create failed - GL "
+              "dispatch TSD unavailable, aborting\n");
+      abort();
+   }
+   tsd_keys_ready = 1;
+}
+
+static simple_mtx_t ThreadCheckMutex = SIMPLE_MTX_INITIALIZER;
+static int ThreadSafe;            /* 0→1, never back */
+static pthread_t KnownThread;
+static int FirstThreadCheck = 1;
+
+/* The historical u_current_init(): flip to per-thread storage when a
+ * second thread touches GL. Called from both set entry points. */
+static void
+u_current_thread_check(void)
+{
+   if (ThreadSafe)
+      return;
+
+   simple_mtx_lock(&ThreadCheckMutex);
+   if (!tsd_keys_ready)
+      pthread_once(&tsd_once, tsd_keys_create);
+   if (FirstThreadCheck) {
+      KnownThread = pthread_self();
+      FirstThreadCheck = 0;
+   } else if (!pthread_equal(KnownThread, pthread_self())) {
+      ThreadSafe = 1;
+      /* Historical hygiene: clear the single-threaded globals so no
+       * stale table can be read after the flip. */
+      _glapi_Dispatch = NULL;
+      _glapi_Context = NULL;
+      pthread_setspecific(tsd_dispatch_key, (void *) table_noop_array);
+      pthread_setspecific(tsd_context_key, NULL);
+   }
+   simple_mtx_unlock(&ThreadCheckMutex);
+}
+
+void
+_glapi_destroy_multithread(void)
+{
+   if (tsd_keys_ready) {
+      pthread_key_delete(tsd_dispatch_key);
+      pthread_key_delete(tsd_context_key);
+      tsd_keys_ready = 0;
+   }
+}
+
+void
+_glapi_check_multithread(void)
+{
+   u_current_thread_check();
+}
+
+void
+_glapi_set_context(void *ptr)
+{
+   u_current_thread_check();
+   if (tsd_keys_ready)
+      pthread_setspecific(tsd_context_key, ptr);
+   if (!ThreadSafe)
+      _glapi_Context = ptr;
+}
+
+void *
+_glapi_get_context(void)
+{
+   if (ThreadSafe)
+      return tsd_keys_ready ? pthread_getspecific(tsd_context_key) : NULL;
+   return (void *) _glapi_Context;
+}
+
+void
+_glapi_set_dispatch(struct _glapi_table *tbl)
+{
+   stub_init_once();
+   u_current_thread_check();
+
+   if (!tbl)
+      tbl = (struct _glapi_table *) table_noop_array;
+
+   if (tsd_keys_ready)
+      pthread_setspecific(tsd_dispatch_key, tbl);
+   if (!ThreadSafe)
+      _glapi_Dispatch = tbl;
+}
+
+struct _glapi_table *
+_glapi_get_dispatch(void)
+{
+   if (ThreadSafe) {
+      if (!tsd_keys_ready)
+         return (struct _glapi_table *) table_noop_array;
+      /* TLS-init semantics: a fresh thread's TSD is NULL, but the
+       * entries jump straight through the returned table — the
+       * historical noop-table default must survive here. The 18:04
+       * softpipe crash (compositor at a garbage PC, crash report
+       * powerfox_2026-08-19-180410) was exactly this NULL. */
+      struct _glapi_table *t =
+         (struct _glapi_table *) pthread_getspecific(tsd_dispatch_key);
+      return t ? t : (struct _glapi_table *) table_noop_array;
+   }
+   /* Before the first _glapi_set_dispatch the global is NULL — entry
+    * stubs jump straight through the returned table, so the historical
+    * noop-table default must hold here too (GL calls with no context
+    * current are no-ops, not NULL derefs). */
+   return (_glapi_Dispatch) ? (struct _glapi_table *) _glapi_Dispatch
+                            : (struct _glapi_table *) table_noop_array;
+}
+
+#else /* !MAPI_PTHREAD_TSD — upstream storage, untouched */
 
 /**
  * \name Current dispatch and current context control variables
@@ -155,3 +329,5 @@ _glapi_get_dispatch(void)
 {
    return _glapi_tls_Dispatch;
 }
+
+#endif /* MAPI_PTHREAD_TSD */

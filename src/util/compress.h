@@ -25,6 +25,7 @@
 
 #include <stdbool.h>
 #include <inttypes.h>
+#include <stddef.h>
 
 size_t
 util_compress_max_compressed_len(size_t in_data_size);

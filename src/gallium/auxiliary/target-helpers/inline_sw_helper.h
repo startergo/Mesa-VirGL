@@ -25,6 +25,10 @@
 #include "virgl/vtest/virgl_vtest_public.h"
 //#endif
 
+#if defined(GALLIUM_VIRGL) && defined(__APPLE__)
+#include "virgl/iokit/virgl_iokit_public.h"
+#endif
+
 #ifdef GALLIUM_D3D12
 #include "d3d12/d3d12_public.h"
 #endif
@@ -39,17 +43,25 @@ sw_screen_create_named(struct sw_winsys *winsys, const char *driver)
       screen = llvmpipe_create_screen(winsys);
 #endif
 
-//#if defined(GALLIUM_VIRGL)
-   //if (screen == NULL && strcmp(driver, "virpipe") == 0) {
+#if defined(GALLIUM_VIRGL)
+   if (screen == NULL && strcmp(driver, "virpipe") == 0) {
       struct virgl_winsys *vws;
       vws = virgl_vtest_winsys_wrap(winsys);
       screen = virgl_create_screen(vws, NULL);
-   //}
-//#endif
+   }
+#endif
+
+#if defined(GALLIUM_VIRGL) && defined(__APPLE__)
+   if (screen == NULL && strcmp(driver, "virgl") == 0) {
+      struct virgl_winsys *vws;
+      vws = virgl_iokit_winsys_wrap(winsys);
+      screen = virgl_create_screen(vws, NULL);
+   }
+#endif
 
 #if defined(GALLIUM_SOFTPIPE)
-   //if (screen == NULL && strcmp(driver, "softpipe") == 0)
-      //screen = softpipe_create_screen(winsys);
+   if (screen == NULL && strcmp(driver, "softpipe") == 0)
+      screen = softpipe_create_screen(winsys);
 #endif
 
 #if defined(GALLIUM_ZINK)

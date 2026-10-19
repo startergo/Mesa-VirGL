@@ -46,10 +46,34 @@
  * expensive pthread_getspecific() or its equivalent).
  */
 #if DETECT_OS_APPLE
+#  if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+     /* TLS (__thread / thread_local) requires macOS 10.7+ dyld support.
+      * On 10.6, define empty so the dispatch state variables declared with
+      * this attribute (_glapi_tls_Dispatch / _glapi_tls_Context,
+      * __glX_tls_Context, _egl_TLS) become plain globals. Single-threaded
+      * only; multi-threaded GL would need pthread_key_create/pthread_getspecific.
+      *
+      * PTHREAD-TSD RESTORATION (2026-08-19): Apple clang REFUSES __thread
+      * for x86_64-apple-macos10.6 targets even with -femulated-tls
+      * ("thread-local storage is not supported for the current target"),
+      * so the gate is compiler-mandated and stays. MAPI_PTHREAD_TSD tells
+      * mapi (glapi.h GET_DISPATCH/GET_CURRENT_CONTEXT + u_current.c) to
+      * back current-dispatch/current-context with pthread keys instead —
+      * per-thread by construction, no TLS runtime needed. The plain-global
+      * _glapi_tls_* remain defined as dead symbols for ABI compatibility.
+      * Rationale: Gecko runs GL on two threads (main chrome context +
+      * compositor thread); the globals made every MakeCurrent on one
+      * thread stomp the other's state — the object-table-crossing error
+      * family (uLayerRects/uLayerTransform uniform mismatches,
+      * non-existent texture 2, target mismatches) of 2026-08-19. */
+#    define __THREAD_INITIAL_EXEC
+#    define MAPI_PTHREAD_TSD 1
+#  else
 /* Apple Clang emits wrappers when using thread_local that break module linkage,
  * but not with __thread
  */
-#define __THREAD_INITIAL_EXEC __thread
+#    define __THREAD_INITIAL_EXEC __thread
+#  endif
 #elif defined(__GLIBC__)
 #define __THREAD_INITIAL_EXEC thread_local __attribute__((tls_model("initial-exec")))
 #define REALLY_INITIAL_EXEC

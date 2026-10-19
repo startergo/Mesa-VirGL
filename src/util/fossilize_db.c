@@ -30,6 +30,16 @@
 
 #include "fossilize_db.h"
 
+/* strndup compat: Apple SDKs < 10.7 don't declare it (the 10.6 cross
+ * build also gets it from cross-compat/compat-headers/string.h and the
+ * definition from cross-compat/clock_gettime_compat.o; this declaration
+ * is for Apple deployment targets < 10.7 whenever that wrapper is not
+ * in the include path). Other platforms declare it in <string.h>. */
+#if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && \
+    (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070)
+extern char *strndup(const char *s, size_t n);
+#endif
+
 #ifdef FOZ_DB_UTIL
 
 #include <assert.h>

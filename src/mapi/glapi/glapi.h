@@ -88,7 +88,11 @@ _GLAPI_EXPORT extern __THREAD_INITIAL_EXEC void * _glapi_tls_Context;
 _GLAPI_EXPORT extern const struct _glapi_table *_glapi_Dispatch;
 _GLAPI_EXPORT extern const void *_glapi_Context;
 
-#if DETECT_OS_WINDOWS && !defined(MAPI_MODE_UTIL) && !defined(MAPI_MODE_GLAPI)
+#if (DETECT_OS_WINDOWS && !defined(MAPI_MODE_UTIL) && !defined(MAPI_MODE_GLAPI)) || defined(MAPI_PTHREAD_TSD)
+/* MAPI_PTHREAD_TSD (2026-08-19, 10.6): clang refuses TLS for the target,
+ * so GET_DISPATCH routes through the pthread-key-backed accessors — the
+ * Windows shape. Every GL entry point becomes a function call; the
+ * plain-global _glapi_tls_* are dead ABI symbols (see u_current.c). */
 # define GET_DISPATCH() _glapi_get_dispatch()
 # define GET_CURRENT_CONTEXT(C)  struct gl_context *C = (struct gl_context *) _glapi_get_context()
 #else

@@ -84,7 +84,19 @@ static bool virgl_can_readback_from_scanout(struct virgl_screen *vs,
 static bool virgl_can_use_staging(struct virgl_screen *vs,
                                   struct virgl_resource *res)
 {
+   /* Host must advertise COPY_TRANSFER_BOTH_DIRECTIONS (v2 cap) AND the
+    * winsys must support encoded transfers — otherwise resources get
+    * allocated with alloc_size=1 (staging assumes a tiny placeholder is
+    * fine because transfers go through a staging buffer), but the actual
+    * transfer path can't use staging and falls back to direct readback,
+    * which memcpy's megabytes into the 1-byte allocation and crashes.
+    *
+    * The vctx-level supports_staging check in transfer_prepare catches
+    * the transfer-path side; this catches the allocation side. Both
+    * are needed for supports_encoded_transfers=0 to be a consistent
+    * non-staging mode. */
    return (vs->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS) &&
+         vs->vws->supports_encoded_transfers &&
          (res->b.target != PIPE_BUFFER);
 }
 
@@ -248,8 +260,17 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
    if (readback) {
       /* If we are performing readback for textures and renderer supports
        * copy_transfer_from_host, then we can return here with proper map.
-       */
-      if (res->use_staging) {
+       *
+       * A/B gate: also require vctx->supports_staging. virgl_can_use_staging
+       * (which sets res->use_staging) is gated on host caps AND
+       * vws->supports_encoded_transfers (see its comment above: without
+       * encoded transfers the staging allocation is a 1-byte placeholder
+       * that a direct-readback fallback would overflow); this flag is
+       * gated on vws->supports_encoded_transfers + host caps in
+       * virgl_context_init. Without the vctx check here, the two could
+       * desync when supports_encoded_transfers=0. This gate makes the path
+       * choice robust to either setting. */
+      if (res->use_staging && vctx->supports_staging) {
          if (xfer->base.usage & PIPE_MAP_READ)
             return VIRGL_TRANSFER_MAP_READ_FROM_STAGING;
          else
@@ -295,7 +316,7 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
    if (wait)
       vws->resource_wait(vws, res->hw_res);
 
-   if (res->use_staging) {
+   if (res->use_staging && vctx->supports_staging) {
       map_type = VIRGL_TRANSFER_MAP_WRITE_TO_STAGING;
    }
 

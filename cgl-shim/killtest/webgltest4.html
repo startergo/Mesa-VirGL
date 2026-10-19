@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>WGL4</title></head>
+<body style="font:14px monospace;background:#333;color:#eee">
+<canvas id="c" width="400" height="300" style="border:1px solid #888"></canvas>
+<pre id="out"></pre>
+<script>
+var out = document.getElementById("out");
+var logbuf = "";
+function log(s) { out.textContent += s + "\n"; logbuf += s + " | ";
+                  document.title = "WGL4: " + logbuf.substring(0, 220); }
+var c = document.getElementById("c");
+var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+if (!gl) { log("no ctx"); } else {
+  log("ctx OK");
+  gl.clearColor(0.2, 0.6, 1.0, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  log("clear done");
+  var px = new Uint8Array(4);
+  gl.readPixels(200, 150, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  log("px center: " + px[0] + "," + px[1] + "," + px[2] + "," + px[3]);
+  gl.readPixels(2, 2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  log("px corner: " + px[0] + "," + px[1] + "," + px[2] + "," + px[3]);
+  log("getError: 0x" + gl.getError().toString(16));
+  try {
+    var u = c.toDataURL();
+    log("toDataURL len: " + u.length + " head: " + u.substring(0, 30));
+  } catch (ex) { log("toDataURL threw: " + ex); }
+  requestAnimationFrame(function () {
+    gl.readPixels(200, 150, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    log("px post-frame: " + px[0] + "," + px[1] + "," + px[2] + "," + px[3]);
+    log("getError2: 0x" + gl.getError().toString(16));
+  });
+}
+</script>
+</body>
+</html>

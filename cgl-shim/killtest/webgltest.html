@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>WebGL one-variable test</title></head>
+<body style="font: 14px monospace; background:#333; color:#eee">
+<canvas id="c" width="400" height="300" style="border:1px solid #888"></canvas>
+<pre id="out"></pre>
+<script>
+var out = document.getElementById("out");
+var logbuf = "";
+function log(s) { out.textContent += s + "\n"; logbuf += s + " | ";
+                  document.title = "WGL: " + logbuf.substring(0, 200); }
+var c = document.getElementById("c");
+var gl2 = c.getContext("webgl2");
+log("webgl2: " + (gl2 ? "OK version " + gl2.getParameter(gl2.VERSION)
+                      : "FAILED"));
+var gl = gl2 || c.getContext("webgl") || c.getContext("experimental-webgl");
+if (!gl) {
+    log("webgl1: FAILED — no context at all");
+} else {
+    /* say WHICH context is being reported —
+     * when webgl2 succeeded, gl is the webgl2 context, and the old
+     * unconditional "webgl1: OK" line reported webgl2's version under
+     * a webgl1 label. */
+    if (gl2)
+        log("webgl1: not re-tested (webgl2 context in use)");
+    else
+        log("webgl1: OK version " + gl.getParameter(gl.VERSION));
+    log("renderer: " + gl.getParameter(gl.RENDERER));
+    log("max_samples: " + gl.getParameter(gl.SAMPLES));
+    gl.clearColor(0.2, 0.6, 1.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    log("cleared — canvas should be BLUE above");
+    var e = gl.getError();
+    log("getError after clear: 0x" + e.toString(16) + (e ? "  (ERROR!)" : " (clean)"));
+}
+</script>
+</body>
+</html>

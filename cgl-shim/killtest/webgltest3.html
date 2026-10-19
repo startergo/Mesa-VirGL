@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>WGL2</title></head>
+<body style="font:14px monospace;background:#333;color:#eee">
+<canvas id="c" width="400" height="300" style="border:1px solid #888"></canvas>
+<pre id="out"></pre>
+<script>
+var out = document.getElementById("out");
+var logbuf = "";
+function log(s) { out.textContent += s + "\n"; logbuf += s + " | ";
+                  document.title = "WGL3: " + logbuf.substring(0, 220); }
+var c = document.getElementById("c");
+var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+if (!gl) { log("no ctx"); } else {
+  log("ctx OK");
+  // Step 1: clear default framebuffer to RED
+  gl.clearColor(0.9, 0.1, 0.1, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  log("default clear RED");
+  log("no FBO/texture/program in this variant");
+  var e;
+  while ((e = gl.getError()) != gl.NO_ERROR) log("GL err 0x" + e.toString(16));
+  log("errors flushed");
+  // LAST-OP DISCRIMINATOR: green direct-to-default-fb as the final op
+  gl.clearColor(0.0, 0.9, 0.0, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  log("final GREEN clear done — canvas should be GREEN if last-op presents");
+}
+</script>
+</body>
+</html>

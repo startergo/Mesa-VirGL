@@ -1522,6 +1522,11 @@ endif
 # Determine whether or not the rt library is needed for time functions
 if host_machine.system() == 'windows' or cc.has_function('clock_gettime')
   dep_clock = null_dep
+elif host_machine.system() == 'darwin'
+  # macOS ships no librt; clock_gettime is either native (10.12+) or provided
+  # by the cross-compat shim (cross-compat/clock_gettime_compat.o). Don't try
+  # to find_library('rt') — it would fail and isn't needed.
+  dep_clock = null_dep
 else
   dep_clock = cc.find_library('rt')
 endif

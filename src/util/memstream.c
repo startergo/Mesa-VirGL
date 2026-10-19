@@ -26,6 +26,16 @@
 #include "memstream.h"
 
 #include <stdlib.h>
+#include <stdio.h>
+/* open_memstream compat: Apple SDKs < 10.13 don't declare it (unlike
+ * strndup/strnlen there is no compat-headers stdio wrapper, so THIS is
+ * the declaration the 10.6 build sees; the definition comes from
+ * cross-compat/clock_gettime_compat.o in the link args). Non-Apple
+ * platforms declare it in <stdio.h>. */
+#if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && \
+    (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101300)
+extern FILE *open_memstream(char **buf, size_t *size);
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
