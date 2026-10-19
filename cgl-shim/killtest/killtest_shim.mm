@@ -42,6 +42,7 @@
 }
 - (void)renderFrame:(NSTimer *)t;
 - (void)teardownGL;
+- (void)stopAnimation;
 @end
 
 @implementation KillTestShimView
@@ -103,7 +104,11 @@
             (void *)mCtx, viewportW, viewportH,
             getenv("GALLIUM_DRIVER") ?: "(Apple)");
 
-    mTimer = [NSTimer scheduledTimerWithTimeInterval:1.0/30.0
+    /* YSMPI (PR review): interval 0.0 — the run loop fires the timer on
+     * every pass, so the frame rate is the throughput of the shim, not a
+     * 30 Hz ceiling. The old 1/30.0 cap made every avg-fps number ≥30
+     * impossible to read as a comparison between the two paths. */
+    mTimer = [NSTimer scheduledTimerWithTimeInterval:0.0
                                               target:self
                                             selector:@selector(renderFrame:)
                                             userInfo:nil
@@ -141,6 +146,20 @@
             fprintf(stderr, "KT_T0[%d] abs=%llu\n",
                     s_t0_log, (unsigned long long)t0);
             s_t0_log++;
+        }
+    }
+
+    /* YSMPC (PR review): the viewport was set once at init from the initial
+     * frame, so resizing the window stretched the initial-size viewport
+     * into the new surface (wrong aspect, clipped content). Follow the
+     * view's live bounds; glViewport only when they actually change. */
+    {
+        NSRect b = [self bounds];
+        static CGFloat s_lastW = -1.0, s_lastH = -1.0;
+        if (b.size.width != s_lastW || b.size.height != s_lastH) {
+            s_lastW = b.size.width;
+            s_lastH = b.size.height;
+            glViewport(0, 0, (GLsizei)b.size.width, (GLsizei)b.size.height);
         }
     }
 
@@ -184,6 +203,14 @@
     if (mFmt) { [mFmt release]; mFmt = nil; }
 }
 
+- (void)stopAnimation {
+    /* YSMO9 (PR review): the repeating timer retains this view, so
+     * dealloc (the only place that invalidated it) could not run while the
+     * timer was live — the view and its GL context leaked after the window
+     * closed. The delegate calls this from windowWillClose. */
+    [mTimer invalidate];
+}
+
 - (void)dealloc {
     [mTimer invalidate];
     [self teardownGL];
@@ -192,10 +219,11 @@
 
 @end
 
-@interface KillTestShimAppDelegate : NSObject <NSApplicationDelegate> {
+@interface KillTestShimAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate> {
     NSWindow *mWin;
     KillTestShimView *mView;
 }
+- (void)windowWillClose:(NSNotification *)n;
 @end
 
 @implementation KillTestShimAppDelegate
@@ -212,6 +240,10 @@
                       defer:NO];
     [mWin setTitle:@"Killtest via NSOpenGLContext"];
     [mWin setReleasedWhenClosed:NO];
+    /* YSMO9 (PR review): the view's repeating timer retains the view; break
+     * the retain cycle from the window's close instead of waiting for a
+     * dealloc that cannot run. */
+    [mWin setDelegate:self];
 
     mView = [[KillTestShimView alloc] initWithFrame:[[mWin contentView] bounds]];
     [mView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -221,8 +253,14 @@
     fprintf(stderr, "killtest_shim: running — rotating triangle via NSOpenGLContext\n");
 }
 
+- (void)windowWillClose:(NSNotification *)n {
+    (void)n;
+    [mView stopAnimation];
+}
+
 - (void)dealloc {
     [mWin release];
+    [mView release];
     [super dealloc];
 }
 
