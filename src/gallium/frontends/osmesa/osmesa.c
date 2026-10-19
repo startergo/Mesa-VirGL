@@ -59,7 +59,9 @@
 #include "GL/osmesa.h"
 
 #include <stdio.h>
+#ifdef HAVE_PTHREAD
 #include <pthread.h>
+#endif
 #include <c11/threads.h>
 
 #include "state_tracker/st_context.h"
@@ -83,6 +85,20 @@
 #include "frontend/api.h"
 
 
+
+/* Review thread PRRT_kwDOPZhcm86t_-gk: pthread.h exists only under
+ * HAVE_PTHREAD (the same gate src/c11/threads.h keys its pthread branch
+ * on); the FLUSHFRONT probe below wants a thread id for diagnostics and
+ * must compile on platforms without pthread headers too. */
+static const void *
+osmesa_dbg_thread(void)
+{
+#ifdef HAVE_PTHREAD
+   return (const void *)(size_t)pthread_self();
+#else
+   return NULL;
+#endif
+}
 
 extern struct pipe_screen *
 osmesa_create_screen(void);
@@ -431,7 +447,7 @@ osmesa_st_framebuffer_flush_front(struct st_context *st,
                   s_cc_seen[s_cc_nth] = st;
                struct gl_context *gc = st->ctx;
                fprintf(stderr, "osmesa: FLUSHFRONT th=%p st=%p drawable=%p statt=%d",
-                       (void*)pthread_self(), (void*)st, (void*)drawable, (int)statt);
+                       osmesa_dbg_thread(), (void*)st, (void*)drawable, (int)statt);
                for (unsigned i = 0; i < ST_ATTACHMENT_COUNT; i++) {
                   struct pipe_resource *r = osbuffer->textures[i];
                   if (r)

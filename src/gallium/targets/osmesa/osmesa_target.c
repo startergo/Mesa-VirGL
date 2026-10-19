@@ -28,7 +28,22 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef HAVE_PTHREAD
 #include <pthread.h>
+#endif
+
+/* Review thread PRRT_kwDOPZhcm86t_-hS: same gate as osmesa.c's
+ * osmesa_dbg_thread() — pthread.h only under HAVE_PTHREAD, so this file
+ * still builds where pthread headers do not exist. */
+static const void *
+osmesa_target_dbg_thread(void)
+{
+#ifdef HAVE_PTHREAD
+   return (const void *)(size_t)pthread_self();
+#else
+   return NULL;
+#endif
+}
 
 /* Diagnostic instrumentation gate (same pattern as virgl_iokit_winsys.c's
  * VIRGL_IOKIT_DEBUG and cgl_shim.mm's SHIM_TIMING). Set OSMESA_TARGET_DEBUG=1
@@ -58,7 +73,7 @@ osmesa_create_screen(void)
    struct pipe_screen *screen;
 
    osmesa_dbg("osmesa_target: osmesa_create_screen entry GALLIUM_DRIVER=\"%s\" thread=%p\n",
-              getenv("GALLIUM_DRIVER") ?: "(unset)", (void*)pthread_self());
+              getenv("GALLIUM_DRIVER") ?: "(unset)", osmesa_target_dbg_thread());
 
    /* We use a null software winsys since we always just render to ordinary
     * driver resources.
