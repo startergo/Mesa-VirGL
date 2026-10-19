@@ -4,6 +4,7 @@
 *.pyo
 *.out
 /build
+/build-106
 .venv/
 
 # OS clutter, editor/patch leftovers
