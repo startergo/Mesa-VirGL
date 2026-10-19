@@ -65,7 +65,11 @@ osmesa_create_screen(void)
     */
    winsys = null_sw_create();
    if (!winsys) {
-      fprintf(stderr, "osmesa_target: null_sw_create FAILED\n");
+      /* PR review YovcC: iokit_dbg-style gate — this fired on every
+       * OSMesaCreateContext of a misconfigured guest (GALLIUM_DRIVER unset
+       * or wrong), with no way to silence it. OSMESA_TARGET_DEBUG gates the
+       * other osmesa_target diagnostics already. */
+      osmesa_dbg("osmesa_target: null_sw_create FAILED\n");
       return NULL;
    }
 
