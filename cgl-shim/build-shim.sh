@@ -158,9 +158,13 @@ fi
 # instead of Apple's — the interpose would replace Mesa's implementation
 # while the app's calls stay on Apple's GL. Present as "interpose installed,
 # nothing changed." Link order must put -framework OpenGL before -lOSMesa.
-if /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep -q '_glClear.*from OpenGL'; then
+# NOTE: no `grep -q` here — under `set -o pipefail` grep -q closes the pipe
+# early, nm dies on SIGPIPE and the whole `if` fails spuriously on a GOOD
+# artifact (observed 3 times out of 4 builds; same rule documented in
+# cross-compat/build-10.6.sh's verify section). grep without -q reads to EOF.
+if /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep '_glClear.*from OpenGL' >/dev/null; then
     echo "    glClear binding: OpenGL (correct)"
-elif /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep -q '_glClear.*from libOSMesa'; then
+elif /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep '_glClear.*from libOSMesa' >/dev/null; then
     fail "glClear binds to libOSMesa, not OpenGL — link order is wrong. The interpose would target Mesa's glClear instead of Apple's. Put -framework OpenGL before -lOSMesa in the link command."
 else
     fail "glClear binding not found in nm -m output — unexpected link state"
