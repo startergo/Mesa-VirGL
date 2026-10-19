@@ -1024,6 +1024,13 @@ static int  virgl_iokit_fence_get_fd(struct virgl_winsys *vws, struct pipe_fence
  * one-way. Written from the AppKit-safe main thread, read here. */
 __attribute__((visibility("default")))
 int cgl_shim_host_present_enabled(void);
+/* Forward declarations only — no code change vs r259. These two are
+ * dlsym'd by cgl_interpose.c (not header-linked), so their prototypes
+ * live here to satisfy -Werror=missing-prototypes under CI's clang. */
+__attribute__((visibility("default")))
+int cgl_shim_host_present_rect(int *x, int *y, int *w, int *h);
+__attribute__((visibility("default")))
+void cgl_shim_set_host_present_rect(int x, int y, int w, int h);
 static int g_hp_x, g_hp_y, g_hp_w, g_hp_h;
 static volatile int g_hp_valid;
 static int g_hp_mode = -1;

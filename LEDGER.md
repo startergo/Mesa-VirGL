@@ -15,7 +15,9 @@ check; never quietly drop an unexplained residual; mark inferences.
 commit messages; the summary below is attributed to them and was not
 re-verified at creation time.
 
-Last updated: 2026-08-19 night (FENCE ERA LANDED AND VERIFIED (kext bf8d36a + winsys c462bdbb): 25× batch throughput, zero drain-fallbacks/timeouts, DRM VIRTGPU_WAIT contract end-to-end. White→BLACK transition = the compositor now ASSEMBLES and PRESENTS (blit runs) but its program fails: **glUniform3("uLayerRects" vec4-not-vec3) / glUniform1("uLayerTransform" is-matrix) — the compositor's OWN uniforms mismatching = object-table crossing between Gecko's two GL threads. CARRIER HYPOTHESIS: the u_thread.h TLS gate (single-threaded-GL plain globals) — CONFIRMED REQUIRED (Apple clang REFUSES __thread for macos10.6 targets even with -femulated-tls: "thread-local storage is not supported for the current target"; modern Mesa DELETED the pthread-TSD fallback, so per-thread contexts = restoring it ourselves in u_current). OMTC-off pref test incomplete (launch died); pref `layers.offmainthreadcomposition.enabled=false` is STILL SET in both user.js — remove or complete before the next browser test. Next: restore u_current pthread-TSD storage; entry 20 tail)
+Last updated: 2026-10-19 (entry 22 — CI prototypes repair, the only
+change since; state summary below unchanged from 2026-08-19 night:
+FENCE ERA LANDED AND VERIFIED (kext bf8d36a + winsys c462bdbb): 25× batch throughput, zero drain-fallbacks/timeouts, DRM VIRTGPU_WAIT contract end-to-end. White→BLACK transition = the compositor now ASSEMBLES and PRESENTS (blit runs) but its program fails: **glUniform3("uLayerRects" vec4-not-vec3) / glUniform1("uLayerTransform" is-matrix) — the compositor's OWN uniforms mismatching = object-table crossing between Gecko's two GL threads. CARRIER HYPOTHESIS: the u_thread.h TLS gate (single-threaded-GL plain globals) — CONFIRMED REQUIRED (Apple clang REFUSES __thread for macos10.6 targets even with -femulated-tls: "thread-local storage is not supported for the current target"; modern Mesa DELETED the pthread-TSD fallback, so per-thread contexts = restoring it ourselves in u_current). OMTC-off pref test incomplete (launch died); pref `layers.offmainthreadcomposition.enabled=false` is STILL SET in both user.js — remove or complete before the next browser test. Next: restore u_current pthread-TSD storage; entry 20 tail)
 
 
 **HANDOFF SERIALIZATION LANDED + VALIDATED-2/2 + THE INPUT/CONNECTING STALL (09:20–09:50):**
@@ -340,6 +342,27 @@ IT WAS THE CONTAMINATED CONFIGURATION.**
   and the GL work converge on one next step.
 - Residual: the browser dies silently every few minutes (3× today,
   mode-independent — relay, CG-blit, census; zero crash reports).
+---
+
+## 2026-10-19 (entry 22) — CI red after the r259 sync: missing prototypes; declarations-only repair
+
+- macOS-CI run 39186076627 (first since 2026-08-14) failed compiling
+  virgl_iokit_winsys.c: Xcode clang's -Werror=missing-prototypes on
+  cgl_shim_host_present_rect and cgl_shim_set_host_present_rect. Both
+  are exported (dlsym'd from cgl_interpose.c) and were defined without
+  prior prototypes — the neighboring cgl_shim_host_present_enabled
+  carries one and raised no error. The host-present block (2026-08-19)
+  postdates the last green run, so this was its first CI compile; the
+  local cross toolchain does not raise the diagnostic, which is why the
+  r259 sync landed green locally.
+- Fix: forward declarations beside the existing prototype. Delta vs
+  probe/patches/virgl_iokit_winsys.c.r259 is those 7 lines and nothing
+  else (diff-checked) — no definition, attribute, or codegen change;
+  r259 semantics intact. md5 chain: a102d8ac1cfb6c84e94b7775292339f9
+  (both sides identical before the edit) → 013570e4dc6a85d095da552c967af1fb.
+  The kext-repo snapshot stays untouched — rung records are frozen; this
+  tree is the buildable source of the file.
+
 ---
 
 ## 2026-08-19 (entry 21) — fence era landed; the white→black transition names the carrier class
