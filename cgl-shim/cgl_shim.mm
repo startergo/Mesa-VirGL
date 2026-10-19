@@ -507,6 +507,23 @@ static char kScKey;
  * buffer against the union of this frame's draw rects. */
 extern "C" void cgl_shim_diff_at_present(const void *buf, int w, int h);
 
+/* t8dmQ (PR review): per-class originals for the drawRect: swizzle installed
+ * in shim_setView. A shared category IMP cannot remember two different
+ * originals, so the shim method below looks the original up by [self class]. */
+static struct { Method m; Class cls; IMP orig; } g_cv_swz[16];
+static unsigned g_cv_swz_n = 0;
+static pthread_mutex_t g_cv_swz_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static IMP shim_cv_original_imp(Class cls)
+{
+    IMP orig = NULL;
+    pthread_mutex_lock(&g_cv_swz_mtx);
+    for (unsigned i = 0; i < g_cv_swz_n; i++)
+        if (g_cv_swz[i].cls == cls) { orig = g_cv_swz[i].orig; break; }
+    pthread_mutex_unlock(&g_cv_swz_mtx);
+    return orig;
+}
+
 static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
 {
     struct shim_ctx *sc = get_shim_ctx(nsc);
@@ -1449,31 +1466,42 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
          * unswizzle the parent. Membership by Method pointer catches
          * both cases (same class seen again, or a subclass that
          * inherits the same Method). */
-        static Method s_swizzled[16];
-        static unsigned s_swizzled_n = 0;
-        static pthread_mutex_t s_swizzled_mtx = PTHREAD_MUTEX_INITIALIZER;
+        /* t8dmQ (PR review): the original drawRect: IMP is per CLASS.
+         * method_exchangeImplementations against the shared category
+         * Method cannot hold two originals: a second exchange would
+         * leave the first class's "original" pointing at the second
+         * class's drawRect:. Install the shim IMP with
+         * method_setImplementation and keep each class's original in
+         * g_cv_swz (file scope, shared with the shim method below). */
         if (view) {
             Class cv = [view class];
             Method m = class_getInstanceMethod(cv, @selector(drawRect:));
             int already = 0;
-            pthread_mutex_lock(&s_swizzled_mtx);
-            for (unsigned i = 0; i < s_swizzled_n; i++)
-                if (s_swizzled[i] == m) { already = 1; break; }
-            pthread_mutex_unlock(&s_swizzled_mtx);
+            pthread_mutex_lock(&g_cv_swz_mtx);
+            for (unsigned i = 0; i < g_cv_swz_n; i++)
+                if (g_cv_swz[i].m == m) { already = 1; break; }
+            pthread_mutex_unlock(&g_cv_swz_mtx);
             if (!already) {
                 Method base = class_getInstanceMethod([NSView class],
                                                       @selector(drawRect:));
                 if (base &&
                     method_getImplementation(m) != method_getImplementation(base)) {
-                    swizzle_method(cv, @selector(drawRect:),
-                                   @selector(shim_childViewDrawRect:));
-                    pthread_mutex_lock(&s_swizzled_mtx);
-                    if (s_swizzled_n < 16)
-                        s_swizzled[s_swizzled_n++] = m;
-                    pthread_mutex_unlock(&s_swizzled_mtx);
+                    IMP shimIMP = method_getImplementation(
+                        class_getInstanceMethod([NSObject class],
+                                                @selector(shim_childViewDrawRect:)));
+                    IMP origIMP = method_getImplementation(m);
+                    method_setImplementation(m, shimIMP);
+                    pthread_mutex_lock(&g_cv_swz_mtx);
+                    if (g_cv_swz_n < 16) {
+                        g_cv_swz[g_cv_swz_n].m = m;
+                        g_cv_swz[g_cv_swz_n].cls = cv;
+                        g_cv_swz[g_cv_swz_n].orig = origIMP;
+                        g_cv_swz_n++;
+                    }
+                    pthread_mutex_unlock(&g_cv_swz_mtx);
                     fprintf(stderr, "cgl_shim: drawRect swizzled on %s "
                             "(custom view class, via setView; %u method(s) patched)\n",
-                            class_getName(cv), s_swizzled_n);
+                            class_getName(cv), g_cv_swz_n);
                 }
             }
         }
@@ -2053,7 +2081,24 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
         }
     }
 
-    [self shim_childViewDrawRect:dirtyRect];  /* original — app draws GL */
+    /* t8dmQ: call the ORIGINAL drawRect: for THIS class (stored per class
+     * at swizzle time). The old `[self shim_childViewDrawRect:...]` idiom
+     * relies on a method_exchangeImplementations pair, and the shared
+     * category Method can only remember one original for every class. */
+    {
+        void (*origDraw)(id, SEL, NSRect) =
+            (void (*)(id, SEL, NSRect))shim_cv_original_imp([self class]);
+        if (origDraw) {
+            origDraw(self, @selector(drawRect:), dirtyRect);
+        } else {
+            /* Not in the table (plain NSView path): NSView's own drawRect:. */
+            Method base = class_getInstanceMethod([NSView class],
+                                                  @selector(drawRect:));
+            if (base)
+                ((void (*)(id, SEL, NSRect))method_getImplementation(base))(
+                    self, @selector(drawRect:), dirtyRect);
+        }
+    }
 
     {
         NSValue *scv = objc_getAssociatedObject(self, SC_KEY);
