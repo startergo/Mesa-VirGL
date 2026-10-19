@@ -156,10 +156,30 @@ eval "$(ninja -t commands src/gallium/targets/osmesa/libOSMesa.8.dylib | tail -1
 ```
 
 Result: `build-106/src/gallium/targets/osmesa/libOSMesa.8.dylib`
-(~19 MB, Mach-O 64-bit x86_64). Verify with:
+(~19 MB, Mach-O 64-bit x86_64).
+
+Two more substitutions the script applies before `eval` — easy to miss
+manually, and without them the manual link binds the *shipped* libc++
+dylibs instead of the static archives, so the result differs from the
+scripted one:
 
 ```sh
-nm libOSMesa.8.dylib | grep -q virgl_iokit && echo "iokit: present" || echo "iokit: ABSENT"
+# (a) replace both libc++ reexports with the static archives in
+#     cross-compat/libcxx/lib (see the libc++ section above), then
+# (b) append -nostdlib++ so libc++ never enters the link
+PATCHED=$(printf '%s' "$LINK_CMD" \
+  | sed 's|-Wl,-reexport_library,[^ ]*libc++.1.dylib|<libcxx>/libc++.a|g' \
+  | sed 's|-Wl,-reexport_library,[^ ]*libc++abi.dylib|<libcxx>/libc++abi.a|g')
+PATCHED="$PATCHED -nostdlib++"
+```
+
+Verify with (note the path — after `cd build-106` the dylib is three
+directories down, exactly as in the "Result" line above; `nm libOSMesa.8.dylib`
+from there finds nothing):
+
+```sh
+nm src/gallium/targets/osmesa/libOSMesa.8.dylib | grep virgl_iokit >/dev/null \
+  && echo "iokit: present" || echo "iokit: ABSENT"
 ```
 
 **The `--no-force-link` flag in build-10.6.sh is a legacy option that predates
@@ -184,7 +204,11 @@ The cross file (`cross-compat/mesa-cross-10.6.txt`) sets:
 ## What doesn't work yet
 
 - **TLS:** macOS 10.6 has no thread-local storage runtime. All
-  `thread_local` / `__thread` usages patched to plain `static`. The GL
+  `thread_local` / `__thread` usages patched to plain `static` **only on
+  macOS < 10.7** (`#if !defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
+  || __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070`): 10.7+ has real
+  TLS for these usages, and emulated TLS (`-femulated-tls`) is only needed
+  for the 10.6 target. The GL
   dispatch path falls back to global variables — single-threaded only.
 - **libGL.dylib:** not produced. GLX/EGL/GBM all disabled; no CGL
   binding layer exists yet. The CGL shim is the next project.
