@@ -63,7 +63,7 @@
     setenv("GALLIUM_DRIVER", "softpipe", 1);
     setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
 
-    mCtx = OSMesaCreateContextExt(OSMESA_BGRA, 16, 0, 0, NULL);
+    mCtx = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0, NULL);
     if (!mCtx) {
         fprintf(stderr, "OSMesaCreateContextExt failed\n");
         free(mFramebuffer);
@@ -131,23 +131,15 @@
     glEnd();
     glFinish();  // force softpipe to complete
 
-    /* PRRT_kwDOPZhcm86uEfcd (PR review): the OSMesa buffer is
-     * OSMESA_BGRA (B,G,R,A byte order — deliberate, this tests the
-     * same layout the stub reads back), but NSBitmapImageRep has no
-     * BGRA layout: handed the raw bytes it shows red and blue
-     * swapped. Convert BGRA→RGBA in place before building the rep —
-     * OSMesa rewrites the buffer next frame, so in-place is safe. */
-    {
-        unsigned char *px = (unsigned char *)mFramebuffer;
-        size_t n = (size_t)mFbWidth * (size_t)mFbHeight;
-        for (size_t i = 0; i < n; i++) {
-            unsigned char b = px[i * 4 + 0];
-            px[i * 4 + 0] = px[i * 4 + 2];
-            px[i * 4 + 2] = b;
-        }
-    }
+    /* PRRT_kwDOPZhcm86uGoKc (PR review): nothing else happens between
+     * the render and the blit — this test measures the frame cost of
+     * render + present, and a per-frame BGRA→RGBA conversion loop
+     * (added earlier to fix the channel order for the rep) was CPU
+     * work the real presentation path never does (the stub presents
+     * the BGRA buffer as-is). The context is now created OSMESA_RGBA
+     * (line 66) so the rep can consume the buffer directly. */
 
-    // 2. CPU blit: copy the OSMesa BGRA buffer into the view's backing
+    // 2. CPU blit: copy the OSMesa RGBA buffer into the view's backing
     //    store via NSBitmapImageRep + composite. This is the exact path
     //    the swizzle would take for CGLFlushDrawable.
     NSRect bounds = [self bounds];
