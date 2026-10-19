@@ -1167,11 +1167,35 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             return kCGLBadContext;
         }
 
-        IOReturn kr = IOSurfaceLock(surf, kIOSurfaceLockReadOnly, NULL);
+        /* PRRT_kwDOPZhcm86uEfb0: the SHIM_PATTERN_FILL mode must be
+         * decided BEFORE the lock — the pattern path writes the
+         * surface through the CPU, so it needs a read-write lock
+         * (options 0), not the read-only lock the plain upload path
+         * takes. Same options value goes to the matching unlock. */
+        static int s_pattern_mode = -1;   /* 0=off 1=checker 2=ramp */
+        if (s_pattern_mode < 0) {
+            const char *v = getenv("SHIM_PATTERN_FILL");
+            if (v && (!strcmp(v, "ramp")))
+                s_pattern_mode = 2;
+            else if (v && *v && strcmp(v, "0"))
+                s_pattern_mode = 1;
+            else
+                s_pattern_mode = 0;
+            if (s_pattern_mode)
+                fprintf(stderr, "substitute_cgl: PATTERN FILL ACTIVE "
+                        "(SHIM_PATTERN_FILL=%s) — uploads replaced by "
+                        "%s\n", v,
+                        s_pattern_mode == 2 ? "coordinate RAMP"
+                                            : "CHECKERBOARD");
+        }
+        IOOptionBits lock_opts =
+            s_pattern_mode ? 0 : kIOSurfaceLockReadOnly;
+        IOReturn kr = IOSurfaceLock(surf, lock_opts, NULL);
         void *base = IOSurfaceGetBaseAddress(surf);
         size_t bpr = IOSurfaceGetBytesPerRow(surf);
         GLenum glerr = GL_NO_ERROR;
-        if (kr == kIOReturnSuccess && base && width > 0 && height > 0) {
+        if (kr == kIOReturnSuccess) {
+        if (base && width > 0 && height > 0) {
             size_t bpp = 4;
             if (format == GL_RGB) bpp = 3;
             /* else RGBA/BGRA 8-bit → 4 */
@@ -1211,22 +1235,6 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
              * here); if the display chain swaps channel order the constant
              * tier moves with it — identify channels by structure (one
              * ramp-along-x, one ramp-along-y, one coarse), not by name. */
-            static int s_pattern_mode = -1;   /* 0=off 1=checker 2=ramp */
-            if (s_pattern_mode < 0) {
-                const char *v = getenv("SHIM_PATTERN_FILL");
-                if (v && (!strcmp(v, "ramp")))
-                    s_pattern_mode = 2;
-                else if (v && *v && strcmp(v, "0"))
-                    s_pattern_mode = 1;
-                else
-                    s_pattern_mode = 0;
-                if (s_pattern_mode)
-                    fprintf(stderr, "substitute_cgl: PATTERN FILL ACTIVE "
-                            "(SHIM_PATTERN_FILL=%s) — uploads replaced by "
-                            "%s\n", v,
-                            s_pattern_mode == 2 ? "coordinate RAMP"
-                                                : "CHECKERBOARD");
-            }
             if (s_pattern_mode) {
                 static const unsigned char pal[8][3] = {
                     {0xff, 0x00, 0x00}, {0x00, 0xff, 0x00},
@@ -1278,7 +1286,12 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             p_glPixelStorei(GL_UNPACK_ROW_LENGTH, save_rowlen);
             p_glPixelStorei(GL_UNPACK_ALIGNMENT, save_align);
             glerr = p_glGetError();
-            IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
+        }
+        /* PRRT_kwDOPZhcm86uEfcI: the lock must be released whenever it
+         * was taken — including the declined-upload paths (null base,
+         * non-positive width/height) that previously returned with the
+         * surface still locked. */
+        IOSurfaceUnlock(surf, lock_opts, NULL);
         }
         static int s_iosf_log = 0;
         static long s_iosf_calls = 0;
