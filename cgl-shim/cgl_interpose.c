@@ -380,7 +380,12 @@ GL_IP_VOID(glViewport,    (GLint a, GLint b, GLsizei c, GLsizei d), (a,b,c,d))
 static void diag_glViewport(GLint a, GLint b, GLsizei c, GLsizei d) {
     static int logged = 0;
     OSMesaContext osmc = OSMesaGetCurrentContext();
+    /* Review PRRT_kwDOPZhcm86Yova8: the probe must not dereference p_*
+     * when libOSMesa failed to load (gl_interpose_init leaves them NULL).
+     * Gate the whole one-shot block on what it calls, so the function
+     * still reaches the Apple fallback below. */
     if (!logged) { logged = 1;
+        if (osmc && p_glViewport && p_glGetIntegerv && p_glGetError) {
         extern const void *_glapi_get_dispatch(void);
         extern const void *_glapi_get_context(void);
         const void *disp = _glapi_get_dispatch();
@@ -411,6 +416,11 @@ static void diag_glViewport(GLint a, GLint b, GLsizei c, GLsizei d) {
         p_glGetIntegerv(GL_MAX_VIEWPORT_DIMS, dims);
         fprintf(stderr, "cgl_shim:               MaxViewportDims=(%d,%d)\n",
                 dims[0], dims[1]);
+        } else {
+            fprintf(stderr, "cgl_shim: ip_glViewport FIRED but no OSMesa ctx / "
+                    "p_* unresolved (osmc=%p) — using Apple fallback\n",
+                    (void*)osmc);
+        }
     }
     if (osmc && p_glViewport) { p_glViewport(a,b,c,d); return; }
     static void (*o)(GLint, GLint, GLsizei, GLsizei); if (!o) o = dlsym(RTLD_NEXT, "glViewport");
