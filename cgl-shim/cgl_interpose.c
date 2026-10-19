@@ -187,6 +187,20 @@ void   (*p_glClearColor)(GLclampf, GLclampf, GLclampf, GLclampf);
 void   (*p_glColor3f)(GLfloat, GLfloat, GLfloat);
 void   (*p_glDisable)(GLenum);
 void   (*p_glEnd)(void);
+/* PRRT_kwDOPZhcm86uEfbS: every rung-128 diagnostic is OPT-IN via
+ * VMGLD_R128E, checked once per process. Before this, the scalar
+ * uniform family (ULOG128), the dlsym probe (ip_dlsym) and the init
+ * banner all wrote app uniform values / pointer addresses to
+ * /var/log/vm_gld_stub.log or stderr in every process that loaded the
+ * shim, with no opt-in — only the 4fv path (s_128e) had the gate. */
+static int s_128e_on = -1;
+static int r128e_on(void)
+{
+    if (s_128e_on < 0)
+        s_128e_on = getenv("VMGLD_R128E") ? 1 : 0;
+    return s_128e_on;
+}
+
 void   (*p_glFinish)(void);
 GLenum (*p_glGetError)(void);
 void   (*p_glGetFloatv)(GLenum, GLfloat *);
@@ -242,7 +256,8 @@ static void gl_interpose_init(void)
     GL_DLSYM(glVertex2f);
     GL_DLSYM(glViewport);
 #undef GL_DLSYM
-    fprintf(stderr, "cgl_shim: gl_interpose_init: g_mesa=%p p_glClear=%p p_glGetString=%p p_glFinish=%p\n",
+    if (r128e_on())
+        fprintf(stderr, "cgl_shim: gl_interpose_init: g_mesa=%p p_glClear=%p p_glGetString=%p p_glFinish=%p\n",
             g_mesa, (void*)p_glClear, (void*)p_glGetString, (void*)p_glFinish);
 }
 
@@ -300,7 +315,7 @@ static void ip_glUniform4fv(GLint loc, GLsizei cnt,
 /* RUNG 128e2: the SCALAR uniform family — glmark2's wrapper
  * uses glUniformNf, not 4fv. Same one-per-process log shape. */
 #define ULOG128(ar, n) do { \
-    if (s_128e2 < 24 && v_ok) { s_128e2++; \
+    if (s_128e2 < 24 && v_ok && r128e_on()) { s_128e2++; \
         char b128[160]; int o128 = snprintf(b128, sizeof(b128), \
             "rung128e: glUniform%s loc=%d:", n, loc); \
         for (int q = 0; q < ar && o128 < 140; q++) \
@@ -311,6 +326,7 @@ static void ip_glUniform4fv(GLint loc, GLsizei cnt,
 static int s_128e2 = 0;
 static void ep_log128(const char* m)
 {
+    if (!r128e_on()) return;   /* uEfbS: no opt-in, no /var/log writes */
     FILE* f = fopen("/var/log/vm_gld_stub.log", "a");
     if (!f) return;
     struct timeval tv; gettimeofday(&tv, 0);
@@ -358,7 +374,8 @@ static void* ip_dlsym(void* handle, const char* name)
     if (!o) o = (void* (*)(void*, const char*))
         dlsym(RTLD_NEXT, "dlsym");
     void* r = o ? o(handle, name) : 0;
-    if (name && r && s_128e4 < 24 && strstr(name, "Uniform")) {
+    if (name && r && s_128e4 < 24 && r128e_on()
+        && strstr(name, "Uniform")) {
         s_128e4++;
         char b128[160];
         snprintf(b128, sizeof(b128),
