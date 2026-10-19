@@ -507,22 +507,62 @@ static char kScKey;
  * buffer against the union of this frame's draw rects. */
 extern "C" void cgl_shim_diff_at_present(const void *buf, int w, int h);
 
-/* t8dmQ (PR review): per-class originals for the drawRect: swizzle installed
- * in shim_setView. A shared category IMP cannot remember two different
- * originals, so the shim method below looks the original up by [self class]. */
+/* t8dmQ (PR review): per-Method originals for the drawRect: swizzle
+ * installed in shim_setView. A shared category IMP cannot remember two
+ * different originals, so the original of each patched Method is kept
+ * here and called back by its own trampoline.
+ * t80b1 (PR review): the original must follow the INVOKED Method, not
+ * [self class]. The patched Method belongs to the DECLARING class and is
+ * shared by every subclass that inherits it, so (a) a receiver whose
+ * class differs from the class recorded at install time found no entry
+ * and fell through to NSView's drawRect:, skipping the custom
+ * implementation, and (b) with two patched overrides in one chain,
+ * [super drawRect:] re-entered the shim with the SAME [self class]
+ * (objc_msgSendSuper keeps the receiver) and got the same original back
+ * — infinite recursion. A plain IMP cannot know which Method it was
+ * reached through, so each patched Method gets its own trampoline IMP
+ * bound to its table slot. */
 static struct { Method m; Class cls; IMP orig; } g_cv_swz[16];
 static unsigned g_cv_swz_n = 0;
 static pthread_mutex_t g_cv_swz_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-static IMP shim_cv_original_imp(Class cls)
-{
-    IMP orig = NULL;
-    pthread_mutex_lock(&g_cv_swz_mtx);
-    for (unsigned i = 0; i < g_cv_swz_n; i++)
-        if (g_cv_swz[i].cls == cls) { orig = g_cv_swz[i].orig; break; }
-    pthread_mutex_unlock(&g_cv_swz_mtx);
-    return orig;
-}
+static void shim_cv_draw_body(id self, SEL _cmd, NSRect dirtyRect,
+                              unsigned idx);
+
+#define SHIM_CV_TRAMPOLINE(n)                                          \
+    static void shim_cv_trampoline_##n(id self, SEL _cmd,              \
+                                       NSRect dirtyRect)               \
+    {                                                                  \
+        shim_cv_draw_body(self, _cmd, dirtyRect, n);                   \
+    }
+SHIM_CV_TRAMPOLINE(0)
+SHIM_CV_TRAMPOLINE(1)
+SHIM_CV_TRAMPOLINE(2)
+SHIM_CV_TRAMPOLINE(3)
+SHIM_CV_TRAMPOLINE(4)
+SHIM_CV_TRAMPOLINE(5)
+SHIM_CV_TRAMPOLINE(6)
+SHIM_CV_TRAMPOLINE(7)
+SHIM_CV_TRAMPOLINE(8)
+SHIM_CV_TRAMPOLINE(9)
+SHIM_CV_TRAMPOLINE(10)
+SHIM_CV_TRAMPOLINE(11)
+SHIM_CV_TRAMPOLINE(12)
+SHIM_CV_TRAMPOLINE(13)
+SHIM_CV_TRAMPOLINE(14)
+SHIM_CV_TRAMPOLINE(15)
+#undef SHIM_CV_TRAMPOLINE
+
+/* shim_setView installs g_cv_trampoline[i] on the Method recorded at
+ * table slot i; the trampoline calls that slot's orig. */
+static void (*const g_cv_trampoline[16])(id, SEL, NSRect) = {
+    shim_cv_trampoline_0, shim_cv_trampoline_1, shim_cv_trampoline_2,
+    shim_cv_trampoline_3, shim_cv_trampoline_4, shim_cv_trampoline_5,
+    shim_cv_trampoline_6, shim_cv_trampoline_7, shim_cv_trampoline_8,
+    shim_cv_trampoline_9, shim_cv_trampoline_10, shim_cv_trampoline_11,
+    shim_cv_trampoline_12, shim_cv_trampoline_13, shim_cv_trampoline_14,
+    shim_cv_trampoline_15,
+};
 
 static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
 {
@@ -1466,44 +1506,43 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
          * unswizzle the parent. Membership by Method pointer catches
          * both cases (same class seen again, or a subclass that
          * inherits the same Method). */
-        /* t8dmQ (PR review): the original drawRect: IMP is per CLASS.
+        /* t8dmQ (PR review): the original drawRect: IMP is per METHOD.
          * method_exchangeImplementations against the shared category
          * Method cannot hold two originals: a second exchange would
          * leave the first class's "original" pointing at the second
-         * class's drawRect:. Install the shim IMP with
-         * method_setImplementation and keep each class's original in
-         * g_cv_swz (file scope, shared with the shim method below). */
+         * class's drawRect:. Install a slot-bound trampoline IMP with
+         * method_setImplementation and keep each Method's original in
+         * g_cv_swz (file scope, shared with the trampolines above).
+         * t80b1 (PR review): the trampoline is chosen TOGETHER with its
+         * table entry, under the lock — a full table must not install
+         * anything, or the patched Method would have no original to
+         * call. */
         if (view) {
             Class cv = [view class];
             Method m = class_getInstanceMethod(cv, @selector(drawRect:));
-            int already = 0;
             pthread_mutex_lock(&g_cv_swz_mtx);
+            int already = 0;
             for (unsigned i = 0; i < g_cv_swz_n; i++)
                 if (g_cv_swz[i].m == m) { already = 1; break; }
-            pthread_mutex_unlock(&g_cv_swz_mtx);
             if (!already) {
                 Method base = class_getInstanceMethod([NSView class],
                                                       @selector(drawRect:));
-                if (base &&
-                    method_getImplementation(m) != method_getImplementation(base)) {
-                    IMP shimIMP = method_getImplementation(
-                        class_getInstanceMethod([NSObject class],
-                                                @selector(shim_childViewDrawRect:)));
+                if (base && g_cv_swz_n < 16 &&
+                    method_getImplementation(m) !=
+                        method_getImplementation(base)) {
                     IMP origIMP = method_getImplementation(m);
-                    method_setImplementation(m, shimIMP);
-                    pthread_mutex_lock(&g_cv_swz_mtx);
-                    if (g_cv_swz_n < 16) {
-                        g_cv_swz[g_cv_swz_n].m = m;
-                        g_cv_swz[g_cv_swz_n].cls = cv;
-                        g_cv_swz[g_cv_swz_n].orig = origIMP;
-                        g_cv_swz_n++;
-                    }
-                    pthread_mutex_unlock(&g_cv_swz_mtx);
+                    method_setImplementation(
+                        m, (IMP)g_cv_trampoline[g_cv_swz_n]);
+                    g_cv_swz[g_cv_swz_n].m = m;
+                    g_cv_swz[g_cv_swz_n].cls = cv;
+                    g_cv_swz[g_cv_swz_n].orig = origIMP;
+                    g_cv_swz_n++;
                     fprintf(stderr, "cgl_shim: drawRect swizzled on %s "
-                            "(custom view class, via setView; %u method(s) patched)\n",
-                            class_getName(cv), g_cv_swz_n);
+                            "(custom view class, via setView; %u method(s) "
+                            "patched)\n", class_getName(cv), g_cv_swz_n);
                 }
             }
+            pthread_mutex_unlock(&g_cv_swz_mtx);
         }
 
         /* No sizing here. Gecko calls setView: from the COMPOSITOR
@@ -1820,7 +1859,8 @@ static void shim_blit_present_buf(id view)
     /* SHIM_LOG_BLITS — double-blit detector (dump verdict: buffer clean,
      * blit sole content source, screen duplicated → the blit path draws
      * twice at different destinations). Two swizzles can both reach this
-     * function: shim_childViewDrawRect (Gecko's class) AND the NSView-level
+     * function: shim_cv_draw_body via its trampolines (Gecko's class) AND
+     * the NSView-level
      * shim_drawRect (whose "never fires for ChildView" claim predates the
      * ChildView swizzle). Log view class, bounds, and the CTM AT ENTRY —
      * two consecutive blits with different CTMs is the duplication
@@ -1996,13 +2036,13 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
  * view instance, so its class is the exact class to patch. Not done
  * at +load: XUL isn't mapped when this framework initializes. --- */
 
-@interface NSObject (CGLShimChildView)
-- (void)shim_childViewDrawRect:(NSRect)dirtyRect;
-@end
-
-@implementation NSObject (CGLShimChildView)
-
-- (void)shim_childViewDrawRect:(NSRect)dirtyRect
+/* t80b1 (PR review): the drawRect: wrapper is a plain C function
+ * reached through the per-slot trampolines installed in shim_setView —
+ * no longer a category method, because a category method cannot know
+ * WHICH patched Method invoked it (only a trampoline bound to the slot
+ * can). idx is that slot; the original IMP lives in g_cv_swz[idx]. */
+static void shim_cv_draw_body(id self, SEL _cmd, NSRect dirtyRect,
+                              unsigned idx)
 {
     /* FIRING probe (LEDGER entry 16): installation was proven
      * ("drawRect swizzled on <class>"), firing never was — the blit
@@ -2081,23 +2121,24 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
         }
     }
 
-    /* t8dmQ: call the ORIGINAL drawRect: for THIS class (stored per class
-     * at swizzle time). The old `[self shim_childViewDrawRect:...]` idiom
-     * relies on a method_exchangeImplementations pair, and the shared
-     * category Method can only remember one original for every class. */
+    /* t8dmQ/t80b1: call the ORIGINAL drawRect: of the Method that was
+     * invoked — the trampoline bound its table slot at install time, so
+     * the original follows the Method, not the receiver's class.
+     * [self class] is wrong as a key: the Method is shared with every
+     * inheriting subclass (an entry recorded under one class must serve
+     * them all), and a nested [super drawRect:] must get the
+     * superclass's original, not the subclass's again — same [self
+     * class] under objc_msgSendSuper, which used to recurse forever.
+     * No fallback branch: install records the entry in the same locked
+     * section that plants the trampoline, so a reached trampoline
+     * always has a slot. */
     {
-        void (*origDraw)(id, SEL, NSRect) =
-            (void (*)(id, SEL, NSRect))shim_cv_original_imp([self class]);
-        if (origDraw) {
-            origDraw(self, @selector(drawRect:), dirtyRect);
-        } else {
-            /* Not in the table (plain NSView path): NSView's own drawRect:. */
-            Method base = class_getInstanceMethod([NSView class],
-                                                  @selector(drawRect:));
-            if (base)
-                ((void (*)(id, SEL, NSRect))method_getImplementation(base))(
-                    self, @selector(drawRect:), dirtyRect);
-        }
+        IMP origIMP = NULL;
+        pthread_mutex_lock(&g_cv_swz_mtx);
+        if (idx < g_cv_swz_n) origIMP = g_cv_swz[idx].orig;
+        pthread_mutex_unlock(&g_cv_swz_mtx);
+        if (origIMP)
+            ((void (*)(id, SEL, NSRect))origIMP)(self, _cmd, dirtyRect);
     }
 
     {
@@ -2137,8 +2178,6 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
 
     shim_blit_present_buf(self);
 }
-
-@end
 
 /* ===================================================================
  * +load: install swizzles at class-load time.
