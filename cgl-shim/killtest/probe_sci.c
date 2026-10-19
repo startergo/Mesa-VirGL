@@ -1,14 +1,22 @@
-/* probe_sci.c — is _glScissor exported by the substitute and bound to
- * the wrapper?
+/* probe_sci.c — is glScissor exported by the substitute, and what does
+ * dlsym hand out for it?
  *
  * Run on the guest:
- *   SHIM_SCISSOR_LOG=1 /tmp/probe_sci
+ *   /tmp/probe_sci
  *
- * Discriminates the zero-scissor-lines ambiguity (2026-08-17):
- *   prints "ptr=..." and calls glScissor(0,0,64,64) twice
- *   wrapper bound  -> banner + one SCISSOR[0] line (second call deduped)
- *   ptr resolves to Mesa's re-export -> ptr non-NULL, NO banner
- *   ptr NULL                        -> not exported at all
+ * History (2026-08-17): this probe was written to discriminate
+ * wrapper-vs-re-export via a SHIM_SCISSOR_LOG banner, but no glScissor
+ * wrapper ever existed in the substitute (no wrapper function, no
+ * _glScissor export, SHIM_SCISSOR_LOG read by nothing) — that outcome
+ * was unreachable, so the banner logic was removed
+ * (PRRT_kwDOPZhcm86uEfbX). The zero-scissor-lines ambiguity was
+ * resolved the other way: Gecko makes zero glScissor calls
+ * (substitute_cgl.c).
+ *
+ * Outcomes it CAN show:
+ *   dlsym address + three calls through without crashing
+ *     -> the framework re-exports Mesa's glScissor
+ *   dlsym NULL -> glScissor not exported at all
  */
 #include <stdio.h>
 #include <dlfcn.h>
@@ -34,8 +42,17 @@ int main(void)
 
     f(0, 0, 64, 64);
     f(0, 0, 64, 64);   /* same rect: exercises the dedup path */
-    f(8, 16, 32, 32);  /* changed rect: second line if wrapper bound */
-    printf("RESULT: called glScissor x3 — banner/lines above ⇒ wrapper "
-           "bound; silence ⇒ dlsym gave Mesa's re-export\n");
+    f(8, 16, 32, 32);  /* changed rect */
+    /* PRRT_kwDOPZhcm86uEfbX: there IS no wrapper to be bound — the
+     * substitute never defined a glScissor wrapper, never exported
+     * _glScissor and never read SHIM_SCISSOR_LOG (the 2026-08-17
+     * ambiguity was resolved the other way: "Gecko makes zero
+     * glScissor calls", substitute_cgl.c:192). This probe now reports
+     * the plain dlsym outcome: whatever address dlsym returned is
+     * Mesa's re-export from the framework, and the calls either
+     * reach Mesa's glScissor or crash — that is all it can show. */
+    printf("RESULT: dlsym address above is the framework's re-export "
+           "(no wrapper exists in the substitute); calls went through "
+           "without an observable banner by design\n");
     return 0;
 }

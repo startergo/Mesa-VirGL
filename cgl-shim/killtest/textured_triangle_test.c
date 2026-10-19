@@ -36,9 +36,11 @@ static const GLfloat tri_data[] = {
  * offset. Blue is NOT 128 anywhere: with the old constant B=128 a red/blue
  * channel swap was invisible at every sampled texel (R=128 at x=2). B=200
  * makes the swap fail the check. Center pixel (128,128) maps to UV
- * (0.5, 0.5) → texel (2,2) = (128, 128, 200, 255) (barycentric: the three
- * UV corners (0,0),(1,0),(0.5,1) average to the centroid UV (0.5, 0.5) at
- * the screen center). */
+ * (0.5, 0.5) → texel (2,2) = (128, 128, 200, 255) (barycentric — PRRT_kwDOPZhcm86uEfdL: NOT the
+ * UV centroid (that is (0.5, 1/3)); the screen center NDC (0,0) carries
+ * weights (0.25, 0.25, 0.5) w.r.t. the NDC corners (-1,-1),(1,-1),(0,1)
+ * (x: a=b; y: c=2a; sum: 4a=1), and 0.25*(0,0)+0.25*(1,0)+0.5*(0.5,1)
+ * = (0.5, 0.5)). */
 static const char *vs_src =
     "attribute vec2 a_pos;\n"
     "attribute vec2 a_uv;\n"

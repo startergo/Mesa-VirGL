@@ -6,7 +6,13 @@
 <style>
 @font-face {
   font-family: "LocalWebFont";
-  src: url("file:///Library/Fonts/Andale Mono.ttf") format("truetype");
+  /* PRRT_kwDOPZhcm86uEfdV: relative to this HTML file (the old absolute
+   * /Library/Fonts/Andale Mono.ttf broke on guests without that font,
+   * and a failed web-font load falls back to monospace — visually
+   * identical to the SYSTEM line, hiding the failure). If AndaleMono.ttf
+   * is missing next to this file the WEBFONT line renders in plain
+   * monospace: treat that as a failed load, not a pass. */
+  src: url("AndaleMono.ttf") format("truetype");
 }
 .wf { font-family: "LocalWebFont", monospace; font-size: 28px; }
 .sf { font-family: monospace; font-size: 28px; }

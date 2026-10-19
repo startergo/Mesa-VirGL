@@ -20,6 +20,14 @@ if (!gl) { log("no ctx"); } else {
   // Step 2: create FBO + texture, clear it to BLUE
   var tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
+  // PRRT_kwDOPZhcm86uEfcY: only level 0 is uploaded below; the default
+  // min filter (NEAREST_MIPMAP_LINEAR) would make the texture
+  // INCOMPLETE and the sampler would return black — the "canvas should
+  // be BLUE" check would then fail for a reason that is not the bug
+  // under test. Non-mipmapped filters make a level-0-only texture
+  // complete.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 400, 300, 0, gl.RGBA,
                 gl.UNSIGNED_BYTE, null);
   var fb = gl.createFramebuffer();
