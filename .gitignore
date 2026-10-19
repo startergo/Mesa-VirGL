@@ -23,3 +23,6 @@ cgl-shim/substitute/glu_shim.o
 cgl-shim/substitute/OpenGL.framework/
 # Local Claude Code settings
 .claude/
+
+# Local development ledger (not published)
+/LEDGER.md
