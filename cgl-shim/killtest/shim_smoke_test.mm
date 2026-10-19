@@ -104,8 +104,11 @@
     /* YQzAl (PR review): a repeating NSTimer retains its target and the run
      * loop retains the timer, so the only place that ever invalidated it was
      * this view's dealloc — which cannot run while the timer holds the view.
-     * Stop it from windowWillClose instead. */
+     * Stop it from windowWillClose instead.
+     * t8dme (PR review): clear mTimer too — after invalidate the run loop
+     * drops the object, so dealloc must not message the stale pointer. */
     [mTimer invalidate];
+    mTimer = nil;
 }
 
 - (void)dealloc {
