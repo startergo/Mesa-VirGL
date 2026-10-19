@@ -185,11 +185,14 @@ int main(void)
     /* Verify pixels:
      *   Center (W/2, H/2) should be inside the triangle → TRI color
      *   Corner (5, 5) should be outside → BG color
-     *   Bottom-center (W/2, H-5) should be inside the triangle → TRI color
+     *   Upper-center (W/2, 40): NDC y ≈ +0.69, between the apex (0, 0.8)
+     *   and the base (-0.8) — inside the triangle → TRI color. (Pixel
+     *   (W/2, H-5) would be NDC y ≈ -0.969, BELOW the base edge at -0.8:
+     *   outside. It is not sampled. Label corrected — review YKBwf.)
      */
     failures += check_pixel(buf, W / 2, H / 2,         TRI_R, TRI_G, TRI_B, "center-inside");
     failures += check_pixel(buf, 5, 5,                  BG_R,  BG_G,  BG_B,  "corner-outside");
-    failures += check_pixel(buf, W / 2, 40,             TRI_R, TRI_G, TRI_B, "bottom-inside");
+    failures += check_pixel(buf, W / 2, 40,             TRI_R, TRI_G, TRI_B, "upper-inside");
 
     if (failures == 0) {
         printf("RESULT: PASS — triangle rendered correctly (3/3 pixels match)\n");
