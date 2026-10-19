@@ -60,6 +60,14 @@ struct virgl_iokit_cmd_buf {
    struct virgl_winsys *ws;
    struct virgl_hw_res **res_bo;
 
+   /* 2026-10-17 (winsys review, F1): set when add_res could not record a
+    * resource whose handle emit_res had already written into the blob
+    * (res_bo REALLOC failed). Such a batch must never be submitted: the
+    * handle would not be in the FCE1 list (no kext fence for it) and no
+    * cbuf reference would hold it alive — the r250 "Illegal resource"
+    * class. submit_cmd drops the batch instead. */
+   int poisoned;
+
    char     is_handle_added[512];
    unsigned reloc_indices_hashlist[512];
 };

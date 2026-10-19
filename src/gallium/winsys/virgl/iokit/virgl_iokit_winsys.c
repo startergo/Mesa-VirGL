@@ -146,13 +146,32 @@ static void census_unregister(struct virgl_hw_res *res)
  *      quarantined bytes capped at 64 MB (oldest unmapped first).
  * =================================================================== */
 #define BK_QMAX 256
-static struct { void *p; size_t len; } s_bk_q[BK_QMAX];
+static struct { void *p; size_t len; uint64_t ms; } s_bk_q[BK_QMAX];
 static unsigned s_bk_qhead, s_bk_qn;
 static pthread_mutex_t s_bk_mtx = PTHREAD_MUTEX_INITIALIZER;
-static int s_bk_heap = -1, s_bk_qcap = -1;
-static unsigned long s_bk_alloc_n, s_bk_free_n;
+static int s_bk_heap = -1, s_bk_qcap = -1, s_bk_hold = -1;
+static unsigned long s_bk_alloc_n, s_bk_free_n, s_bk_young_holds, s_bk_young_forced;
 static size_t s_bk_qbytes;
 #define BK_QBYTES_MAX (64u << 20)   /* quarantined pages stay resident: cap at 64 MB */
+
+/* F2 (2026-10-17 winsys review): how long a quarantined backing must age
+ * before it may be munmapped. The kext defers the release of a user
+ * backing vmq_r270 ms (default 2000) AFTER the synchronous UNREF — the
+ * pages stay wired and canary-filled (r271) for that long. The measured
+ * free rate is ~59/s (6,656 UNREFs in 112 s, LEDGER rung 254), so the old
+ * 64-entry ring turned over in ~1.08 s and munmapped every backing while
+ * the kext still held it. Not a corruption path (the wired pages cannot
+ * be reused until the kext completes them; r271 canary: 0 hits), but it
+ * halves the PROT_NONE window that makes a stray CPU write fault at the
+ * writer and decouples the winsys quarantine from the kext contract.
+ * Entries younger than the hold are kept even past the soft cap; the
+ * hard cap BK_QMAX still forces eviction (logged). */
+static uint64_t bk_now_ms(void)
+{
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return (uint64_t)tv.tv_sec * 1000u + (uint64_t)tv.tv_usec / 1000u;
+}
 
 static void bk_config(void)
 {
@@ -163,8 +182,11 @@ static void bk_config(void)
    s_bk_qcap = e ? atoi(e) : 64;
    if (s_bk_qcap < 0) s_bk_qcap = 0;
    if (s_bk_qcap > BK_QMAX) s_bk_qcap = BK_QMAX;
-   fprintf(stderr, "virgl_iokit: rung236a backings %s, quarantine %d\n",
-           s_bk_heap ? "align_malloc (heap)" : "mmap (off-heap)", s_bk_qcap);
+   e = getenv("VIRGL_IOKIT_QHOLD");
+   s_bk_hold = e ? atoi(e) : 2500;   /* r270 default 2000 ms + slack */
+   if (s_bk_hold < 0) s_bk_hold = 0;
+   fprintf(stderr, "virgl_iokit: rung236a backings %s, quarantine %d, hold %d ms\n",
+           s_bk_heap ? "align_malloc (heap)" : "mmap (off-heap)", s_bk_qcap, s_bk_hold);
 }
 
 static size_t bk_len(size_t size) { return (size + 4095) & ~(size_t)4095; }
@@ -220,14 +242,34 @@ static void bk_free(void *p, size_t size)
    r259_log("PROT", p, len);   /* RUNG 259 */
    mprotect(p, len, PROT_NONE);
    pthread_mutex_lock(&s_bk_mtx);
-   while (s_bk_qn > 0 && (s_bk_qn >= (unsigned)s_bk_qcap || s_bk_qbytes + len > BK_QBYTES_MAX)) {   /* evict oldest */
-      unsigned k = (s_bk_qhead + BK_QMAX - s_bk_qn) % BK_QMAX;
-      r259_log("UNMAP", s_bk_q[k].p, s_bk_q[k].len);   /* RUNG 259 */
-      munmap(s_bk_q[k].p, s_bk_q[k].len);
-      s_bk_qbytes -= s_bk_q[k].len;
-      s_bk_qn--;
+   {
+      uint64_t now = bk_now_ms();
+      while (s_bk_qn > 0 && (s_bk_qn >= (unsigned)s_bk_qcap || s_bk_qbytes + len > BK_QBYTES_MAX)) {   /* evict oldest */
+         unsigned k = (s_bk_qhead + BK_QMAX - s_bk_qn) % BK_QMAX;
+         if ((uint64_t)(now - s_bk_q[k].ms) < (uint64_t)s_bk_hold) {
+            if (s_bk_qn < BK_QMAX) {   /* F2: keep young entries past the soft cap */
+               s_bk_young_holds++;
+               if (s_bk_young_holds <= 4 || (s_bk_young_holds & 1023) == 0)
+                  fprintf(stderr, "virgl_iokit: rung236a quarantine holds young entries "
+                          "(ring %u/%d soft, %u hard, %.1f MB; hold #%lu)\n",
+                          s_bk_qn, s_bk_qcap, BK_QMAX, (double)(s_bk_qbytes + len) / 1048576.0,
+                          s_bk_young_holds);
+               break;
+            }
+            s_bk_young_forced++;   /* hard cap: munmap anyway, say so */
+            if (s_bk_young_forced <= 4 || (s_bk_young_forced & 1023) == 0)
+               fprintf(stderr, "virgl_iokit: rung236a quarantine HARD CAP — munmapping a "
+                       "%llu ms-old entry before the kext's hold (#%lu)\n",
+                       (unsigned long long)(now - s_bk_q[k].ms), s_bk_young_forced);
+         }
+         r259_log("UNMAP", s_bk_q[k].p, s_bk_q[k].len);   /* RUNG 259 */
+         munmap(s_bk_q[k].p, s_bk_q[k].len);
+         s_bk_qbytes -= s_bk_q[k].len;
+         s_bk_qn--;
+      }
    }
    s_bk_q[s_bk_qhead].p = p; s_bk_q[s_bk_qhead].len = len;
+   s_bk_q[s_bk_qhead].ms = bk_now_ms();
    s_bk_qhead = (s_bk_qhead + 1) % BK_QMAX; s_bk_qn++;
    s_bk_qbytes += len;
    s_bk_free_n++;
@@ -600,6 +642,17 @@ virgl_iokit_add_res(struct virgl_iokit_winsys *iws,
                                          new_nres * sizeof(struct virgl_hw_res *));
       if (!nb) {
          fprintf(stderr, "virgl_iokit: failure to add resource %u (%u)\n", cbuf->cres, new_nres);
+         /* F1 (2026-10-17 winsys review): emit_res has already written
+          * res->res_handle into the command stream (or is about to), so
+          * returning here would leave a handle in the blob that is NOT in
+          * res_bo: absent from the FCE1 frame (the kext records no fence
+          * for it, so a later unref's fence-wait at 0x6005 does not cover
+          * the batch) and unreferenced (the resource can be destroyed,
+          * UNREF'd, and its backing freed while the batch is still
+          * queued). That is rung 250's "SET_VERTEX_BUFFERS names a handle
+          * not in FCE1" — the host freeze trigger 1. Poison the cbuf;
+          * submit_cmd refuses to send it. */
+         cbuf->poisoned = 1;
          return;
       }
       cbuf->res_bo = nb;
@@ -642,6 +695,7 @@ virgl_iokit_cmd_buf_create(struct virgl_winsys *vws, uint32_t size)
    cbuf->buf = CALLOC(size, sizeof(uint32_t));
    if (!cbuf->buf) { FREE(cbuf->res_bo); FREE(cbuf); return NULL; }
 
+   cbuf->poisoned = 0;   /* F1 */
    cbuf->ws = vws;
    cbuf->base.buf = cbuf->buf;
    return &cbuf->base;
@@ -828,6 +882,18 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
     * handle (it no longer stores them per batch; the frame is bounded only
     * by its 1 MB size, i.e. far beyond any cbuf). Requires the matching kext. */
    r251_enter("submit");
+   if (cbuf->poisoned) {   /* F1: a handle in the blob has no FCE1 entry / no ref */
+      static unsigned s_poisoned;
+      s_poisoned++;
+      fprintf(stderr, "virgl_iokit: cbuf POISONED (add_res OOM) — batch DROPPED "
+              "(cdw=%u cres=%u, drop #%u)\n", cbuf->base.cdw, cbuf->cres, s_poisoned);
+      virgl_iokit_release_all_res(iws, cbuf);
+      memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
+      cbuf->base.cdw = 0;
+      cbuf->poisoned = 0;
+      r251_leave();
+      return -1;
+   }
    if (r251_on()) {   /* RUNG 251: every SET_VERTEX_BUFFERS handle must be in res_bo */
       static unsigned s_vb, s_miss;
       unsigned n = cbuf->base.cdw, i = 0;
@@ -895,6 +961,7 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
    virgl_iokit_release_all_res(iws, cbuf);
    memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
    cbuf->base.cdw = 0;
+   cbuf->poisoned = 0;   /* F1: a fresh generation starts clean (the poisoned blob was dropped or sent) */
    r251_leave();
    return (kr == KERN_SUCCESS) ? 0 : -1;
 }
@@ -1195,6 +1262,23 @@ virgl_iokit_winsys_wrap(struct sw_winsys *sws)
 
    iokit_dbg("virgl_iokit: winsys_wrap ENTRY sws=%p thread=%p\n",
              (void*)sws, (void*)pthread_self());
+
+   /* RUNG 261 (2026-10-19): build-identity line — one per process, grep
+    * 'rung261'. This build = .r260 + F1 + F2:
+    *   F1  add_res-oom-poison: a res_bo REALLOC failure poisons the cmd
+    *       buffer and submit_cmd DROPS the batch (an FCE1-incomplete frame
+    *       is never sent; r250 'Illegal resource' class closed).
+    *   F2  quarantine min-hold: released backings age VIRGL_IOKIT_QHOLD ms
+    *       (default 2500 = kext r270 deferral 2000 + slack) before munmap;
+    *       hard cap BK_QMAX=256 still forces eviction (logged).
+    * qhold echoes the effective value (same parse/clamp as bk_config). */
+   {
+      const char *qh = getenv("VIRGL_IOKIT_QHOLD");
+      int hold = qh ? atoi(qh) : 2500;
+      if (hold < 0) hold = 0;
+      fprintf(stderr, "virgl_iokit: rung261: qhold=%d ms hardcap=256 "
+              "add_res-oom-poison=on\n", hold);
+   }
 
    iws = CALLOC_STRUCT(virgl_iokit_winsys);
    if (!iws)
