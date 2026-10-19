@@ -55,6 +55,40 @@ extern void   (*p_glGetFloatv)(GLenum, GLfloat *);
 extern void   (*p_glGetIntegerv)(GLenum, GLint *);
 extern const GLubyte *(*p_glGetString)(GLenum);
 extern void   (*p_glReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *);
+extern void   (*p_glPixelStorei)(GLenum, GLint);   /* set in cgl_interpose.c */
+
+/* Internal readback with a fixed layout (review PRRT_kwDOPZhcm86YQzAU).
+ * glReadPixels honours the context's GL_PACK_* state, which is the
+ * APPLICATION's: a non-default PACK_ROW_LENGTH or PACK_SKIP_* both skews
+ * the rows we read into render_buf and, with a row length larger than the
+ * buffer width, writes past its end. Save the four pack parameters, set
+ * the tightly-packed layout every readback site assumes, restore. Also
+ * the single guard for the p_* pointers (review PRRT_kwDOPZhcm86Yova0):
+ * gl_interpose_init can leave them NULL (dlopen/dlsym failure) and every
+ * other call site in this file checks before calling. */
+static void shim_readback(GLsizei w, GLsizei h, void *dst)
+{
+    if (!p_glReadPixels || !dst || w <= 0 || h <= 0) return;
+    GLint pa = 4, prl = 0, psp = 0, psr = 0;
+    int saved = (p_glGetIntegerv && p_glPixelStorei) ? 1 : 0;
+    if (saved) {
+        p_glGetIntegerv(GL_PACK_ALIGNMENT, &pa);
+        p_glGetIntegerv(GL_PACK_ROW_LENGTH, &prl);
+        p_glGetIntegerv(GL_PACK_SKIP_PIXELS, &psp);
+        p_glGetIntegerv(GL_PACK_SKIP_ROWS, &psr);
+        p_glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        p_glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        p_glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+        p_glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    }
+    p_glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+    if (saved) {
+        p_glPixelStorei(GL_PACK_ALIGNMENT, pa);
+        p_glPixelStorei(GL_PACK_ROW_LENGTH, prl);
+        p_glPixelStorei(GL_PACK_SKIP_PIXELS, psp);
+        p_glPixelStorei(GL_PACK_SKIP_ROWS, psr);
+    }
+}
 /* TLS current-context mirror (LEDGER entry 5): every OSMesaMakeCurrent
  * site in THIS file must update the substitute's last-set-wins TSD so a
  * real (foreign) context cannot linger as a stale occupant. */
@@ -561,8 +595,8 @@ static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
         [view setNeedsDisplay:YES];
         [view display];
     } else {
-        [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
-                               withObject:[NSNumber numberWithBool:YES]
+        [view performSelectorOnMainThread:@selector(shim_setNeedsDisplay)
+                               withObject:nil
                             waitUntilDone:NO];
         [view performSelectorOnMainThread:@selector(display)
                                withObject:nil
@@ -1067,7 +1101,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     }
 
     g_timing.t1 = mach_absolute_time();
-    p_glFinish();  /* flush Mesa's command queue to the host */
+    if (p_glFinish) p_glFinish();  /* flush Mesa's command queue to the host */
     g_timing.t2 = mach_absolute_time();
 
     /* CORNER-STAMP instrument (LEDGER entry 10, pre-registered):
@@ -1111,8 +1145,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * IS this copy). The STAMP probe measures readback survival and is
      * meaningless without it; skipped with it. */
     if (!host_present_mode())
-    p_glReadPixels(0, 0, sc->width, sc->height, GL_RGBA, GL_UNSIGNED_BYTE,
-                   sc->render_buf);
+    shim_readback(sc->width, sc->height, sc->render_buf);
 
     if (stamp_ok) {
         uint32_t *b = (uint32_t *)sc->render_buf;
@@ -1140,10 +1173,10 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         if (s_diag_log < 5) {
             s_diag_log++;
             uint32_t scratch[4] = {0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF};
-            p_glReadPixels(0, 0, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE, scratch);
-            GLenum err1 = p_glGetError();
+            shim_readback(2, 2, scratch);
+            GLenum err1 = p_glGetError ? p_glGetError() : 0;
             GLint vp[4] = {0};
-            p_glGetIntegerv(GL_VIEWPORT, vp);
+            if (p_glGetIntegerv) p_glGetIntegerv(GL_VIEWPORT, vp);
             fprintf(stderr, "cgl_shim: diag[%d] scratch=(0x%08x,0x%08x,0x%08x,0x%08x) "
                     "glError=0x%x viewport=(%d,%d,%d,%d)\n",
                     s_diag_log, scratch[0], scratch[1], scratch[2], scratch[3],
@@ -1919,11 +1952,8 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
                     substitute_cgl_tls_set((CGLContextObj)sc);
                 }
                 if (p_glFinish) p_glFinish();
-                if (p_glReadPixels && sc->render_buf &&
-                    sc->width > 0 && sc->height > 0)
-                    p_glReadPixels(0, 0, sc->width, sc->height,
-                                   GL_RGBA, GL_UNSIGNED_BYTE,
-                                   sc->render_buf);
+                if (sc->render_buf)
+                    shim_readback(sc->width, sc->height, sc->render_buf);
                 void *tmp = sc->render_buf;
                 sc->render_buf = sc->present_buf;
                 sc->present_buf = tmp;
