@@ -52,6 +52,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
 if [ "$BRANCH" != "cross-10.6" ]; then
     if [ "${CROSS106_CHECKED:-0}" = 1 ]; then
         BRANCH="cross-10.6"
+        echo "NOTE: branch check bypassed — caller set CROSS106_CHECKED=1"
     else
         for ref in cross-10.6 origin/cross-10.6; do
             if git rev-parse -q --verify "$ref" >/dev/null && git merge-base --is-ancestor "$ref" HEAD 2>/dev/null; then
@@ -61,7 +62,7 @@ if [ "$BRANCH" != "cross-10.6" ]; then
     fi
 fi
 if [ "$BRANCH" != "cross-10.6" ] && [ ! -t 0 ]; then
-    fail "on '$BRANCH', which does not contain cross-10.6 (non-interactive: no prompt)"
+    fail "on '$BRANCH', which does not contain cross-10.6 (non-interactive: no prompt). If you verified this checkout carries the 10.6 patches (an agent branch made from cross-10.6, or the pinned submodule commit), rerun with CROSS106_CHECKED=1."
 fi
 if [ "$BRANCH" != "cross-10.6" ]; then
     echo "WARNING: on branch '$BRANCH', not 'cross-10.6'."
