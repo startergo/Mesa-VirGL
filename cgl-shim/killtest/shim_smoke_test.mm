@@ -111,7 +111,10 @@
 - (void)dealloc {
     [mTimer invalidate];
     if (mCtx) { [mCtx clearDrawable]; [mCtx release]; mCtx = nil; }
-    [mTimer release];
+    /* t8Noj (PR review): no [mTimer release] — scheduledTimerWithTimeInterval:
+     * returns an autoreleased timer that the run loop owns while scheduled;
+     * the view never retained it, so releasing it here would drop a
+     * reference it does not own. invalidate is the whole cleanup. */
     if (mFmt) { [mFmt release]; mFmt = nil; }
     [super dealloc];
 }
