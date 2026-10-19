@@ -1416,22 +1416,41 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
          * so [view class] is the exact class to patch. Only classes
          * that genuinely override drawRect: (IMP differs from
          * NSView's) are patched, so a plain NSView from another app
-         * doesn't consume the one-shot. One-time; the runtime locks
-         * method exchange internally. */
-        static int s_childview_done = 0;
-        if (!s_childview_done && view) {
+         * doesn't consume the slot. One-time PER CLASS; the runtime
+         * locks method exchange internally.
+         *
+         * ZZBKD (PR review): this used to be a process-wide one-shot
+         * (s_childview_done). The first custom view a shim context saw
+         * consumed it, and a second custom view class — e.g. a splash
+         * view set before Gecko's ChildView — then never received the
+         * presentation wrapper, while the first (wrong) class kept it.
+         * Track the classes already swizzled instead. */
+        static Class s_swizzled[16];
+        static unsigned s_swizzled_n = 0;
+        static pthread_mutex_t s_swizzled_mtx = PTHREAD_MUTEX_INITIALIZER;
+        if (view) {
             Class cv = [view class];
-            Method m = class_getInstanceMethod(cv, @selector(drawRect:));
-            Method base = class_getInstanceMethod([NSView class],
-                                                  @selector(drawRect:));
-            if (m && base &&
-                method_getImplementation(m) != method_getImplementation(base)) {
-                swizzle_method(cv, @selector(drawRect:),
-                               @selector(shim_childViewDrawRect:));
-                s_childview_done = 1;
-                fprintf(stderr, "cgl_shim: drawRect swizzled on %s "
-                        "(Gecko view class, via lazy setView)\n",
-                        class_getName(cv));
+            int already = 0;
+            pthread_mutex_lock(&s_swizzled_mtx);
+            for (unsigned i = 0; i < s_swizzled_n; i++)
+                if (s_swizzled[i] == cv) { already = 1; break; }
+            pthread_mutex_unlock(&s_swizzled_mtx);
+            if (!already) {
+                Method m = class_getInstanceMethod(cv, @selector(drawRect:));
+                Method base = class_getInstanceMethod([NSView class],
+                                                      @selector(drawRect:));
+                if (m && base &&
+                    method_getImplementation(m) != method_getImplementation(base)) {
+                    swizzle_method(cv, @selector(drawRect:),
+                                   @selector(shim_childViewDrawRect:));
+                    pthread_mutex_lock(&s_swizzled_mtx);
+                    if (s_swizzled_n < 16)
+                        s_swizzled[s_swizzled_n++] = cv;
+                    pthread_mutex_unlock(&s_swizzled_mtx);
+                    fprintf(stderr, "cgl_shim: drawRect swizzled on %s "
+                            "(custom view class, via setView; %u class(es) patched)\n",
+                            class_getName(cv), s_swizzled_n);
+                }
             }
         }
 
