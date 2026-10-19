@@ -140,7 +140,7 @@ struct osmesa_context
    GLenum type;           /*< Buffer's data type */
    GLint user_row_length; /*< user-specified number of pixels per row */
    GLboolean y_up;        /*< TRUE  -> Y increases upward */
-                          /* < FALSE -> Y increases downward */
+                          /*< FALSE -> Y increases downward */
 
    /** Which postprocessing filters are enabled. */
    unsigned pp_enabled[PP_FILTERS];
@@ -1004,16 +1004,16 @@ OSMesaGetDepthBuffer(OSMesaContext c, GLint *width, GLint *height,
    struct pipe_resource *res = osbuffer->textures[ST_ATTACHMENT_DEPTH_STENCIL];
 
    if (!res) {
-      *buffer = NULL;
+      *width = 0;
       *height = 0;
-      * bytesPerValue = 0;
+      *bytesPerValue = 0;
       *buffer = NULL;
       return GL_FALSE;
    }
 
-   *bytesPerValue = util_format_get_blocksize(res->format);
+   *width = res->width0;
    *height = res->height0;
-   * bytesPerValue = util_format_get_blocksize(res->format);
+   *bytesPerValue = util_format_get_blocksize(res->format);
 
    if (!c->zs) {
       c->zs_stride = *width * *bytesPerValue;
@@ -1045,14 +1045,14 @@ OSMesaGetColorBuffer(OSMesaContext osmesa, GLint *width,
    struct osmesa_buffer *osbuffer = osmesa->current_buffer;
 
    if (osbuffer) {
-      *buffer = osbuffer->map;
+      *width = osbuffer->width;
       *height = osbuffer->height;
       *format = osmesa->format;
       *buffer = osbuffer->map;
       return GL_TRUE;
    }
    else {
-      *buffer = 0;
+      *width = 0;
       *height = 0;
       *format = 0;
       *buffer = 0;

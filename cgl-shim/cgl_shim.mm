@@ -569,7 +569,7 @@ static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
     struct shim_ctx *sc = get_shim_ctx(nsc);
     if (!sc) return;
 
-    /* Clear the coalescing flag FIRST, on every path (review
+    /* Clear the coalescing flag FIRST, on every path:
      * shim_flushBuffer only enqueues a present
      * while !present_pending, so a present that returns before the old
      * "present_pending = 0" line (line ~490, after all the guards below)
@@ -750,7 +750,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 @implementation NSView (CGLShimTick)
 - (void)shim_tick:(NSTimer *)t { (void)t; [self setNeedsDisplay:YES]; [self display]; }
 /* setNeedsDisplay: takes a BOOL; performSelectorOnMainThread passes its
- * object argument in the register a BOOL parameter reads (review
+ * object argument in the register a BOOL parameter reads —
  * On 10.6 BOOL is signed char and NSNumber has no
  * tagged pointers, so the object is a 16-byte-aligned heap pointer whose
  * low byte is 0x00 one allocation in sixteen — that decodes as NO and the
@@ -1725,14 +1725,14 @@ static void shim_blit_present_buf(id view)
                         uint32_t filesz = 54u + datasz;
                         unsigned char hdr[54] = {0};
                         hdr[0] = 'B'; hdr[1] = 'M';
-                        * (uint32_t *)&hdr[2] = filesz;
-                        * (uint32_t *)&hdr[10] = 54u;
-                        * (uint32_t *)&hdr[14] = 40u;
-                        * (int32_t *)&hdr[18] = w;
-                        * (int32_t *)&hdr[22] = h;
-                        * (uint16_t *)&hdr[26] = 1u;
-                        * (uint16_t *)&hdr[28] = 24u;
-                        * (uint32_t *)&hdr[34] = datasz;
+                        *(uint32_t *)&hdr[2] = filesz;
+                        *(uint32_t *)&hdr[10] = 54u;
+                        *(uint32_t *)&hdr[14] = 40u;
+                        *(int32_t *)&hdr[18] = w;
+                        *(int32_t *)&hdr[22] = h;
+                        *(uint16_t *)&hdr[26] = 1u;
+                        *(uint16_t *)&hdr[28] = 24u;
+                        *(uint32_t *)&hdr[34] = datasz;
                         fwrite(hdr, 1, 54, df);
                         unsigned char *rowbuf =
                             (unsigned char *)calloc(1, rowsz);
@@ -1812,14 +1812,14 @@ static void shim_blit_present_buf(id view)
                 uint32_t filesz = 54u + datasz;
                 unsigned char hdr[54] = {0};
                 hdr[0] = 'B'; hdr[1] = 'M';
-                * (uint32_t *)&hdr[2] = filesz;
-                * (uint32_t *)&hdr[10] = 54u;
-                * (uint32_t *)&hdr[14] = 40u;      /* BITMAPINFOHEADER */
-                * (int32_t *)&hdr[18] = w;
-                * (int32_t *)&hdr[22] = h;         /* + → bottom-up rows */
-                * (uint16_t *)&hdr[26] = 1u;
-                * (uint16_t *)&hdr[28] = 24u;      /* bpp */
-                * (uint32_t *)&hdr[34] = datasz;
+                *(uint32_t *)&hdr[2] = filesz;
+                *(uint32_t *)&hdr[10] = 54u;
+                *(uint32_t *)&hdr[14] = 40u;      /* BITMAPINFOHEADER */
+                *(int32_t *)&hdr[18] = w;
+                *(int32_t *)&hdr[22] = h;         /* + → bottom-up rows */
+                *(uint16_t *)&hdr[26] = 1u;
+                *(uint16_t *)&hdr[28] = 24u;      /* bpp */
+                *(uint32_t *)&hdr[34] = datasz;
                 fwrite(hdr, 1, 54, df);
                 unsigned char *rowbuf =
                     (unsigned char *)calloc(1, rowsz);
