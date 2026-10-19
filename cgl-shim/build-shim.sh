@@ -146,10 +146,15 @@ file "$OUTPUT" | grep -q 'x86_64' || fail "not an x86_64 Mach-O"
 # ObjC +load that swizzles NSOpenGLContext. If shim_register is missing,
 # the +load path didn't compile or link — DYLD_INSERT_LIBRARIES would
 # load the dylib but no swizzles would fire (silent no-op).
-if ! nm -g "$OUTPUT" 2>/dev/null | grep -q 'T _shim_register'; then
+# NOTE: no `grep -q` anywhere in this section — under `set -o pipefail` grep -q
+# closes the pipe early, nm dies on SIGPIPE and the whole `if` fails spuriously
+# on a GOOD artifact (observed 3 times out of 4 builds; same rule documented in
+# cross-compat/build-10.6.sh's verify section). grep without -q reads to EOF.
+# (t75O0: the two registry checks below had the same hazard as the glClear one.)
+if ! nm -g "$OUTPUT" 2>/dev/null | grep 'T _shim_register' >/dev/null; then
     fail "shim_register not exported — the swizzle +load path is broken"
 fi
-if ! nm -g "$OUTPUT" 2>/dev/null | grep -q 'T _shim_lookup'; then
+if ! nm -g "$OUTPUT" 2>/dev/null | grep 'T _shim_lookup' >/dev/null; then
     fail "shim_lookup not exported — the registry is broken"
 fi
 
