@@ -46,6 +46,23 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 [ -f "$CROSS_FILE" ] || fail "cross file missing: $CROSS_FILE"
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+# A checkout that contains cross-10.6 (an agent branch made from it) carries the patches; a caller
+# that verified the commit itself (VMQemuVGA scripts/build-mesa.sh: the pinned submodule commit)
+# sets CROSS106_CHECKED=1. Either way: no prompt.
+if [ "$BRANCH" != "cross-10.6" ]; then
+    if [ "${CROSS106_CHECKED:-0}" = 1 ]; then
+        BRANCH="cross-10.6"
+    else
+        for ref in cross-10.6 origin/cross-10.6; do
+            if git rev-parse -q --verify "$ref" >/dev/null && git merge-base --is-ancestor "$ref" HEAD 2>/dev/null; then
+                BRANCH="cross-10.6"; break
+            fi
+        done
+    fi
+fi
+if [ "$BRANCH" != "cross-10.6" ] && [ ! -t 0 ]; then
+    fail "on '$BRANCH', which does not contain cross-10.6 (non-interactive: no prompt)"
+fi
 if [ "$BRANCH" != "cross-10.6" ]; then
     echo "WARNING: on branch '$BRANCH', not 'cross-10.6'."
     echo "         The 10.6 portability patches live on cross-10.6; this build"
