@@ -5,6 +5,8 @@
 
 #include "u_call_once.h"
 
+#include <stdlib.h>
+
 struct util_call_once_context_t
 {
    const void *data;
@@ -12,26 +14,88 @@ struct util_call_once_context_t
 };
 
 #if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
-/* macOS 10.6 lacks TLS runtime: single-threaded fallback only.
- * Plain static is a theoretical race if two different once_flags initialize
- * concurrently. In practice Mesa's call_once paths are not concurrent.
- * For a proper fix: pthread_key_create/pthread_getspecific. */
-static struct util_call_once_context_t call_once_context;
+/* macOS 10.6 lacks TLS runtime (TLV arrived in 10.7), so thread_local is
+ * not an option — but POSIX TSD is (pthread is always available on
+ * macOS; the include is inside this macOS-only branch on purpose).
+ *
+ * The context must be per THREAD, never one global: C11 call_once takes
+ * no argument, so util_call_once_data_slow parks data/func in the
+ * context and the callback reads it back. With a single global, two
+ * threads racing on DIFFERENT once_flags overwrite each other's
+ * data/func before the callback runs — and every simple_mtx first-lock
+ * does exactly that (simple_mtx.h passes its own mutex as data with its
+ * own once_flag), so the callback would initialize the wrong mutex and
+ * leave the other one uninitialized while it is about to be used.
+ *
+ * Per-thread TSD restores the thread_local semantics: a thread only ever
+ * reads the context it wrote itself, and a thread blocked in call_once
+ * on another thread's flag runs no callback at all. */
+#include <pthread.h>
+
+static pthread_key_t  call_once_context_key;
+static pthread_once_t call_once_context_key_once = PTHREAD_ONCE_INIT;
+
+/* Last-resort context when the thread's allocation fails: racy like the
+ * old single global, but only under OOM — still better than dropping
+ * the one-time initialization the caller needs. Static, so it needs no
+ * key-destructor handling. */
+static struct util_call_once_context_t call_once_context_shared;
+
+static void
+call_once_context_free(void *p)
+{
+   free(p);
+}
+
+static void
+call_once_context_key_init(void)
+{
+   pthread_key_create(&call_once_context_key, call_once_context_free);
+}
+
+static struct util_call_once_context_t *
+call_once_context_get(void)
+{
+   struct util_call_once_context_t *ctx;
+
+   pthread_once(&call_once_context_key_once, call_once_context_key_init);
+   ctx = (struct util_call_once_context_t *)
+      pthread_getspecific(call_once_context_key);
+   if (!ctx) {
+      ctx = (struct util_call_once_context_t *)
+         malloc(sizeof(struct util_call_once_context_t));
+      if (ctx) {
+         if (pthread_setspecific(call_once_context_key, ctx) != 0) {
+            free(ctx);
+            ctx = NULL;
+         }
+      }
+      if (!ctx)
+         ctx = &call_once_context_shared;
+   }
+   return ctx;
+}
 #else
 static thread_local struct util_call_once_context_t call_once_context;
+
+static struct util_call_once_context_t *
+call_once_context_get(void)
+{
+   return &call_once_context;
+}
 #endif
 
 static void
 util_call_once_data_slow_once(void)
 {
-   struct util_call_once_context_t *once_context = &call_once_context;
+   struct util_call_once_context_t *once_context = call_once_context_get();
    once_context->func(once_context->data);
 }
 
 void
 util_call_once_data_slow(once_flag *once, util_call_once_data_func func, const void *data)
 {
-   struct util_call_once_context_t *once_context = &call_once_context;
+   struct util_call_once_context_t *once_context = call_once_context_get();
    once_context->data = data;
    once_context->func = func;
    call_once(once, util_call_once_data_slow_once);
