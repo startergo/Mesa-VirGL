@@ -108,15 +108,23 @@ COMMON_CFLAGS=(
     -I"$MESA_INCLUDE"
 )
 
-echo "  [1/3] clang++  cgl_shim.mm"
+echo "  [1/4] clang++  cgl_shim.mm"
 clang++ "${COMMON_CFLAGS[@]}" -std=c++11 \
     -c "$SHIM_DIR/cgl_shim.mm" -o "$SHIM_DIR/cgl_shim.o"
 
-echo "  [2/3] clang    cgl_interpose.c"
+echo "  [2/4] clang    cgl_interpose.c"
 clang "${COMMON_CFLAGS[@]}" \
     -c "$SHIM_DIR/cgl_interpose.c" -o "$SHIM_DIR/cgl_interpose.o"
 
-echo "  [3/3] clang++  link → cgl_shim.dylib"
+# PRRT_kwDOPZhcm86uEfb_: compile the stub source here. Until now the
+# link used a hand-built substitute_stub.o and NOTHING compiled the .c
+# next to it — edits to the source silently could not affect the dylib.
+# The .o is gitignored, so this just refreshes a local artifact.
+echo "  [3/4] clang    substitute_stub.c"
+clang "${COMMON_CFLAGS[@]}" \
+    -c "$SHIM_DIR/substitute_stub.c" -o "$SHIM_DIR/substitute_stub.o"
+
+echo "  [4/4] clang++  link → cgl_shim.dylib"
 clang++ "${COMMON_CFLAGS[@]}" \
     -dynamiclib \
     -install_name @rpath/cgl_shim.dylib \
@@ -135,8 +143,11 @@ clang++ "${COMMON_CFLAGS[@]}" \
     -lOSMesa.8 \
     -lglapi.0 \
     -Wl,-rpath,@loader_path \
-    -Wl,-rpath,@loader_path/../../"$BUILD_DIR"/src/gallium/targets/osmesa \
-    -Wl,-rpath,@loader_path/../../"$BUILD_DIR"/src/mapi/shared-glapi
+    -Wl,-rpath,@loader_path/../"$BUILD_DIR"/src/gallium/targets/osmesa \
+    -Wl,-rpath,@loader_path/../"$BUILD_DIR"/src/mapi/shared-glapi
+# PRRT_kwDOPZhcm86uEfau: cgl_shim.dylib sits in cgl-shim/, so the repo
+# root is ONE level up from @loader_path — the old ../.. escaped the
+# checkout and never pointed at $BUILD_DIR (which lives at the root).
 
 # ---------------------------------------------------------------- verify
 echo "==> verifying $OUTPUT"
