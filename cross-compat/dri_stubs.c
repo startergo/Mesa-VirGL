@@ -19,6 +19,7 @@
  */
 
 #include <stdint.h>
+#include <string.h>
 
 /* Forward-declared to match the real API in xmlconfig.h without pulling
  * in Mesa's full header chain (mesa-sha1.h, ralloc.h, etc.). The real
@@ -40,16 +41,28 @@ void driParseConfigFiles(struct driOptionCache *cache,
 
 /* driQueryOptionb: query boolean option value.
  * Real signature (xmlconfig.h): returns unsigned char, 2nd param is const char *.
- * Stub: return false (safe default for all virgl options). */
+ * PRRT_kwDOPZhcm86uEfZb: return the DECLARED defaults of
+ * src/gallium/drivers/virgl/virgl_driinfo.h.in for the option names
+ * virgl_screen.c queries — a real driParseConfigFiles with no drirc
+ * leaves exactly these in the cache (gles_emulate_bgra and
+ * gles_apply_bgra_dest_swizzle default to TRUE; they are host tweaks
+ * sent by virgl_send_tweaks). Everything else defaults to false. */
 unsigned char driQueryOptionb(const struct driOptionCache *cache,
                               const char *name) {
-    return 0;
+    if (name == NULL) return 0;
+    if (strcmp(name, "gles_emulate_bgra") == 0) return 1;
+    if (strcmp(name, "gles_apply_bgra_dest_swizzle") == 0) return 1;
+    return 0;   /* format_l8_srgb_enable_readback, virgl_shader_sync:
+                   declared def false */
 }
 
 /* driQueryOptioni: query integer option value.
  * Real signature (xmlconfig.h): returns int, 2nd param is const char *.
- * Stub: return 0 (safe default for all virgl options). */
+ * Same rule as driQueryOptionb: gles_samples_passed_value is declared
+ * def="1024" in virgl_driinfo.h.in. */
 int driQueryOptioni(const struct driOptionCache *cache,
                     const char *name) {
+    if (name == NULL) return 0;
+    if (strcmp(name, "gles_samples_passed_value") == 0) return 1024;
     return 0;
 }
