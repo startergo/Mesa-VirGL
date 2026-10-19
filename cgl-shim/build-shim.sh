@@ -229,6 +229,28 @@ if [ -f "$KILLTEST_SRC" ]; then
     file "$KILLTEST" | grep -q 'x86_64' || fail "killtest_shim not x86_64"
     KT_SIZE=$(du -h "$KILLTEST" | cut -f1)
     echo "    killtest_shim: x86_64 ($KT_SIZE)"
+
+    # t8Nos (PR review): stress_test is tracked in this repo as a binary.
+    # Build it from this source too, so a source change can never leave a
+    # stale executable behind (the CGL interpose test lives in it). Same
+    # toolchain, same SDK; no Mesa — the shim is injected at runtime.
+    STRESS_SRC="$SHIM_DIR/killtest/stress_test.mm"
+    STRESS_BIN="$SHIM_DIR/killtest/stress_test"
+    if [ -f "$STRESS_SRC" ]; then
+        echo "==> building $STRESS_BIN"
+        clang++ \
+            -target x86_64-apple-macos10.6 \
+            -isysroot "$SDK" \
+            -fallow-unsupported \
+            -std=c++11 \
+            -Wno-deprecated \
+            -o "$STRESS_BIN" \
+            "$STRESS_SRC" \
+            -framework Cocoa \
+            -framework OpenGL
+        file "$STRESS_BIN" | grep -q 'x86_64' || fail "stress_test not x86_64"
+        echo "    stress_test: x86_64 ($(du -h "$STRESS_BIN" | cut -f1))"
+    fi
 else
     echo "==> killtest_shim.mm not found, skipping killtest build"
 fi
