@@ -5,6 +5,7 @@
 
 #include "u_call_once.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 
 struct util_call_once_context_t
@@ -50,7 +51,23 @@ call_once_context_free(void *p)
 static void
 call_once_context_key_init(void)
 {
-   pthread_key_create(&call_once_context_key, call_once_context_free);
+   /* Review thread PRRT_kwDOPZhcm86uAnOQ: pthread_once marks this
+    * routine done whether or not it succeeded, so a failed key creation
+    * is permanent — and the key variable keeps its zero initialization,
+    * after which every pthread_getspecific/pthread_setspecific would use
+    * a key id this file never created. On Darwin key ids are
+    * process-global small-integer TSD slots, so id 0 can be another
+    * subsystem's live key: its per-thread value would be returned as
+    * our callback context (arbitrary func/data called through it), and
+    * our writes would corrupt that subsystem's state. Creation fails
+    * only with the process out of TSD slots (EAGAIN, PTHREAD_KEYS_MAX)
+    * or out of memory (ENOMEM) — die at the cause, before any get/set,
+    * instead of corrupting unrelated per-thread data. */
+   if (pthread_key_create(&call_once_context_key, call_once_context_free) != 0) {
+      fprintf(stderr, "u_call_once: pthread_key_create failed - no "
+              "per-thread call_once context, aborting\n");
+      abort();
+   }
 }
 
 static struct util_call_once_context_t *
