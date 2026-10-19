@@ -91,6 +91,16 @@ struct shim_ctx {
      * If already set when -flushBuffer fires, skip the enqueue — the
      * pending present will pick up the latest buffer. */
     int present_pending;
+
+    /* t_cCO (PR review): drawRect: re-entry depth for THIS context. With
+     * a parent and a subclass drawRect: both swizzled, the inner
+     * [super drawRect:] re-enters shim_cv_draw_body for the same view:
+     * presentation (readback/swap/blit) must run only for the outermost
+     * call, or the inner one presents a half-drawn frame and rotates the
+     * buffers under the outer one. Per-context (not a process static) so
+     * a DIFFERENT view drawn nested inside this one still presents its
+     * own frame. Main thread only (AppKit drawRect). */
+    int cv_nest;
 };
 
 /* Registry of shim contexts. Membership is tested by POINTER VALUE —

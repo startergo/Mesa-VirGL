@@ -2020,7 +2020,26 @@ static int dr_log_if_new(const char *cls, NSRect bb, CGFloat tx,
             }
         }
     }
-    shim_blit_present_buf(self);
+    /* t_cCO: this NSView-level method also runs NESTED — a patched
+     * subclass's [super drawRect:] lands here when the parent class is
+     * not itself patched (NSView's drawRect: is exchanged by +load).
+     * While an outer trampoline frame of this view's context is still
+     * drawing (cv_nest > 0), its blit would present the previous
+     * frame's PRESENT_BUF_KEY content mid-draw; the outer frame
+     * presents the finished one. Views without an armed sc (the common
+     * case for this target) have no counter and blit as before. */
+    {
+        int t1_nested = 0;
+        NSValue *scvT1 = objc_getAssociatedObject(self, SC_KEY);
+        if (scvT1) {
+            struct shim_ctx *scT1 =
+                (struct shim_ctx *)[scvT1 pointerValue];
+            if (scT1 && scT1->cv_nest > 0)
+                t1_nested = 1;
+        }
+        if (!t1_nested)
+            shim_blit_present_buf(self);
+    }
 
     /* Call original drawRect for non-shim views */
     [self shim_drawRect:dirtyRect];
@@ -2121,29 +2140,55 @@ static void shim_cv_draw_body(id self, SEL _cmd, NSRect dirtyRect,
         }
     }
 
-    /* t8dmQ/t80b1: call the ORIGINAL drawRect: of the Method that was
-     * invoked — the trampoline bound its table slot at install time, so
-     * the original follows the Method, not the receiver's class.
-     * [self class] is wrong as a key: the Method is shared with every
-     * inheriting subclass (an entry recorded under one class must serve
-     * them all), and a nested [super drawRect:] must get the
-     * superclass's original, not the subclass's again — same [self
-     * class] under objc_msgSendSuper, which used to recurse forever.
-     * No fallback branch: install records the entry in the same locked
-     * section that plants the trampoline, so a reached trampoline
-     * always has a slot. */
+    /* t_cCO (PR review): with a parent AND a subclass drawRect: both
+     * patched, the inner [super drawRect:] re-enters this body for the
+     * same view and the same sc — if the inner one also presented, it
+     * would blit the half-drawn frame and rotate the buffers before the
+     * outer frame is complete. Presentation below runs only for the
+     * outermost call of this sc. */
+    int cv_nested = 0;
     {
+        /* t8dmQ/t80b1: call the ORIGINAL drawRect: of the Method that was
+         * invoked — the trampoline bound its table slot at install time, so
+         * the original follows the Method, not the receiver's class.
+         * [self class] is wrong as a key: the Method is shared with every
+         * inheriting subclass (an entry recorded under one class must serve
+         * them all), and a nested [super drawRect:] must get the
+         * superclass's original, not the subclass's again — same [self
+         * class] under objc_msgSendSuper, which used to recurse forever.
+         * No fallback branch: install records the entry in the same locked
+         * section that plants the trampoline, so a reached trampoline
+         * always has a slot. */
         IMP origIMP = NULL;
         pthread_mutex_lock(&g_cv_swz_mtx);
         if (idx < g_cv_swz_n) origIMP = g_cv_swz[idx].orig;
         pthread_mutex_unlock(&g_cv_swz_mtx);
-        if (origIMP)
-            ((void (*)(id, SEL, NSRect))origIMP)(self, _cmd, dirtyRect);
+        if (origIMP) {
+            struct shim_ctx *scN = NULL;
+            NSValue *scvN = objc_getAssociatedObject(self, SC_KEY);
+            if (scvN) scN = (struct shim_ctx *)[scvN pointerValue];
+            if (scN) {
+                cv_nested = (scN->cv_nest > 0);
+                scN->cv_nest++;
+            }
+            /* @finally: AppKit catches drawRect: exceptions per display
+             * cycle; a stranded cv_nest > 0 would silence every later
+             * present for this view. */
+            @try {
+                ((void (*)(id, SEL, NSRect))origIMP)(self, _cmd,
+                                                     dirtyRect);
+            } @finally {
+                if (scN) scN->cv_nest--;
+            }
+        }
     }
 
+    /* t_cCO: presentation (readback → swap → associate) only for the
+     * outermost call of this sc — a nested [super drawRect:] frame is
+     * by definition not the finished frame. */
     {
         NSValue *scv = objc_getAssociatedObject(self, SC_KEY);
-        if (scv) {
+        if (scv && !cv_nested) {
             struct shim_ctx *sc =
                 (struct shim_ctx *)[scv pointerValue];
             if (sc && sc->present_buf) {
@@ -2176,7 +2221,11 @@ static void shim_cv_draw_body(id self, SEL _cmd, NSRect dirtyRect,
         }
     }
 
-    shim_blit_present_buf(self);
+    /* t_cCO: blit only for the outermost call — nested calls left
+     * PRESENT_BUF_KEY untouched, and this blit would just repeat the
+     * previous frame's content mid-draw. */
+    if (!cv_nested)
+        shim_blit_present_buf(self);
 }
 
 /* ===================================================================
