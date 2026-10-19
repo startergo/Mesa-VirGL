@@ -118,46 +118,41 @@ int gluScaleImage(GLenum format,
         return GLU_INVALID_VALUE;
 
     /* General box filter: each output pixel averages the source block it
-     * covers. (Halving falls out exactly.) */
-    unsigned long long *acc = calloc((size_t)wOut * hOut * bpp, sizeof(unsigned long long));
-    if (!acc) return GLU_OUT_OF_MEMORY;
-    for (int sy = 0; sy < hIn; sy++) {
-        int dy0 = (int)((long long)sy * hOut / hIn);
-        int dy1 = (int)(((long long)sy + 1) * hOut / hIn);
-        if (dy1 <= dy0) dy1 = dy0 + 1;
-        if (dy1 > hOut) dy1 = hOut;
-        for (int sx = 0; sx < wIn; sx++) {
-            int dx0 = (int)((long long)sx * wOut / wIn);
-            int dx1 = (int)(((long long)sx + 1) * wOut / wIn);
-            if (dx1 <= dx0) dx1 = dx0 + 1;
-            if (dx1 > wOut) dx1 = wOut;
-            const unsigned char *sp = (const unsigned char *)dataIn
-                + ((size_t)sy * wIn + sx) * bpp;
-            for (int dy = dy0; dy < dy1; dy++)
-                for (int dx = dx0; dx < dx1; dx++)
-                    for (int c = 0; c < bpp; c++)
-                        acc[((size_t)dy * wOut + dx) * bpp + c] += sp[c];
-        }
-    }
-    /* Divide by block size. Exact block areas vary at edges; use the
-     * floor-based block bounds again for the count. */
+     * covers. (Halving falls out exactly.)
+     * PRRT_kwDOPZhcm86uEfZf (PR review): the previous implementation
+     * scattered each source pixel with floor(s*hOut/hIn) bounds but
+     * divided each output by a floor(dy*hIn/hOut) block — inverse
+     * bucketings that disagree at non-integer ratios, so an output's
+     * divisor did not match the number of accumulated contributions:
+     * values overflowed and wrapped (divisor too small) or came out too
+     * dark (divisor too large). One bucketing now: per output pixel,
+     * compute its source block once and use the SAME bounds for both
+     * the sum and the count — and no accumulator allocation at all. */
     for (int dy = 0; dy < hOut; dy++) {
+        int sy0 = (int)((long long)dy * hIn / hOut);
+        int sy1 = (int)(((long long)dy + 1) * hIn / hOut);
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        if (sy1 > hIn) sy1 = hIn;
         for (int dx = 0; dx < wOut; dx++) {
-            int sy0 = (int)((long long)dy * hIn / hOut);
-            int sy1 = (int)(((long long)dy + 1) * hIn / hOut); if (sy1 <= sy0) sy1 = sy0 + 1;
             int sx0 = (int)((long long)dx * wIn / wOut);
-            int sx1 = (int)(((long long)dx + 1) * wIn / wOut); if (sx1 <= sx0) sx1 = sx0 + 1;
-            /* Clamp to source bounds (edge rounding). */
-            if (sy1 > hIn) sy1 = hIn;
+            int sx1 = (int)(((long long)dx + 1) * wIn / wOut);
+            if (sx1 <= sx0) sx1 = sx0 + 1;
             if (sx1 > wIn) sx1 = wIn;
-            unsigned long long n = (unsigned long long)(sy1 - sy0) * (sx1 - sx0);
-            if (!n) n = 1;
-            unsigned char *dp = (unsigned char *)dataOut + ((size_t)dy * wOut + dx) * bpp;
+            unsigned long long sum[4] = {0, 0, 0, 0};
+            const unsigned char *base =
+                (const unsigned char *)dataIn + (size_t)sy0 * wIn * bpp;
+            for (int sy = sy0; sy < sy1; sy++, base += (size_t)wIn * bpp)
+                for (int sx = sx0; sx < sx1; sx++)
+                    for (int c = 0; c < bpp; c++)
+                        sum[c] += base[(size_t)sx * bpp + c];
+            unsigned long long n =
+                (unsigned long long)(sy1 - sy0) * (sx1 - sx0);
+            unsigned char *dp =
+                (unsigned char *)dataOut + ((size_t)dy * wOut + dx) * bpp;
             for (int c = 0; c < bpp; c++)
-                dp[c] = (unsigned char)(acc[((size_t)dy * wOut + dx) * bpp + c] / n);
+                dp[c] = (unsigned char)(sum[c] / n);
         }
     }
-    free(acc);
     return 0;
 }
 
