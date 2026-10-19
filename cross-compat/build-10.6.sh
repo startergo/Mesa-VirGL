@@ -243,7 +243,19 @@ sys.stdout.write(cmd)
     ( cd "$BUILD_DIR" && eval "$PATCHED" )
 fi
 
-[ -f "$OSMESA" ] || fail "force-link finished but $OSMESA does not exist"
+# --no-force-link skips the only step that produces the dylib: the ninja OSMesa
+# link is expected to fail (undefined virgl symbols), so with the force-link
+# step off there is nothing to verify (review Yovbz). Fail loudly if the
+# force-link ran and produced nothing; exit cleanly if it was skipped.
+if [ ! -f "$OSMESA" ]; then
+    if [ "$FORCE_LINK" = "1" ]; then
+        fail "force-link finished but $OSMESA does not exist"
+    fi
+    echo "NOTE: --no-force-link and $OSMESA was not built (the ninja link step"
+    echo "      fails as expected without the virgl archives) — skipping verification."
+    echo "Built: (nothing — compile-only run)"
+    exit 0
+fi
 
 # ---------------------------------------------------------------- verify
 # Compile-clean has meant "doesn't work" more than once on this project.
