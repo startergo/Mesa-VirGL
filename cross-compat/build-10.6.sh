@@ -174,9 +174,12 @@ fi
 echo "==> ninja -C $BUILD_DIR -j$JOBS -k 0"
 set +e
 NINJA_LOG="$BUILD_DIR/ninja-build.log"
-ninja -C "$BUILD_DIR" -j"$JOBS" -k 0 >"$NINJA_LOG" 2>&1
-NINJA_RC=$?
-tail -40 "$NINJA_LOG"
+# tee so long builds keep showing live progress (a plain redirect to
+# the log is silent for minutes); PIPESTATUS keeps ninja's own rc even
+# under pipefail.
+set +e
+ninja -C "$BUILD_DIR" -j"$JOBS" -k 0 2>&1 | tee "$NINJA_LOG"
+NINJA_RC=${PIPESTATUS[0]}
 set -e
 
 OSMESA="$BUILD_DIR/src/gallium/targets/osmesa/libOSMesa.8.dylib"
@@ -187,11 +190,22 @@ if [ "$NINJA_RC" -ne 0 ]; then
     # — a reused build directory keeps old archives on disk while an
     # UNRELATED compile step fails, and archive existence alone cannot
     # tell those apart. Every failed edge must be the OSMesa target.
-    FAILED_TARGETS="$(grep '^FAILED: ' "$NINJA_LOG" | sed 's/^FAILED: *//' | sort -u)"
+    # `grep` inside a command substitution fails the assignment under
+    # `set -euo pipefail` when it matches nothing (ninja rc != 0 with
+    # no FAILED: edges would abort the script right here instead of
+    # reaching the explicit check below) — guard with `|| true`.
+    # sed also strips ninja's "[code=N] " prefix (newer ninja prints
+    # "FAILED: [code=1] <target>"), and the match accepts BOTH path
+    # forms — ninja logs targets relative to the build dir, older
+    # versions absolute.
+    FAILED_TARGETS="$( { grep '^FAILED: ' "$NINJA_LOG" || true; } | \
+        sed -e 's/^FAILED: *//' -e 's/^\[code=[0-9]*\] *//' | sort -u)"
     if [ -z "$FAILED_TARGETS" ]; then
         fail "ninja failed (rc=$NINJA_RC) but logged no FAILED: edges — unrecognized failure, see $NINJA_LOG"
     fi
-    BAD_TARGETS="$(echo "$FAILED_TARGETS" | grep -v "^$BUILD_DIR/src/gallium/targets/osmesa/" || true)"
+    BAD_TARGETS="$(echo "$FAILED_TARGETS" | \
+        grep -v -e "^src/gallium/targets/osmesa/" \
+                -e "^$BUILD_DIR/src/gallium/targets/osmesa/" || true)"
     if [ -n "$BAD_TARGETS" ]; then
         echo "ERROR: ninja failed outside the expected OSMesa link target:"
         echo "$BAD_TARGETS"
