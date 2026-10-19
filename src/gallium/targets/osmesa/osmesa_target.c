@@ -80,7 +80,7 @@ osmesa_create_screen(void)
     */
    winsys = null_sw_create();
    if (!winsys) {
-      /* PR review YovcC: iokit_dbg-style gate — this fired on every
+      /* iokit_dbg-style gate — this fired on every
        * OSMesaCreateContext of a misconfigured guest (GALLIUM_DRIVER unset
        * or wrong), with no way to silence it. OSMESA_TARGET_DEBUG gates the
        * other osmesa_target diagnostics already. */

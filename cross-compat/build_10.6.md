@@ -161,17 +161,41 @@ Result: `build-106/src/gallium/targets/osmesa/libOSMesa.8.dylib`
 Two more substitutions the script applies before `eval` — easy to miss
 manually, and without them the manual link binds the *shipped* libc++
 dylibs instead of the static archives, so the result differs from the
-scripted one:
+scripted one. The block below is the complete runnable sequence (the
+hand-typed command above is illustrative only):
 
 ```sh
-# (a) replace both libc++ reexports with the static archives in
-#     cross-compat/libcxx/lib (see the libc++ section above), then
-# (b) append -nostdlib++ so libc++ never enters the link
-PATCHED=$(printf '%s' "$LINK_CMD" \
-  | sed 's|-Wl,-reexport_library,[^ ]*libc++.1.dylib|<libcxx>/libc++.a|g' \
-  | sed 's|-Wl,-reexport_library,[^ ]*libc++abi.dylib|<libcxx>/libc++abi.a|g')
+# The link line ninja actually used, recovered from ninja itself:
+LINK_CMD=$(ninja -C build-106 -t commands \
+             src/gallium/targets/osmesa/libOSMesa.8.dylib | tail -1)
+
+# (a) force-load the four virgl archives at libsoftpipe.a's position ...
+PATCHED=$(printf '%s' "$LINK_CMD" | sed 's|src/gallium/drivers/softpipe/libsoftpipe.a|& -Wl,-force_load,src/gallium/drivers/virgl/libvirgl.a -Wl,-force_load,src/gallium/winsys/virgl/vtest/libvirglvtest.a -Wl,-force_load,src/gallium/winsys/virgl/common/libvirglcommon.a -Wl,-force_load,src/gallium/winsys/virgl/iokit/libvirgliokit.a|')
+
+# (b) ... replace both libc++ reexports with the static archives in
+#     cross-compat/libcxx/lib (placeholder + python3 quoting — no path text
+#     goes through a sed replacement), then append -nostdlib++ so libc++
+#     never enters the link:
+LIBCXX_DIR=cross-compat/libcxx/lib
+PATCHED=$(printf '%s' "$PATCHED" \
+  | sed "s|-Wl,-reexport_library,[^ ]*libc++.1.dylib|@LIBCXX_A@|g" \
+  | sed "s|-Wl,-reexport_library,[^ ]*libc++abi.dylib|@LIBCXXABI_A@|g")
+PATCHED=$(printf '%s' "$PATCHED" | python3 -c '
+import sys
+cmd = sys.stdin.read()
+for tok, path in (("@LIBCXX_A@", sys.argv[1]), ("@LIBCXXABI_A@", sys.argv[2])):
+    cmd = cmd.replace(tok, "\x27" + path.replace("\x27", "\x27\\\x27\x27") + "\x27")
+sys.stdout.write(cmd)
+' "$LIBCXX_DIR/libc++.a" "$LIBCXX_DIR/libc++abi.a")
 PATCHED="$PATCHED -nostdlib++"
+
+# run from the repo root (the command's relative paths are build-106/-rooted):
+( cd build-106 && eval "$PATCHED" )
 ```
+
+This is exactly what `cross-compat/build-10.6.sh` does in its force-link
+step — copy it from there rather than from this document if they ever
+diverge.
 
 Verify with (note the path — after `cd build-106` the dylib is three
 directories down, exactly as in the "Result" line above; `nm libOSMesa.8.dylib`

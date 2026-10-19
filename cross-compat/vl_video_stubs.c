@@ -16,10 +16,13 @@
  * If video support is ever needed, compile
  * src/gallium/auxiliary/vl/ properly and delete this file.
  *
- * Signatures match src/gallium/auxiliary/vl/vl_video_buffer.h exactly
- * (return types, parameter types, and parameter order). The real types
+ * ABI-compatible with src/gallium/auxiliary/vl/vl_video_buffer.h —
+ * the vl prototypes use enum types (pipe_video_profile,
+ * pipe_video_entrypoint, enum pipe_format) whose storage is int in the
+ * calling convention used here, so the stubs declare int parameters;
+ * parameter order and return types match the header. The real types
  * come from Gallium's pipe/p_*.h headers; we forward-declare the tagged
- * structs/enums we need so the prototypes are self-contained without
+ * structs we need so the prototypes are self-contained without
  * dragging in the full Gallium auxiliary header chain.
  */
 
