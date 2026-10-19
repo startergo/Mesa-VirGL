@@ -1065,13 +1065,16 @@ virgl_iokit_get_caps(struct virgl_winsys *vws, struct virgl_drm_caps *caps)
 
          uint32_t copy = MIN2((uint32_t)blob_sz, (uint32_t)sizeof(union virgl_caps));
          memcpy(&caps->caps, blob, copy);
-         fprintf(stderr, "virgl_iokit: get_caps capset_id=%u ver=%u size=%u copy=%u\n",
-                 capset_id, capset_ver, (uint32_t)blob_sz, copy);
+         /* rung278 (PR review YovcR): iokit_dbg, not fprintf — these two
+          * lines fired on every screen init with VIRGL_IOKIT_DEBUG unset,
+          * so every application paid for them. */
+         iokit_dbg("iokit: get_caps capset_id=%u ver=%u size=%u copy=%u\n",
+                   capset_id, capset_ver, (uint32_t)blob_sz, copy);
          return 0;
       }
    }
 
-   fprintf(stderr, "virgl_iokit: get_caps — no capset returned by host\n");
+   iokit_dbg("iokit: get_caps — no capset returned by host\n");
    return -1;
 }
 
