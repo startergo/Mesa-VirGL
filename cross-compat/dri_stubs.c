@@ -41,12 +41,11 @@ void driParseConfigFiles(struct driOptionCache *cache,
 
 /* driQueryOptionb: query boolean option value.
  * Real signature (xmlconfig.h): returns unsigned char, 2nd param is const char *.
- * return the DECLARED defaults of
- * src/gallium/drivers/virgl/virgl_driinfo.h.in for the option names
- * virgl_screen.c queries — a real driParseConfigFiles with no drirc
- * leaves exactly these in the cache (gles_emulate_bgra and
- * gles_apply_bgra_dest_swizzle default to TRUE; they are host tweaks
- * sent by virgl_send_tweaks). Everything else defaults to false. */
+ * NOTE: on THIS target these are dead code — sw_screen_create_named
+ * calls virgl_create_screen(vws, NULL) and virgl_screen.c only queries
+ * the DRI options when a config exists (the OSMesa path now sets the
+ * declared defaults itself in its else branch). The defaults below
+ * stay correct in case a config-bearing caller ever appears. */
 unsigned char driQueryOptionb(const struct driOptionCache *cache,
                               const char *name) {
     if (name == NULL) return 0;
@@ -58,8 +57,8 @@ unsigned char driQueryOptionb(const struct driOptionCache *cache,
 
 /* driQueryOptioni: query integer option value.
  * Real signature (xmlconfig.h): returns int, 2nd param is const char *.
- * Same rule as driQueryOptionb: gles_samples_passed_value is declared
- * def="1024" in virgl_driinfo.h.in. */
+ * Same dead-on-this-path note as driQueryOptionb above; gles_samples_
+ * passed_value is declared def="1024" in virgl_driinfo.h.in. */
 int driQueryOptioni(const struct driOptionCache *cache,
                     const char *name) {
     if (name == NULL) return 0;

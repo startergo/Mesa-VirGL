@@ -231,7 +231,12 @@ _glapi_get_dispatch(void)
          (struct _glapi_table *) pthread_getspecific(tsd_dispatch_key);
       return t ? t : (struct _glapi_table *) table_noop_array;
    }
-   return (struct _glapi_table *) _glapi_Dispatch;
+   /* Before the first _glapi_set_dispatch the global is NULL — entry
+    * stubs jump straight through the returned table, so the historical
+    * noop-table default must hold here too (GL calls with no context
+    * current are no-ops, not NULL derefs). */
+   return (_glapi_Dispatch) ? (struct _glapi_table *) _glapi_Dispatch
+                            : (struct _glapi_table *) table_noop_array;
 }
 
 #else /* !MAPI_PTHREAD_TSD — upstream storage, untouched */
