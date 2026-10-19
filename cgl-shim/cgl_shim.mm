@@ -895,7 +895,30 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     sc->last_view_w = -1;
     sc->last_view_h = -1;
 
-    shim_register(sc);
+    /* Review PRRT_kwDOPZhcm86YKBvN: a full registry must not leave a
+     * half-shimmed context live. shim_register() fails once
+     * MAX_SHIM_CONTEXTS contexts are registered (shim_lookup then cannot
+     * resolve this sc), and shim_CGLContextObj hands the raw sc pointer
+     * out as a CGLContextObj token — every _CGL* interpose would forward
+     * that token to real CGL and crash inside Apple's GL. Tear this sc
+     * down and leave the context on Apple's renderer instead: -flushBuffer
+     * and friends fall back to the original IMPs when get_shim_ctx(self)
+     * is NULL (see shim_flushBuffer's `if (!sc || !sc->osmesa_ctx)`). */
+    if (shim_register(sc) != 0) {
+        fprintf(stderr, "cgl_shim: shim registry full (%d) — context %p left "
+                "on Apple GL (not shimmed)\n", MAX_SHIM_CONTEXTS, (void *)self);
+        if (get_current_ctx() == self) {
+            set_current_ctx(nil);
+            shim_osmesa_make_current(NULL);
+            substitute_cgl_tls_set(NULL);
+        }
+        free_buffers(sc);
+        OSMesaDestroyContext(sc->osmesa_ctx);
+        pthread_mutex_destroy(&sc->cgl_lock);
+        pthread_mutex_destroy(&sc->lock);
+        free(sc);
+        return self;
+    }
     set_shim_ctx(self, sc);
 
     return self;
@@ -971,7 +994,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         if (slot >= 0 && s_acc[slot].n < 12) {
             s_acc[slot].n++;
             GLint vpq[4] = {0, 0, 0, 0};
-            if (sc->osmesa_ctx) p_glGetIntegerv(GL_VIEWPORT, vpq);
+            if (sc->osmesa_ctx && p_glGetIntegerv) p_glGetIntegerv(GL_VIEWPORT, vpq);
             fprintf(stderr,
                     "cgl_shim: FLUSHACC sc=%p osmesa=%p th=%p #%d dims=%dx%d vp=(%d,%d,%d,%d)\n",
                     (void *)sc, (void *)sc->osmesa_ctx,
@@ -989,7 +1012,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         if (s_pre_resize_log < 3) {
             s_pre_resize_log++;
             GLint vp[4] = {-1, -1, -1, -1};
-            p_glGetIntegerv(GL_VIEWPORT, vp);
+            if (p_glGetIntegerv) p_glGetIntegerv(GL_VIEWPORT, vp);
             const void *ctx = _glapi_get_context();
             fprintf(stderr, "cgl_shim: pre-resize[%d] viewport=(%d,%d,%d,%d) context=%p\n",
                     s_pre_resize_log, vp[0], vp[1], vp[2], vp[3], (void*)ctx);
@@ -1013,7 +1036,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * drawable size. If no context is current, vp stays 0 and the
      * check safely skips. */
     GLint vp_rs[4] = {0, 0, 0, 0};
-    p_glGetIntegerv(GL_VIEWPORT, vp_rs);
+    if (p_glGetIntegerv) p_glGetIntegerv(GL_VIEWPORT, vp_rs);   /* NULL -> vp stays 0: resize check skips, by design */
     if (vp_rs[2] > 0 && vp_rs[3] > 0 &&
         (vp_rs[2] != sc->width || vp_rs[3] != sc->height)) {
         /* trylock: a full lock here once deadlocked the compositor on a
@@ -1046,7 +1069,7 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
         if (s_ctx_log < 5) {
             s_ctx_log++;
             OSMesaContext osmc = OSMesaGetCurrentContext();
-            const GLubyte *renderer = p_glGetString(GL_RENDERER);
+            const GLubyte *renderer = p_glGetString ? p_glGetString(GL_RENDERER) : NULL;
             fprintf(stderr, "cgl_shim: ctxcheck[%d] OSMesaCurrent=%p renderer=\"%s\"\n",
                     s_ctx_log, (void*)osmc,
                     renderer ? (const char *)renderer : "(null)");
