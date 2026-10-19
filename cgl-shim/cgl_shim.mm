@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <sys/time.h>
 #include <stdlib.h>
+#include <dlfcn.h>
 #include <string.h>
 #include <mach/mach_time.h>
 
@@ -457,9 +458,31 @@ static char kScKey;
  * buffer against the union of this frame's draw rects. */
 extern "C" void cgl_shim_diff_at_present(const void *buf, int w, int h);
 
-static void shim_present(NSOpenGLContext *nsc){
+static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
+{
     struct shim_ctx *sc = get_shim_ctx(nsc);
     if (!sc || !sc->present_buf || !sc->view) return;
+
+    /* THE ABORT FIX (2026-10-06): if clearDrawable (or teardown)
+     * bumped the generation between enqueue and run, this sc's
+     * state is stale — the view may be gone (the ___forwarding___
+     * abort at the first objc_setAssociatedObject, three identical
+     * reports). Drop the frame; the next flush re-presents on the
+     * new generation. */
+    pthread_mutex_lock(&sc->lock);
+    uint32_t genNow = sc->gen;
+    pthread_mutex_unlock(&sc->lock);
+    if (genNow != genAtEnqueue) return;
+
+    /* VIEW-LIVENESS ROUND-TRIP (2026-10-07, the abort fix): the
+     * view's SC_KEY association dies WITH the view — if the view
+     * is dead, the read returns nil and present drops the frame.
+     * objc_getAssociatedObject does not message the receiver. */
+    {
+        NSValue *scv = (NSValue *)
+            objc_getAssociatedObject((id)sc->view, SC_KEY);
+        if (!scv || [scv pointerValue] != (void *)sc) return;
+    }
 
     NSView *view = (NSView *)sc->view;
 
@@ -487,10 +510,52 @@ static void shim_present(NSOpenGLContext *nsc){
 
     pthread_mutex_unlock(&sc->lock);
 
-    /* Trigger drawRect on the main thread */
-    [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
-                           withObject:[NSNumber numberWithBool:YES]
-                        waitUntilDone:NO];
+    /* RUNG 70d — THE TIMER FIX: a repeating 30 Hz timer that forces
+     * display on the view, independent of the flush path and the
+     * AppKit display cycle. The cycle stops re-firing on 10.6 for
+     * SSH-launched windows; a timer on the main runloop keeps
+     * drawing alive. The timer's block captures the view weakly
+     * (no retain cycle). */
+    static NSTimer *s_timer = nil;
+    static NSView *s_timer_view = nil;   /* RETAINED (2026-10-06):
+                                          * the unsafe_unretained era
+                                          * ended when the crash logs
+                                          * showed the 30 Hz timer
+                                          * messaging a dead view —
+                                          * ___forwarding___ → abort,
+                                          * three identical reports.
+                                          * 10.6 has no zeroing weak;
+                                          * retain/release is the
+                                          * correct lifetime. */
+    if (s_timer_view != view) {
+        [view retain];
+        [s_timer_view release];
+        s_timer_view = view;
+    }
+    if (!s_timer) {
+        /* 2026-10-07: the BLOCK timer API is 10.7+ — on 10.6 it
+         * forwarded to the abort (the console crash log). The
+         * selector form with the retained view as target. */
+        s_timer = [NSTimer timerWithTimeInterval:1.0/30.0
+                                         target:(id)s_timer_view
+                                       selector:@selector(shim_tick:)
+                                       userInfo:nil
+                                        repeats:YES];
+        [[NSRunLoop mainRunLoop] addTimer:s_timer
+                             forMode:NSDefaultRunLoopMode];
+    }
+    /* also do the direct call for the current frame */
+    if ([NSThread isMainThread]) {
+        [view setNeedsDisplay:YES];
+        [view display];
+    } else {
+        [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
+                               withObject:[NSNumber numberWithBool:YES]
+                            waitUntilDone:NO];
+        [view performSelectorOnMainThread:@selector(display)
+                               withObject:nil
+                            waitUntilDone:NO];
+    }
 }
 
 /* Direct-CGL present entry (LEDGER entry 14): CGLFlushDrawable on a
@@ -534,9 +599,18 @@ extern "C" void cgl_shim_present_from_cgl(void *scv)
     objc_setAssociatedObject(view, PRESENT_SIZE_KEY, sizeDict, OBJC_ASSOCIATION_RETAIN);
     pthread_mutex_unlock(&sc->lock);
 
-    [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
-                           withObject:[NSNumber numberWithBool:YES]
-                        waitUntilDone:NO];
+    /* RUNG 70b — same re-fire fix (direct call when on main thread) */
+    if ([NSThread isMainThread]) {
+        [view setNeedsDisplay:YES];
+        [view display];
+    } else {
+        [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
+                               withObject:[NSNumber numberWithBool:YES]
+                            waitUntilDone:NO];
+        [view performSelectorOnMainThread:@selector(display)
+                               withObject:nil
+                            waitUntilDone:NO];
+    }
 }
 
 /* ===================================================================
@@ -551,6 +625,13 @@ extern "C" void cgl_shim_present_from_cgl(void *scv)
  * ChildView swizzle in shim_setView: runs before that point in the
  * file. */
 static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
+
+@interface NSView (CGLShimTick)
+- (void)shim_tick:(NSTimer *)t;
+@end
+@implementation NSView (CGLShimTick)
+- (void)shim_tick:(NSTimer *)t { (void)t; [self setNeedsDisplay:YES]; [self display]; }
+@end
 
 @interface NSOpenGLContext (CGLShim)
 - (id)shim_initWithFormat:(NSOpenGLPixelFormat *)fmt shareContext:(NSOpenGLContext *)share;
@@ -680,9 +761,26 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
      * shares. Mesa plumbing verified (osmesa.c:575-681 passes share →
      * st_shared; virgl handles are global). */
     struct shim_ctx *share_sc = share ? get_shim_ctx(share) : NULL;
-    sc->osmesa_ctx = OSMesaCreateContextExt(OSMESA_RGBA, 16, 0, 0,
-                                            share_sc ? share_sc->osmesa_ctx
-                                                     : NULL);
+    /* RUNG 70c — THE PROFILE FIX: explicitly request COMPAT profile
+     * via OSMesaCreateContextAttribs. The legacy Ext call may land in
+     * core profile on some Mesa builds (virgl prefers core); core
+     * rejects client-side vertex arrays — the named GL_INVALID_
+     * OPERATION from the suite ("glVertexAttribPointer(non-VBO
+     * array)"). Compat matches what 10.6's GL 2.1 apps expect. */
+    {
+        int attribs[] = {
+            OSMESA_FORMAT, OSMESA_RGBA,
+            OSMESA_DEPTH_BITS, 16,
+            OSMESA_PROFILE, OSMESA_COMPAT_PROFILE,
+            0
+        };
+        sc->osmesa_ctx = OSMesaCreateContextAttribs(
+            attribs, share_sc ? share_sc->osmesa_ctx : NULL);
+        if (!sc->osmesa_ctx)
+            sc->osmesa_ctx = OSMesaCreateContextExt(
+                OSMESA_RGBA, 16, 0, 0,
+                share_sc ? share_sc->osmesa_ctx : NULL);
+    }
     fprintf(stderr, "cgl_shim: post-OSMesaCreateContextExt osmesa_ctx=%p "
             "share=%p share_osmesa=%p\n",
             (void*)sc->osmesa_ctx, (void*)share,
@@ -707,6 +805,36 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
                 entries ? (void*)entries[1] : (void*)0,
                 entries ? (void*)entries[2] : (void*)0,
                 entries ? (void*)entries[3] : (void*)0);
+    }
+
+    /* RUNG 70 — THE GL_INVALID_OPERATION HUNT: check the error state
+     * right after MakeCurrent (before any app draw). If 0x502 is
+     * already set, it's from setup (Mesa init or virgl ctx creation).
+     * Then create+bind a VAO — on a core profile, no-VAO draws are
+     * the classic GL_INVALID_OPERATION source (clears unaffected). */
+    {
+        typedef GLenum (*fn_geterr_t)(void);
+        typedef void (*fn_gen_t)(int, unsigned int*);
+        typedef void (*fn_bind_t)(unsigned int);
+        fn_geterr_t pGetErr = (fn_geterr_t)dlsym(g_mesa, "glGetError");
+        fn_gen_t pGen = (fn_gen_t)dlsym(g_mesa, "glGenVertexArrays");
+        fn_bind_t pBind = (fn_bind_t)dlsym(g_mesa, "glBindVertexArray");
+        if (pGetErr && pGen && pBind) {
+            GLenum setup_err = pGetErr();
+            GLuint vao = 0;
+            pGen(1, &vao);
+            if (vao) {
+                pBind(vao);
+                GLenum post_vao_err = pGetErr();
+                fprintf(stderr, "cgl_shim: rung70 SETUP err=0x%x "
+                        "vao=%u post_vao_err=0x%x\n",
+                        setup_err, vao, post_vao_err);
+            } else {
+                fprintf(stderr, "cgl_shim: rung70 SETUP err=0x%x "
+                        "GenVertexArrays FAILED\n", setup_err);
+            }
+            while (pGetErr() != GL_NO_ERROR) ;
+        }
     }
     pthread_mutex_init(&sc->lock, NULL);
     pthread_mutex_init(&sc->cgl_lock, NULL);
@@ -750,6 +878,10 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 {
     struct shim_ctx *sc = get_shim_ctx(self);
     if (sc) {
+        pthread_mutex_lock(&sc->lock);
+        sc->gen++;               /* 2026-10-06: invalidate any
+                                  * enqueued present against this sc */
+        pthread_mutex_unlock(&sc->lock);
         set_current_ctx(nil);
         shim_osmesa_make_current(NULL);
         substitute_cgl_tls_set(NULL);
@@ -1129,8 +1261,11 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     /* Trigger presentation on main thread */
     if (should_enqueue) {
         NSOpenGLContext *ctxForPresent = self;
+        uint32_t genAtEnqueue = sc->gen;   /* abort fix: present
+                                            * returns if teardown
+                                            * bumped it meanwhile */
         dispatch_async(dispatch_get_main_queue(), ^{
-            shim_present(ctxForPresent);
+            shim_present(ctxForPresent, genAtEnqueue);
         });
     }
 
@@ -1159,8 +1294,12 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
          * shim_ctx on the view so the drawRect swizzle can present on
          * return from the app's draw — the idiom where AppKit flushes
          * through private __NS_CGL* wrappers our swizzles cannot see.
-         * Gated by SHIM_DRAWRECT_PRESENT while experimental. */
-        if (getenv("SHIM_DRAWRECT_PRESENT")) {
+         * 2026-10-07: set UNCONDITIONALLY — the view-liveness round-
+         * trip in shim_present reads this association as its liveness
+         * anchor; under the old env gate every present dropped (the
+         * white-compositor report — app rendered offscreen at full
+         * FPS while the screen never updated). */
+        {
             objc_setAssociatedObject(view, SC_KEY,
                 [NSValue valueWithPointer:(void *)sc],
                 OBJC_ASSOCIATION_RETAIN);

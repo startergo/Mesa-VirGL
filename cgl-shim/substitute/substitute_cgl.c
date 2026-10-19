@@ -16,6 +16,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <sys/time.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -312,6 +316,54 @@ void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose,
     if (fn) fn(location, count, transpose, value);
 }
 
+/* RUNG 128e3: the scalar family the app actually calls — same
+ * shape as the existing exports, forwarding via walk_mesa_fn,
+ * first-24-calls logged to the stub log (the (B) uniform table). */
+static int s_128e3 = 0;
+static void u3log(const char* fn, GLint loc, int n,
+                  const float* v)
+{
+    if (s_128e3 >= 24) return;
+    s_128e3++;
+    FILE* f = fopen("/var/log/vm_gld_stub.log", "a");
+    if (!f) return;
+    struct timeval tv; gettimeofday(&tv, 0);
+    time_t t = (time_t)tv.tv_sec;
+    char ts[32];
+    strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
+    fprintf(f, "[%s pid=%d] rung128e: glUniform%s loc=%d:",
+            ts, (int)getpid(), fn, (int)loc);
+    for (int i = 0; i < n; i++)
+        fprintf(f, " %.4g", (double)v[i]);
+    fprintf(f, "\n");
+    fclose(f);
+}
+void glUniform1f(GLint location, GLfloat x)
+{
+    float v[1] = { x }; u3log("1f", location, 1, v);
+    static void (*fn)(GLint, GLfloat);
+    if (!fn) fn = (void (*)(GLint, GLfloat))
+        walk_mesa_fn("glUniform1f");
+    if (fn) fn(location, x);
+}
+void glUniform3f(GLint location, GLfloat x, GLfloat y, GLfloat z)
+{
+    float v[3] = { x, y, z }; u3log("3f", location, 3, v);
+    static void (*fn)(GLint, GLfloat, GLfloat, GLfloat);
+    if (!fn) fn = (void (*)(GLint, GLfloat, GLfloat, GLfloat))
+        walk_mesa_fn("glUniform3f");
+    if (fn) fn(location, x, y, z);
+}
+void glUniform4f(GLint location, GLfloat x, GLfloat y,
+                 GLfloat z, GLfloat w)
+{
+    float v[4] = { x, y, z, w }; u3log("4f", location, 4, v);
+    static void (*fn)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+    if (!fn) fn = (void (*)(GLint, GLfloat, GLfloat,
+                           GLfloat, GLfloat))
+        walk_mesa_fn("glUniform4f");
+    if (fn) fn(location, x, y, z, w);
+}
 void glUniform2f(GLint location, GLfloat x, GLfloat y)
 {
     if (walk_log_on())
@@ -902,7 +954,16 @@ CGL_FORWARD(CGLGetVersion, void, (GLint *major, GLint *minor), (major, minor))
 CGL_FORWARD(CGLGetVirtualScreen, CGLError, (CGLContextObj ctx, GLint *screen), (ctx, screen))
 CGL_FORWARD(CGLIsEnabled, CGLError, (CGLContextObj ctx, CGLContextEnable pname, GLint *enable), (ctx, pname, enable))
 CGL_FORWARD(CGLQueryRendererInfo, CGLError, (GLuint display_mask, CGLRendererInfoObj *rend, GLint *nrend), (display_mask, rend, nrend))
-CGL_FORWARD(CGLReleaseContext, void, (CGLContextObj ctx), (ctx))
+/* 2026-10-07: NOT forwarded — the app-side NSOpenGLContext dealloc
+ * releases libOpenGL_real's context into the documented GLEngine
+ * destroy-path bug (gleFreeTextureState abort). Swallow it; the shim's
+ * own teardown rides CGLDestroyContext. */
+void CGLReleaseContext(CGLContextObj ctx)
+{
+    struct shim_ctx *sc = shim_lookup(ctx);
+    if (sc) shim_unregister(sc);
+    (void)ctx;
+}
 CGL_FORWARD(CGLReleasePBuffer, void, (CGLPBufferObj pbuffer), (pbuffer))
 CGL_FORWARD(CGLRetainContext, CGLContextObj, (CGLContextObj ctx), (ctx))
 CGL_FORWARD(CGLRetainPBuffer, CGLPBufferObj, (CGLPBufferObj pbuffer), (pbuffer))

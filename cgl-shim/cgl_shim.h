@@ -47,6 +47,13 @@ struct shim_ctx {
     /* NSView retained on -setView:, released on dealloc. */
     void *view;                 /* NSView* (void* to avoid ObjC in C header) */
 
+    /* Generation guard (2026-10-06, the substitute-route abort fix):
+     * clearDrawable bumps gen under the lock; the async present
+     * captures gen at ENQUEUE and returns if it changed at run —
+     * a freed/reused sc handing present a garbage view was the
+     * ___forwarding___ abort (shim_present+478, three reports). */
+    uint32_t gen;
+
     /* Serialises flush vs present vs resize for this context.
      * Assumption: one context per view. Internal-only: NEVER returned
      * to callers as CGLLockContext's backing mutex. */

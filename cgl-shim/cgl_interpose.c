@@ -13,6 +13,12 @@
  * it normally).
  */
 
+#include <time.h>
+#include <sys/time.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdio.h>
 #include "cgl_shim.h"
 #include <stdio.h>
 #include <dlfcn.h>
@@ -153,6 +159,18 @@ void (*p_cgl_shim_set_host_present_rect)(int, int, int, int) = NULL;
  * because its own gl* symbol bindings go to OpenGL.framework (the
  * DYLD_INTERPOSE does not apply within the interposing image). */
 void   (*p_glBegin)(GLenum);
+/* GL 1.5 prototype — the 10.6 SDK's gl.h stops at 1.2; the
+ * symbol exists in OpenGL.framework for interposition. */
+extern void glUniform4fv(GLint location, GLsizei count,
+                         const GLfloat* value);
+extern void glUniform1f(GLint, GLfloat);
+extern void glUniform2f(GLint, GLfloat, GLfloat);
+extern void glUniform3f(GLint, GLfloat, GLfloat, GLfloat);
+extern void glUniform4f(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+/* RUNG 128e (the uniform-leg boundary capture): the app's
+ * glUniform* calls pass through here BEFORE any engine
+ * transformation — log every 4f upload's first vec4. */
+void   (*p_glUniform4fv)(GLint, GLsizei, const GLfloat*);
 void   (*p_glClear)(GLbitfield);
 void   (*p_glClearColor)(GLclampf, GLclampf, GLclampf, GLclampf);
 void   (*p_glColor3f)(GLfloat, GLfloat, GLfloat);
@@ -188,6 +206,7 @@ static void gl_interpose_init(void)
     p_cgl_shim_set_host_present_rect =
         (void (*)(int, int, int, int))dlsym(g_mesa, "cgl_shim_set_host_present_rect");
     GL_DLSYM(glBegin);
+    GL_DLSYM(glUniform4fv);
     GL_DLSYM(glClear);
     GL_DLSYM(glClearColor);
     GL_DLSYM(glColor3f);
@@ -229,6 +248,111 @@ static void gl_interpose_init(void)
         return o ? o args : (rettype)0; \
     }
 
+/* RUNG 128e: the uniform-boundary capture — every glUniform4fv
+ * logged (first vec4) to the stub's log via the same file the
+ * stub reads; env-gated VMGLD_R128E. */
+static void ip_glUniform4fv(GLint loc, GLsizei cnt,
+                            const GLfloat* v)
+{
+    static int s_128e = -1;
+    if (s_128e < 0)
+        s_128e = getenv("VMGLD_R128E") ? 1 : 0;
+    if (s_128e && v) {
+        FILE* f = fopen("/var/log/vm_gld_stub.log", "a");
+        if (f) {
+            struct timeval tv;
+            gettimeofday(&tv, 0);
+            char ts[32];
+            strftime(ts, sizeof(ts), "%H:%M:%S",
+                     localtime((const time_t*)&tv.tv_sec));
+            for (GLsizei i = 0; i < cnt && i < 4; i++)
+                fprintf(f,
+                    "[%s pid=%d] rung128e: glUniform4fv loc=%d "
+                    "[%d]=(%.4g,%.4g,%.4g,%.4g)\n",
+                    ts, (int)getpid(), loc, (int)i,
+                    v[i*4], v[i*4+1], v[i*4+2], v[i*4+3]);
+            fclose(f);
+        }
+        s_128e = 0;   /* one upload per process reported */
+    }
+    if (OSMesaGetCurrentContext() && p_glUniform4fv) {
+        p_glUniform4fv(loc, cnt, v); return;
+    }
+    static void (*o)(GLint, GLsizei, const GLfloat*);
+    if (!o) o = dlsym(RTLD_NEXT, "glUniform4fv");
+    if (o) o(loc, cnt, v);
+}
+/* RUNG 128e2: the SCALAR uniform family — glmark2's wrapper
+ * uses glUniformNf, not 4fv. Same one-per-process log shape. */
+#define ULOG128(ar, n) do { \
+    if (s_128e2 < 24 && v_ok) { s_128e2++; \
+        char b128[160]; int o128 = snprintf(b128, sizeof(b128), \
+            "rung128e: glUniform%s loc=%d:", n, loc); \
+        for (int q = 0; q < ar && o128 < 140; q++) \
+            o128 += snprintf(b128 + o128, sizeof(b128) - o128, \
+                " %.4g", (double)v[q]); \
+        ep_log128(b128); } \
+} while (0)
+static int s_128e2 = 0;
+static void ep_log128(const char* m)
+{
+    FILE* f = fopen("/var/log/vm_gld_stub.log", "a");
+    if (!f) return;
+    struct timeval tv; gettimeofday(&tv, 0);
+    char ts[32];
+    time_t t = (time_t)tv.tv_sec;
+    strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
+    fprintf(f, "[%s pid=%d] %s\n", ts, (int)getpid(), m);
+    fclose(f);
+}
+static void ip_glUniform1f(GLint loc, GLfloat x)
+{ int v_ok=1; GLfloat v[1]={x}; ULOG128(1,"1f");
+  if (OSMesaGetCurrentContext() && p_glUniform4fv) {}
+  static void (*o)(GLint, GLfloat);
+  if (!o) o = dlsym(RTLD_NEXT, "glUniform1f");
+  if (o) o(loc, x); }
+static void ip_glUniform2f(GLint loc, GLfloat x, GLfloat y)
+{ int v_ok=1; GLfloat v[2]={x,y}; ULOG128(2,"2f");
+  static void (*o)(GLint, GLfloat, GLfloat);
+  if (!o) o = dlsym(RTLD_NEXT, "glUniform2f");
+  if (o) o(loc, x, y); }
+static void ip_glUniform3f(GLint loc, GLfloat x, GLfloat y, GLfloat z)
+{ int v_ok=1; GLfloat v[3]={x,y,z}; ULOG128(3,"3f");
+  static void (*o)(GLint, GLfloat, GLfloat, GLfloat);
+  if (!o) o = dlsym(RTLD_NEXT, "glUniform3f");
+  if (o) o(loc, x, y, z); }
+static void ip_glUniform4f(GLint loc, GLfloat x, GLfloat y,
+                           GLfloat z, GLfloat w)
+{ int v_ok=1; GLfloat v[4]={x,y,z,w}; ULOG128(4,"4f");
+  static void (*o)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+  if (!o) o = dlsym(RTLD_NEXT, "glUniform4f");
+  if (o) o(loc, x, y, z, w); }
+/* RUNG 128e4: glad (glmark2's loader) resolves GL entries via
+ * dlsym at startup — log every uniform-class query and its answer. */
+static int s_128e4 = 0;
+static void* ip_dlsym(void* handle, const char* name)
+{
+    static void* (*o)(void*, const char*);
+    if (!o) o = (void* (*)(void*, const char*))
+        dlsym(RTLD_NEXT, "dlsym");
+    void* r = o ? o(handle, name) : 0;
+    if (name && r && s_128e4 < 24 && strstr(name, "Uniform")) {
+        s_128e4++;
+        char b128[160];
+        snprintf(b128, sizeof(b128),
+                 "rung128e: dlsym(%s) -> %p", name, r);
+        FILE* f = fopen("/var/log/vm_gld_stub.log", "a");
+        if (f) {
+            struct timeval tv; gettimeofday(&tv, 0);
+            time_t t = (time_t)tv.tv_sec;
+            char ts[32];
+            strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
+            fprintf(f, "[%s pid=%d] %s\n", ts, (int)getpid(), b128);
+            fclose(f);
+        }
+    }
+    return r;
+}
 GL_IP_VOID(glBegin,       (GLenum a), (a))
 GL_IP_VOID(glClear,       (GLbitfield a), (a))
 GL_IP_VOID(glClearColor,  (GLclampf a, GLclampf b, GLclampf c, GLclampf d), (a,b,c,d))
@@ -313,6 +437,12 @@ shim_interpose_entries[] __attribute__((section("__DATA,__interpose"))) = {
     { (const void *)shim_CGLDestroyContext, (const void *)CGLDestroyContext },
     /* GL interposes — target binds to OpenGL via link order.
      * Forward path goes to Mesa via dlsym. */
+    { (const void *)ip_glUniform4fv,     (const void *)glUniform4fv },
+    { (const void *)ip_dlsym,             (const void *)dlsym },
+    { (const void *)ip_glUniform1f,      (const void *)glUniform1f },
+    { (const void *)ip_glUniform2f,      (const void *)glUniform2f },
+    { (const void *)ip_glUniform3f,      (const void *)glUniform3f },
+    { (const void *)ip_glUniform4f,      (const void *)glUniform4f },
     { (const void *)ip_glBegin,           (const void *)glBegin },
     { (const void *)ip_glClear,           (const void *)glClear },
     { (const void *)ip_glClearColor,      (const void *)glClearColor },

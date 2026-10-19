@@ -123,11 +123,13 @@ clang++ "${COMMON_CFLAGS[@]}" \
     -o "$OUTPUT" \
     "$SHIM_DIR/cgl_shim.o" \
     "$SHIM_DIR/cgl_interpose.o" \
+    "$SHIM_DIR/substitute_stub.o" \
     -L"$(dirname "$OSMESA")" \
     -L"$(dirname "$GLAPI")" \
     -L"$LIBCXX_DIR" \
     -framework Cocoa \
     -framework OpenGL \
+    -framework IOSurface \
     -framework IOKit \
     -framework QuartzCore \
     -lOSMesa.8 \
