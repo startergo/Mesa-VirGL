@@ -36,12 +36,6 @@ struct util_call_once_context_t
 static pthread_key_t  call_once_context_key;
 static pthread_once_t call_once_context_key_once = PTHREAD_ONCE_INIT;
 
-/* Last-resort context when the thread's allocation fails: racy like the
- * old single global, but only under OOM — still better than dropping
- * the one-time initialization the caller needs. Static, so it needs no
- * key-destructor handling. */
-static struct util_call_once_context_t call_once_context_shared;
-
 static void
 call_once_context_free(void *p)
 {
@@ -87,8 +81,17 @@ call_once_context_get(void)
             ctx = NULL;
          }
       }
-      if (!ctx)
-         ctx = &call_once_context_shared;
+      if (!ctx) {
+         /* Review thread PRRT_kwDOPZhcm86uD451: a shared fallback here
+          * would reintroduce exactly the cross-flag overwrite this
+          * per-thread context exists to prevent (wrong data to the
+          * callback — an uninitialized simple_mtx in use). Both failure
+          * paths are ENOMEM for a 16-byte per-thread context; like the
+          * key-creation failure above, die at the cause instead. */
+         fprintf(stderr, "u_call_once: per-thread call_once context "
+                 "allocation failed, aborting\n");
+         abort();
+      }
    }
    return ctx;
 }
