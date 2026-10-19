@@ -22,6 +22,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/time.h>
+#include <sys/mman.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
 
@@ -124,14 +129,163 @@ static void census_unregister(struct virgl_hw_res *res)
 }
 
 /* ===================================================================
+ * RUNG 236a — resource backings OUTSIDE the app's malloc heap.
+ * Measured (VMQemuVGA LEDGER, 2026-10-11): PowerFox crashed three times in
+ * SpiderMonkey string-buffer memcpy (nursery sweep / promotion / rope
+ * flatten) with the kext stack loaded, never without it (user). In
+ * Firefox, mozjemalloc is the default malloc zone, so align_malloc'd
+ * backings shared one heap with JS string buffers: any late or stray
+ * write into a backing (host DMA after free, a CPU write-back past its
+ * end) lands in JS data. Backings now come from mmap (page-granular,
+ * their own VM regions) and, on release, are made PROT_NONE and kept in
+ * a quarantine ring before munmap:
+ *   - a CPU write into a released backing faults AT THE WRITER;
+ *   - a host write cannot reach the app's heap any more.
+ * Env: VIRGL_IOKIT_HEAPBACK=1 restores align_malloc;
+ *      VIRGL_IOKIT_QUARANTINE=<n> ring size (default 64, 0 = munmap now);
+ *      quarantined bytes capped at 64 MB (oldest unmapped first).
+ * =================================================================== */
+#define BK_QMAX 256
+static struct { void *p; size_t len; } s_bk_q[BK_QMAX];
+static unsigned s_bk_qhead, s_bk_qn;
+static pthread_mutex_t s_bk_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int s_bk_heap = -1, s_bk_qcap = -1;
+static unsigned long s_bk_alloc_n, s_bk_free_n;
+static size_t s_bk_qbytes;
+#define BK_QBYTES_MAX (64u << 20)   /* quarantined pages stay resident: cap at 64 MB */
+
+static void bk_config(void)
+{
+   if (s_bk_heap >= 0) return;
+   const char *e = getenv("VIRGL_IOKIT_HEAPBACK");
+   s_bk_heap = (e && *e == '1') ? 1 : 0;
+   e = getenv("VIRGL_IOKIT_QUARANTINE");
+   s_bk_qcap = e ? atoi(e) : 64;
+   if (s_bk_qcap < 0) s_bk_qcap = 0;
+   if (s_bk_qcap > BK_QMAX) s_bk_qcap = BK_QMAX;
+   fprintf(stderr, "virgl_iokit: rung236a backings %s, quarantine %d\n",
+           s_bk_heap ? "align_malloc (heap)" : "mmap (off-heap)", s_bk_qcap);
+}
+
+static size_t bk_len(size_t size) { return (size + 4095) & ~(size_t)4095; }
+
+/* RUNG 259 instrument (VMQemuVGA LEDGER 2026-10-13): PowerFox pid 1318
+ * crashed reading the first byte of an unreadable page (cr2 0x12a8dd000)
+ * inside a JS module's source text. The only code of ours that makes pages
+ * unreadable is this file's backing quarantine (PROT_NONE, then munmap).
+ * Armed by /var/db/vmgld_r259_on (checked once): every backing map,
+ * protect and unmap is appended UNBUFFERED (one write(2) per line) to
+ * /tmp/virgl_iokit_bk.<pid>.log as "<seq> <sec.usec> <op> <start> <end>",
+ * op = MAP / PROT / UNMAP. After a crash: is cr2 inside a range we touched,
+ * and when? */
+static int s_r259 = -1, s_r259_fd = -1;
+static unsigned long s_r259_seq;
+static void r259_log(const char *op, void *p, size_t len)
+{
+   if (s_r259 < 0) {
+      s_r259 = access("/var/db/vmgld_r259_on", F_OK) == 0;
+      if (s_r259) {
+         char path[64]; snprintf(path, sizeof path, "/tmp/virgl_iokit_bk.%d.log", (int)getpid());
+         s_r259_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+         if (s_r259_fd < 0) s_r259 = 0;
+         else fprintf(stderr, "virgl_iokit: rung259 backing map log -> %s\n", path);
+      }
+   }
+   if (!s_r259) return;
+   struct timeval tv; gettimeofday(&tv, NULL);
+   char b[128];
+   int n = snprintf(b, sizeof b, "%lu %ld.%06ld %s %p %p\n", __sync_add_and_fetch(&s_r259_seq, 1),
+                    (long)tv.tv_sec, (long)tv.tv_usec, op, p, (void *)((char *)p + len));
+   if (n > 0) (void)!write(s_r259_fd, b, (size_t)n);
+}
+
+static void *bk_alloc(size_t size)
+{
+   bk_config();
+   if (s_bk_heap) return align_malloc(size, 64);
+   void *p = mmap(NULL, bk_len(size), PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+   if (p == MAP_FAILED) return NULL;
+   r259_log("MAP", p, bk_len(size));   /* RUNG 259 */
+   s_bk_alloc_n++;
+   return p;
+}
+
+static void bk_free(void *p, size_t size)
+{
+   if (!p) return;
+   bk_config();
+   if (s_bk_heap) { align_free(p); return; }
+   size_t len = bk_len(size);
+   if (s_bk_qcap == 0) { r259_log("UNMAP", p, len); munmap(p, len); return; }
+   r259_log("PROT", p, len);   /* RUNG 259 */
+   mprotect(p, len, PROT_NONE);
+   pthread_mutex_lock(&s_bk_mtx);
+   while (s_bk_qn > 0 && (s_bk_qn >= (unsigned)s_bk_qcap || s_bk_qbytes + len > BK_QBYTES_MAX)) {   /* evict oldest */
+      unsigned k = (s_bk_qhead + BK_QMAX - s_bk_qn) % BK_QMAX;
+      r259_log("UNMAP", s_bk_q[k].p, s_bk_q[k].len);   /* RUNG 259 */
+      munmap(s_bk_q[k].p, s_bk_q[k].len);
+      s_bk_qbytes -= s_bk_q[k].len;
+      s_bk_qn--;
+   }
+   s_bk_q[s_bk_qhead].p = p; s_bk_q[s_bk_qhead].len = len;
+   s_bk_qhead = (s_bk_qhead + 1) % BK_QMAX; s_bk_qn++;
+   s_bk_qbytes += len;
+   s_bk_free_n++;
+   if (s_bk_free_n <= 4 || (s_bk_free_n & 1023) == 0)
+      fprintf(stderr, "virgl_iokit: rung236a released backing %p len %zu -> PROT_NONE quarantine (%lu allocs, %lu frees)\n",
+              p, len, s_bk_alloc_n, s_bk_free_n);
+   pthread_mutex_unlock(&s_bk_mtx);
+}
+
+/* ===================================================================
  * Resource lifecycle
  * =================================================================== */
+
+/* RUNG 254 (VMQemuVGA LEDGER 2026-10-13): the per-buffer lifecycle lines
+ * (CREATE / 0x6009 attach / UNREF, rung 68) went to stderr, and a GUI app's
+ * stderr travels launchd -> syslogd -> system.log. Measured: ~178 lines/s
+ * from PowerFox (19,958 lines in 112 s, all three kinds ~6,650 each);
+ * guest top: syslogd ~11% + launchd x2 ~13% CPU. Here they go to a private,
+ * fully-buffered file instead, /tmp/virgl_iokit.<pid>.log (64 KB buffer,
+ * flushed when full, so the newest lines may lag in a live read).
+ * VIRGL_IOKIT_LIFELOG: 0 = off, 1 = file (default), 2 = stderr (old path). */
+static pthread_mutex_t s_ll_mtx = PTHREAD_MUTEX_INITIALIZER;
+static FILE *s_ll_f;
+static int s_ll_mode = -1;
+static void
+lifelog(const char *fmt, ...)
+{
+   if (s_ll_mode == 0) return;
+   pthread_mutex_lock(&s_ll_mtx);
+   if (s_ll_mode < 0) {
+      const char *e = getenv("VIRGL_IOKIT_LIFELOG");
+      s_ll_mode = e ? atoi(e) : 1;
+      if (s_ll_mode == 1) {
+         char path[64];
+         snprintf(path, sizeof path, "/tmp/virgl_iokit.%d.log", (int)getpid());
+         s_ll_f = fopen(path, "a");
+         if (s_ll_f) setvbuf(s_ll_f, NULL, _IOFBF, 65536);
+         else s_ll_mode = 2;
+      }
+      fprintf(stderr, "virgl_iokit: rung254 lifecycle log mode %d (%s)\n", s_ll_mode,
+              s_ll_mode == 0 ? "off" : s_ll_mode == 1 ? "/tmp/virgl_iokit.<pid>.log" : "stderr");
+   }
+   if (s_ll_mode != 0) {
+      va_list ap; va_start(ap, fmt);
+      vfprintf(s_ll_mode == 1 && s_ll_f ? s_ll_f : stderr, fmt, ap);
+      va_end(ap);
+   }
+   pthread_mutex_unlock(&s_ll_mtx);
+}
 
 static void
 virgl_iokit_hw_res_destroy(struct virgl_iokit_winsys *iws,
                            struct virgl_hw_res *res)
 {
    census_unregister(res);
+   /* RUNG 68: log the unref for lifecycle correlation */
+   lifelog("virgl_iokit: 0x6005 UNREF res=%u\n",
+           (unsigned)res->res_handle);
    /* 0x6005 resourceUnref — kext sends RESOURCE_UNREF and also detaches
     * backing if still held (defensive cleanup). */
    uint64_t in[1] = { res->res_handle };
@@ -139,7 +293,7 @@ virgl_iokit_hw_res_destroy(struct virgl_iokit_winsys *iws,
                        in, 1, NULL, 0, NULL, NULL, NULL, NULL);
 
    if (res->ptr)
-      align_free(res->ptr);
+      bk_free(res->ptr, res->size);   /* 236a */
    FREE(res);
 }
 
@@ -188,7 +342,7 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
     * align_malloc(size, 64) produces unaligned, multi-segment scatter
     * lists (the real-world case for Mesa's resource allocation). */
    if (size > 0) {
-      res->ptr = align_malloc(size, 64);
+      res->ptr = bk_alloc(size);   /* 236a: off-heap (see bk_alloc) */
       if (!res->ptr) {
          FREE(res);
          return NULL;
@@ -224,11 +378,15 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
                                out, &out_cnt, NULL, NULL);
       if (kr != KERN_SUCCESS) {
          fprintf(stderr, "virgl_iokit: 0x6002 createResource3DEx FAIL 0x%x\n", kr);
-         align_free(res->ptr);
+         bk_free(res->ptr, size);
          FREE(res);
          return NULL;
       }
       res->res_handle = (uint32_t)out[0];
+      /* RUNG 68: log every create for lifecycle correlation */
+      lifelog("virgl_iokit: 0x6002 CREATE res=%u ctx=%u fmt=%u %ux%u bind=0x%x\n",
+              (unsigned)res->res_handle, (unsigned)iws->ctx_id,
+              (unsigned)format, width, height, (unsigned)bind);
       /* Resource identity log (2026-08-20): pairs kext handle with
        * fmt/dims/bind so a flushed handle (e.g. res=287) is identifiable
        * without decoding the command stream. VIRGL_IOKIT_DEBUG-gated. */
@@ -260,7 +418,7 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
          uint64_t unref_in[1] = { res->res_handle };
          IOConnectCallMethod(iws->connect, IOKIT_RESOURCE_UNREF,
                              unref_in, 1, NULL, 0, NULL, NULL, NULL, NULL);
-         align_free(res->ptr);
+         bk_free(res->ptr, size);
          FREE(res);
          return NULL;
       }
@@ -275,6 +433,10 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
       kr = IOConnectCallMethod(iws->connect, IOKIT_CTX_ATTACH_RESOURCE,
                                ca_in, 2, NULL, 0,
                                NULL, NULL, NULL, NULL);
+      /* RUNG 68: log every 0x6009 with ctx+res — correlate against
+       * the UTM debug log's "Illegal resource N" (the cascade seed) */
+      lifelog("virgl_iokit: 0x6009 ctx=%u res=%u -> 0x%x\n",
+              (unsigned)iws->ctx_id, (unsigned)res->res_handle, kr);
       if (kr != KERN_SUCCESS) {
          fprintf(stderr, "virgl_iokit: WARN 0x6009 ctxAttachResource FAIL 0x%x\n", kr);
          /* Non-fatal for now — matches probeTransport3D's behavior. */
@@ -401,11 +563,28 @@ virgl_iokit_transfer_get(struct virgl_winsys *vws,
  * Command buffer management — malloc/reloc tracking
  * =================================================================== */
 
+/* 2026-10-12 (VMQemuVGA LEDGER, ringtest): the hash slot alone was taken as
+ * "already added" — any resource colliding (handle % 512) with one already in
+ * the cbuf was never added: no FCE1 fence, no cbuf reference, no
+ * num_cs_references, so Mesa neither flushed nor waited before mapping it
+ * (stale readbacks; SubData over buffers queued draws still needed). Upstream
+ * virgl_drm_lookup_res semantics: verify the slot's resource, else scan. */
 static bool
 virgl_iokit_lookup_res(struct virgl_iokit_cmd_buf *cbuf, struct virgl_hw_res *res)
 {
    unsigned hash = res->res_handle % (ARRAY_SIZE(cbuf->is_handle_added));
-   return cbuf->is_handle_added[hash];
+   if (!cbuf->is_handle_added[hash])
+      return false;
+   unsigned i = cbuf->reloc_indices_hashlist[hash];
+   if (i < cbuf->cres && cbuf->res_bo[i] == res)
+      return true;
+   for (i = 0; i < cbuf->cres; i++) {
+      if (cbuf->res_bo[i] == res) {
+         cbuf->reloc_indices_hashlist[hash] = i;
+         return true;
+      }
+   }
+   return false;
 }
 
 static void
@@ -414,6 +593,18 @@ virgl_iokit_add_res(struct virgl_iokit_winsys *iws,
                     struct virgl_hw_res *res)
 {
    unsigned hash = res->res_handle % ARRAY_SIZE(cbuf->is_handle_added);
+   if (cbuf->cres >= cbuf->nres) {   /* 2026-10-12: grow (upstream virgl_drm_add_res) */
+      unsigned new_nres = cbuf->nres + 256;
+      struct virgl_hw_res **nb = REALLOC(cbuf->res_bo,
+                                         cbuf->nres * sizeof(struct virgl_hw_res *),
+                                         new_nres * sizeof(struct virgl_hw_res *));
+      if (!nb) {
+         fprintf(stderr, "virgl_iokit: failure to add resource %u (%u)\n", cbuf->cres, new_nres);
+         return;
+      }
+      cbuf->res_bo = nb;
+      cbuf->nres = new_nres;
+   }
    cbuf->res_bo[cbuf->cres] = NULL;
    virgl_iokit_resource_reference(&iws->base, &cbuf->res_bo[cbuf->cres], res);
    cbuf->is_handle_added[hash] = true;
@@ -427,8 +618,12 @@ virgl_iokit_release_all_res(struct virgl_iokit_winsys *iws,
                             struct virgl_iokit_cmd_buf *cbuf)
 {
    for (unsigned i = 0; i < cbuf->cres; i++) {
-      if (cbuf->res_bo[i])
+      if (cbuf->res_bo[i]) {
+         /* 2026-10-12: the cbuf's use ends here (upstream virgl_drm_release_all_res);
+          * never decremented before, so res_is_ref stayed true forever */
+         p_atomic_dec(&cbuf->res_bo[i]->num_cs_references);
          virgl_iokit_resource_reference(&iws->base, &cbuf->res_bo[i], NULL);
+      }
    }
    cbuf->cres = 0;
 }
@@ -462,6 +657,45 @@ virgl_iokit_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
    FREE(cbuf);
 }
 
+/* RUNG 251 instrument (VMQemuVGA LEDGER 2026-10-13). Kext rung 250 matched
+ * the host's freeze trigger "vrend_set_single_vbo: Illegal resource 779" to a
+ * SET_VERTEX_BUFFERS naming handle 779 that was ALREADY unref'd and was NOT
+ * in that batch's FCE1 list (= this cbuf's res_bo at submit). By the code,
+ * emit_res always adds a handle it writes, so the blob and the list should
+ * never disagree. This checks that at submit, on the guest side, and keeps
+ * a ring of emit_res events so a miss can say whether emit_res ever saw the
+ * handle in this cbuf generation, on which thread, and whether two threads
+ * were inside the winsys at once (emit_res / submit overlap). */
+#define R251_RING 8192
+static struct { uint32_t handle, cdw, cres, gen; void *cbuf; void *tid; unsigned char already; } s_r251[R251_RING];
+static volatile unsigned s_r251_n, s_r251_gen, s_r251_inflight, s_r251_overlap;
+static void *s_r251_last_tid;
+/* VIRGL_IOKIT_R251=0 turns the whole instrument off (ring, overlap, submit
+ * walk) for the on/off A/B: does 251's own cost hide the race? Read once. */
+static int r251_on(void)
+{
+   static int v = -1;
+   if (v < 0) {
+      const char *e = getenv("VIRGL_IOKIT_R251");
+      v = !(e && *e == '0');
+      fprintf(stderr, "rung251: instrument %s (VIRGL_IOKIT_R251=%s)\n", v ? "ON" : "OFF", e ? e : "unset");
+   }
+   return v;
+}
+static inline void r251_enter(const char *who)
+{
+   if (!r251_on()) return;
+   unsigned v = p_atomic_inc_return(&s_r251_inflight);
+   if (v > 1) {
+      unsigned o = p_atomic_inc_return(&s_r251_overlap);
+      if (o <= 16 || (o & 1023) == 0)
+         fprintf(stderr, "rung251: OVERLAP #%u in %s: %u threads inside the winsys (this %p, last %p)\n",
+                 o, who, v, (void *)pthread_self(), s_r251_last_tid);
+   }
+   s_r251_last_tid = (void *)pthread_self();
+}
+static inline void r251_leave(void) { if (r251_on()) p_atomic_dec(&s_r251_inflight); }
+
 static void
 virgl_iokit_emit_res(struct virgl_winsys *vws,
                      struct virgl_cmd_buf *_cbuf,
@@ -469,11 +703,20 @@ virgl_iokit_emit_res(struct virgl_winsys *vws,
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
    struct virgl_iokit_cmd_buf *cbuf = virgl_iokit_cmd_buf(_cbuf);
+   r251_enter("emit_res");
    bool already = virgl_iokit_lookup_res(cbuf, res);
+   unsigned at = cbuf->base.cdw;
    if (write_buf)
       cbuf->base.buf[cbuf->base.cdw++] = res->res_handle;
    if (!already)
       virgl_iokit_add_res(iws, cbuf, res);
+   if (r251_on()) {
+      unsigned k = p_atomic_inc_return(&s_r251_n) % R251_RING;
+      s_r251[k].handle = res->res_handle; s_r251[k].cdw = write_buf ? at : 0xffffffffu;
+      s_r251[k].cres = cbuf->cres; s_r251[k].gen = s_r251_gen; s_r251[k].cbuf = cbuf;
+      s_r251[k].tid = (void *)pthread_self(); s_r251[k].already = already;
+   }
+   r251_leave();
 }
 
 static bool
@@ -503,6 +746,49 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
       return 0;
 
    iokit_dbg("iokit: submit_cmd cdw=%u\n", cbuf->base.cdw);
+
+   /* RUNG 68b — SETUP-BATCH OPCODE DECODE: for the first N submits,
+    * decode every command header's opcode byte into its name. The
+    * first GL_INVALID_OPERATION after MakeCurrent traces to a specific
+    * opcode; this names it. VIRGL_IOKIT_OPS=N caps at N submits. */
+   {
+      static int s_ops_left = -1;
+      if (s_ops_left < 0) {
+         const char *e = getenv("VIRGL_IOKIT_OPS");
+         s_ops_left = e ? atoi(e) : 0;
+      }
+      if (s_ops_left > 0) {
+         s_ops_left--;
+         static const char *names[] = {
+            "NOP", "CREATE_OBJECT", "BIND_OBJECT", "DESTROY_OBJECT",
+            "SET_VIEWPORT", "SET_FRAMEBUFFER", "SET_VERTEX_BUFFERS",
+            "CLEAR", "DRAW_VBO", "RESOURCE_INLINE_WRITE",
+            "SET_SAMPLER_VIEWS", "SET_INDEX_BUFFER", "SET_CONSTANT_BUF",
+            "SET_STENCIL_REF", "SET_BLEND_COLOR", "SET_SCISSOR",
+            "BLIT", "RESOURCE_COPY_REGION", "BIND_SAMPLER_STATES",
+            "BEGIN_QUERY", "END_QUERY", "GET_QUERY_RESULT",
+            "SET_POLYGON_STIPPLE", "SET_CLIP_STATE", "SET_SAMPLE_MASK",
+            "SET_STREAMOUT_TARGETS", "SET_RENDER_CONDITION",
+            "SET_UNIFORM_BUFFER", "SET_SUB_CTX", "CREATE_SUB_CTX",
+            "DESTROY_SUB_CTX", "BIND_SHADER", "SET_TESS_STATE",
+            "SET_MIN_SAMPLES", "SET_SHADER_BUFFERS", "SET_SHADER_IMAGES",
+            "MEMORY_BARRIER", "LAUNCH_GRID", "SET_FB_NO_ATTACH",
+            "TEXTURE_BARRIER",
+         };
+         fprintf(stderr, "rung68b OPS(cdw=%u):", cbuf->base.cdw);
+         unsigned i = 0;
+         while (i < cbuf->base.cdw && i < 4096) {
+            uint32_t hdr = cbuf->base.buf[i];
+            unsigned op = hdr & 0xff;
+            unsigned len = (hdr >> 16) & 0x3fff;
+            fprintf(stderr, " %s(%u,len=%u)",
+                    op < 40 ? names[op] : "???", op, len);
+            i += len + 1;
+            if (len == 0) i++;  /* at least header */
+         }
+         fprintf(stderr, "\n");
+      }
+   }
 
    /* Full command-stream dump (FBO-clear hunt, 2026-08-18): the kext's
     * hex dump caps at 20 dwords and misparses the header layout, so the
@@ -538,15 +824,48 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
     * structureInput). The kext discriminates on the magic; a pre-fence
     * kext would treat the whole frame as the blob, so kext+winsys
     * deploy as a pair. */
-   uint32_t cres = cbuf->cres;
-   if (cres > 96) {
-      /* kext V3D_BATCH_MAX_RES=96 — resources past 96 would silently
-       * lose fencing (ordering hole, not a crash). Log loudly if this
-       * ever fires; raise both sides together if it does. */
-      fprintf(stderr, "virgl_iokit: FENCE FRAME cres=%u > 96 — "
-              "truncating, tail resources unfenced\n", cres);
-      cres = 96;
+   /* 2026-10-12: the full list, no 96 cap — the kext now fences every
+    * handle (it no longer stores them per batch; the frame is bounded only
+    * by its 1 MB size, i.e. far beyond any cbuf). Requires the matching kext. */
+   r251_enter("submit");
+   if (r251_on()) {   /* RUNG 251: every SET_VERTEX_BUFFERS handle must be in res_bo */
+      static unsigned s_vb, s_miss;
+      unsigned n = cbuf->base.cdw, i = 0;
+      while (i < n) {
+         uint32_t hdr = cbuf->base.buf[i], len = hdr >> 16;
+         if (i + 1 + len > n) {
+            static unsigned s_bad; if (++s_bad <= 8) fprintf(stderr, "rung251: walk overran at dword %u of %u (hdr %08x)\n", i, n, hdr);
+            break;
+         }
+         if ((hdr & 0xff) == 6 && len && (len % 3) == 0) {
+            for (uint32_t v = 0; v < len / 3; v++) {
+               uint32_t h = cbuf->base.buf[i + 1 + v * 3 + 2];
+               if (!h) continue;
+               s_vb++;
+               bool in = false;
+               for (unsigned q = 0; q < cbuf->cres; q++) if (cbuf->res_bo[q] && cbuf->res_bo[q]->res_handle == h) { in = true; break; }
+               if (in) continue;
+               s_miss++;
+               if (s_miss <= 64 || (s_miss & 1023) == 0) {
+                  fprintf(stderr, "rung251: MISS #%u handle %u at dword %u (cmd at %u, slot %u) not in res_bo (cres %u, cdw %u, gen %u, cbuf %p, tid %p, vb %u)\n",
+                          s_miss, h, i + 1 + v * 3 + 2, i, v, cbuf->cres, n, s_r251_gen, (void *)cbuf, (void *)pthread_self(), s_vb);
+                  unsigned shown = 0, top = s_r251_n;
+                  for (unsigned b = 0; b < R251_RING && shown < 6; b++) {
+                     unsigned k = (top - b) % R251_RING;
+                     if (s_r251[k].handle != h) continue;
+                     shown++;
+                     fprintf(stderr, "rung251:   emit_res %u back: handle %u cdw %d already %u cres-after %u gen %u cbuf %p tid %p\n",
+                             b, s_r251[k].handle, (int)s_r251[k].cdw, s_r251[k].already, s_r251[k].cres, s_r251[k].gen, s_r251[k].cbuf, s_r251[k].tid);
+                  }
+                  if (!shown) fprintf(stderr, "rung251:   handle %u not in the last %u emit_res events\n", h, R251_RING);
+               }
+            }
+         }
+         i += 1 + len;
+      }
    }
+   p_atomic_inc(&s_r251_gen);
+   uint32_t cres = cbuf->cres;
    uint32_t blob_bytes = cbuf->base.cdw * sizeof(uint32_t);
    uint32_t frame_bytes = 8 + cres * 4 + blob_bytes;
    uint32_t *frame = (uint32_t *)malloc(frame_bytes);
@@ -554,6 +873,7 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
       virgl_iokit_release_all_res(iws, cbuf);
       memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
       cbuf->base.cdw = 0;
+      r251_leave();
       return -1;
    }
    frame[0] = 0x31454346u;   /* 'FCE1' */
@@ -575,6 +895,7 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
    virgl_iokit_release_all_res(iws, cbuf);
    memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
    cbuf->base.cdw = 0;
+   r251_leave();
    return (kr == KERN_SUCCESS) ? 0 : -1;
 }
 
@@ -587,6 +908,20 @@ virgl_iokit_get_caps(struct virgl_winsys *vws, struct virgl_drm_caps *caps)
 {
    struct virgl_iokit_winsys *iws = virgl_iokit_winsys(vws);
    virgl_ws_fill_new_caps_defaults(caps);
+
+   /* RUNG 174a — THE NULL GUARD (the fftest3 SIGSEGV class):
+    * when the host stops answering virtio, the winsys create
+    * can complete with a dead/absent connection; the screen
+    * then called through it unguarded. Defaults stand, the
+    * caller sees a caps-less screen instead of a crash. */
+   if (!iws || !iws->connect) {
+      fprintf(stderr, "virgl_iokit: get_caps REFUSED — no "
+              "connection (host virtio timeout class); "
+              "caps stay at defaults\n");
+      return 0;   /* r174a's intent: defaults stand, screen continues.
+                     Was a bare `return;` (UB in a non-void function) since
+                     r174a; only surfaces as an error with current clang. */
+   }
 
    /* Match the drm winsys pattern (virgl_drm_winsys.c:1011): try capset_id=2
     * (VIRGL2, v2 layout, 1408 B — has host_feature_check_version, renderer,
