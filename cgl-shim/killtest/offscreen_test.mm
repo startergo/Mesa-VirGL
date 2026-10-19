@@ -122,7 +122,8 @@ int main(void) {
         glReadPixels(200, 150, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, u);
         fprintf(stderr, "FBO read after UPLOAD(200,150): %u,%u,%u,%u  %s\n",
                 u[0], u[1], u[2], u[3],
-                (u[0] == 255 && u[1] == 0) ? "(UPLOAD LANDS — reads OK, renders dropped)" :
+                (u[0] == 255 && u[1] == 0 && u[2] == 0) ? "(UPLOAD LANDS — reads OK, renders dropped)" :
+                (u[0] == 255 && u[1] == 0 && u[2] == 255) ? "(MAGENTA — upload did NOT land; clear still visible)" :
                 (u[0] == 170 && u[1] == 170) ? "(UNWRITTEN)" : "(other)");
         GLubyte v[4] = {170, 170, 170, 170};
         glReadPixels(10, 10, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, v);

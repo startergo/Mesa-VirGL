@@ -55,7 +55,6 @@ if (!gl) { log("no ctx"); } else {
   var pr = gl.createProgram();
   gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs));
   gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs));
-  var fs2 = fs; // uniform declared below in real source
   gl.linkProgram(pr);
   log("program link: " + (gl.getProgramParameter(pr, gl.LINK_STATUS) ?
                           "OK" : "FAIL " + gl.getProgramInfoLog(pr)));

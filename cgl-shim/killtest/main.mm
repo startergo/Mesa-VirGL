@@ -186,15 +186,20 @@
     double elapsed_ns = (double)elapsedSinceReport *
                         (double)sTBI.numer / (double)sTBI.denom;
     if (elapsed_ns > 2.0e9 /* ~2s */) {
+        static unsigned long long sLastReportFrame = 0;
         double total_ns = (double)(now - mStartTime) *
                           (double)sTBI.numer / (double)sTBI.denom;
         double avg_fps = (double)mFrameCount / (total_ns / 1e9);
-        double recent_fps = (double)(mFrameCount) /
-                            (elapsed_ns / 1e9);  // approximate (since last report)
+        /* Frames since the PREVIOUS report over this report interval —
+         * not the cumulative count, which would drag the value toward
+         * the lifetime average. */
+        double recent_fps = (double)(mFrameCount - sLastReportFrame) /
+                            (elapsed_ns / 1e9);
         fprintf(stdout,
                 "frame %6llu  avg=%5.1f fps  recent=%5.1f fps  fb=%dx%d  view=%dx%d\n",
                 (unsigned long long)mFrameCount, avg_fps, recent_fps,
                 mFbWidth, mFbHeight, viewW, viewH);
+        sLastReportFrame = mFrameCount;
         fflush(stdout);
         mLastReportTime = now;
     }

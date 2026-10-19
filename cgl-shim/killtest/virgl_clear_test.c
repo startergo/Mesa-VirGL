@@ -108,6 +108,19 @@ int main(void) {
     fprintf(stdout, "virgl_clear_test starting\n");
     fflush(stdout);
 
+    /* This test is meaningless against softpipe — say which driver the
+     * environment selects before anything else can mislead. */
+    {
+        const char *gd = getenv("GALLIUM_DRIVER");
+        if (!gd || strcmp(gd, "virgl") != 0)
+            fprintf(stderr, "WARN: GALLIUM_DRIVER='%s' (expected virgl) — "
+                    "a clear test against another driver verifies nothing "
+                    "about the virgl/iokit path\n", gd ? gd : "(unset)");
+        else
+            fprintf(stdout, "OK: GALLIUM_DRIVER=%s\n", gd);
+        fflush(stdout);
+    }
+
     OSMesaContext ctx = OSMesaCreateContextExt(OSMESA_BGRA, 16, 0, 0, NULL);
     if (!ctx) {
         fprintf(stderr, "FAIL: OSMesaCreateContextExt returned NULL — "
@@ -119,7 +132,8 @@ int main(void) {
 
     int fail = 0;
 
-    /* Clear A: green-dominant — non-boundary values per LEDGER convention.
+    /* Clear A: blue-dominant (0.20, 0.40, 0.60 → 51,102,153) —
+     * non-boundary values per LEDGER convention.
      * (fail +=, not |=, so the RESULT line counts both failures — YKBwh.) */
     fail += check_clear(ctx, "clearA", 0.20f, 0.40f, 0.60f, 1.0f,
                          51, 102, 153);

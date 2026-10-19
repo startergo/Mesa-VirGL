@@ -19,7 +19,10 @@
  *   dlsym NULL -> glScissor not exported at all
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <dlfcn.h>
+#include <GL/gl.h>
+#include <GL/osmesa.h>
 
 typedef void (*scissor_fn)(int, int, int, int);
 
@@ -40,6 +43,32 @@ int main(void)
         return 2;
     }
 
+    /* glScissor needs a CURRENT GL context - without one the call goes
+     * through the no-context dispatch path and proves nothing about the
+     * symbol the framework binds. Make a small OSMesa context current
+     * (the framework re-exports the OSMesa entry points) and use that. */
+    OSMesaContext (*mkctx)(GLenum, GLint, GLint, GLint, OSMesaContext) =
+        (OSMesaContext (*)(GLenum, GLint, GLint, GLint, OSMesaContext))
+            dlsym(h, "OSMesaCreateContextExt");
+    GLboolean (*mkcur)(OSMesaContext, GLenum, GLint, GLint, void *) =
+        (GLboolean (*)(OSMesaContext, GLenum, GLint, GLint, void *))
+            dlsym(h, "OSMesaMakeCurrent");
+    void (*delctx)(OSMesaContext) =
+        (void (*)(OSMesaContext))dlsym(h, "OSMesaDestroyContext");
+    if (!mkctx || !mkcur || !delctx) {
+        printf("RESULT: OSMesa entry points not exported by the "
+               "framework - cannot establish a context\n");
+        return 3;
+    }
+    OSMesaContext ctx = mkctx(OSMESA_BGRA, 16, 0, 0, NULL);
+    static unsigned char sbuf[64 * 64 * 4];
+    if (!ctx || !mkcur(ctx, GL_UNSIGNED_BYTE, 64, 64, sbuf)) {
+        printf("RESULT: OSMesa context/make-current failed - the "
+               "glScissor calls below would go through no context\n");
+        if (ctx) delctx(ctx);
+        return 3;
+    }
+
     f(0, 0, 64, 64);
     f(0, 0, 64, 64);   /* same rect: exercises the dedup path */
     f(8, 16, 32, 32);  /* changed rect */
@@ -54,5 +83,6 @@ int main(void)
     printf("RESULT: dlsym address above is the framework's re-export "
            "(no wrapper exists in the substitute); calls went through "
            "without an observable banner by design\n");
+    delctx(ctx);
     return 0;
 }
