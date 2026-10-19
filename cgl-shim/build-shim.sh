@@ -178,9 +178,11 @@ fi
 # early, nm dies on SIGPIPE and the whole `if` fails spuriously on a GOOD
 # artifact (observed 3 times out of 4 builds; same rule documented in
 # cross-compat/build-10.6.sh's verify section). grep without -q reads to EOF.
-if /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep '_glClear.*from OpenGL' >/dev/null; then
+# The pattern requires whitespace right after _glClear so _glClearColor does
+# not satisfy the check.
+if /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep -E '_glClear[[:space:]]+\(from OpenGL\)' >/dev/null; then
     echo "    glClear binding: OpenGL (correct)"
-elif /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep '_glClear.*from libOSMesa' >/dev/null; then
+elif /usr/bin/nm -m "$OUTPUT" 2>/dev/null | grep -E '_glClear[[:space:]]+\(from libOSMesa\)' >/dev/null; then
     fail "glClear binds to libOSMesa, not OpenGL — link order is wrong. The interpose would target Mesa's glClear instead of Apple's. Put -framework OpenGL before -lOSMesa in the link command."
 else
     fail "glClear binding not found in nm -m output — unexpected link state"

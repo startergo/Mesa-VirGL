@@ -24,7 +24,10 @@ prefix_of() {  # brew --prefix <formula>, with a Cellar-newest fallback
     local f="$1" pf
     pf="$(brew --prefix "$f" 2>/dev/null)" && [ -n "$pf" ] && { echo "$pf"; return; }
     if [ -d "$BREW_PREFIX/Cellar/$f" ]; then
-        ls "$BREW_PREFIX/Cellar/$f" | sort -V | tail -1 | while read -r v; do
+        # BSD sort (macOS) has no -V; numeric per-component sort of the
+        # dotted version string is enough to pick the newest Cellar dir.
+        ls "$BREW_PREFIX/Cellar/$f" | \
+            sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1 | while read -r v; do
             echo "$BREW_PREFIX/Cellar/$f/$v"
         done
         return
