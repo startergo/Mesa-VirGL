@@ -673,9 +673,18 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
 
 @interface NSView (CGLShimTick)
 - (void)shim_tick:(NSTimer *)t;
+- (void)shim_setNeedsDisplay;
 @end
 @implementation NSView (CGLShimTick)
 - (void)shim_tick:(NSTimer *)t { (void)t; [self setNeedsDisplay:YES]; [self display]; }
+/* setNeedsDisplay: takes a BOOL; performSelectorOnMainThread passes its
+ * object argument in the register a BOOL parameter reads (review
+ * PRRT_kwDOPZhcm86YRSF-). On 10.6 BOOL is signed char and NSNumber has no
+ * tagged pointers, so the object is a 16-byte-aligned heap pointer whose
+ * low byte is 0x00 one allocation in sixteen — that decodes as NO and the
+ * view is never invalidated. Route the YES through a no-argument method
+ * instead (same trick as shim_tick:). */
+- (void)shim_setNeedsDisplay { [self setNeedsDisplay:YES]; }
 @end
 
 @interface NSOpenGLContext (CGLShim)
