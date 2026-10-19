@@ -1,9 +1,9 @@
 /*
- * osmesa_softpipe_test.c — minimal validation that libOSMesa.8.dylib
- * loads in 10.6's dyld, the TLS gate survives, and softpipe produces
- * correct pixels.
+ * virgl_clear_test.c — minimal validation that libOSMesa.8.dylib
+ * loads in 10.6's dyld, the TLS gate survives, and the virgl path
+ * produces correct pixels.
  *
- * Usage: DYLD_LIBRARY_PATH=/tmp GALLIUM_DRIVER=softpipe ./osmesa_softpipe_test
+ * Usage: DYLD_LIBRARY_PATH=/tmp GALLIUM_DRIVER=virgl ./virgl_clear_test
  *
  * Renders two known-color clears, reads back the buffer, verifies bytes.
  * No window, no AppKit, no socket — pure offscreen OSMesa.
