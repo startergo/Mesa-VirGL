@@ -756,6 +756,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
    attribs.options.disable_blend_func_extended = false;
    attribs.options.disable_glsl_line_continuations = false;
    attribs.options.force_glsl_version = 0;
+   attribs.options.allow_compressed_fallback = true;   /* as DRI's gallium driconf default */
 
    osmesa_init_st_visual(&attribs.visual,
                          PIPE_FORMAT_NONE,

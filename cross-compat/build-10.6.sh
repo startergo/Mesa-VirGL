@@ -115,9 +115,14 @@ fi
 # (compilation + static archives) must succeed; only the final dylib link
 # fails with undefined virgl symbols. The force-link step below re-links
 # with all four virgl archives and produces the final dylib.
-echo "==> ninja -C $BUILD_DIR -j$JOBS"
+# -k 0: keep building past the expected OSMesa link failure. Without it,
+# ninja aborts the whole run at that failure and whether static archives
+# (libosmesa_st.a, libmesa.a) got re-archived first is scheduler luck —
+# measured 2026-10-09: a patched osmesa.c compiled but the dylib linked
+# the stale August archive, silently reverting the change in the artifact.
+echo "==> ninja -C $BUILD_DIR -j$JOBS -k 0"
 set +e
-ninja -C "$BUILD_DIR" -j"$JOBS"
+ninja -C "$BUILD_DIR" -j"$JOBS" -k 0
 NINJA_RC=$?
 set -e
 
