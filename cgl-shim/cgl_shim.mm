@@ -1575,10 +1575,25 @@ static void shim_blit_present_buf(id view)
      * transparent frame paints black over whatever Gecko itself
      * rendered through its software CGContext path (observed 2026-08-13
      * as white-then-black: Gecko's white software paint, erased by our
-     * empty blit). Skip the blit and let Gecko's own painting stand. */
+     * empty blit). Skip the blit and let Gecko's own painting stand.
+     *
+     * ZZBKH (PR review): the verdict used to come from pixel[0] alone,
+     * so a frame with a transparent top-left pixel and real content
+     * everywhere else was dropped. The comment says "fully
+     * transparent", so test that: sample a fixed grid (every
+     * alpha in a stride of at most len/256) and skip ONLY when all
+     * sampled alphas are zero. Fewer skips is the safe direction —
+     * the skip path replaces our frame with Gecko's software paint. */
     {
-        uint32_t p0 = ((const uint32_t *)[bufData bytes])[0];
-        if ((p0 & 0xff000000u) == 0) {
+        const uint32_t *px = (const uint32_t *)[bufData bytes];
+        NSUInteger npx = [bufData length] / 4;
+        uint32_t p0 = npx ? px[0] : 0;
+        NSUInteger stride = npx / 256;
+        if (stride == 0) stride = 1;
+        int all_transparent = (npx > 0);
+        for (NSUInteger i = 0; i < npx && all_transparent; i += stride)
+            if (px[i] & 0xff000000u) all_transparent = 0;
+        if (all_transparent) {
             static int s_empty_skip_log = 0;
             if (s_empty_skip_log < 5) {
                 s_empty_skip_log++;
