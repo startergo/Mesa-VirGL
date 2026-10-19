@@ -29,8 +29,11 @@
     float mPhase;
     float mR, mG, mB;
     int mFrameCount;
+    int mCglEnableErr;   /* Yovb4: CGLEnable result, reported at exit */
 }
 - (id)initWithFrame:(NSRect)frame colorR:(float)r colorG:(float)g colorB:(float)b;
+- (int)frameCount;
+- (int)cglEnableError;
 - (void)renderFrame;
 - (void)teardownGL;
 @end
@@ -46,6 +49,7 @@
     mR = r; mG = g; mB = b;
     mPhase = 0.0f;
     mFrameCount = 0;
+    mCglEnableErr = 0;
 
     NSOpenGLPixelFormatAttribute attrs[] = {
         NSOpenGLPFAWindow, NSOpenGLPFADoubleBuffer,
@@ -63,12 +67,18 @@
 
     // CGLEnable test — call through the interpose layer.
     // The shim should no-op for shim tokens (CGLEnable returns kCGLNoError).
+    // Yovb4 (PR review): the result was printed and forgotten, so a shim that
+    // BROKE CGLEnable still produced a green test. Keep it and report it.
     CGLContextObj cgl = (CGLContextObj)(uintptr_t)[mCtx CGLContextObj];
     CGLError err = CGLEnable(cgl, kCGLCEMPEngine);
-    fprintf(stderr, "stress: CGLEnable(ctx=%p) → %d (expected 0)\n", cgl, (int)err);
+    mCglEnableErr = (int)err;
+    fprintf(stderr, "stress: CGLEnable(ctx=%p) → %d (expected 0)%s\n", cgl,
+            (int)err, err == kCGLNoError ? "" : "  ← FAIL");
 
     return self;
 }
+
+- (int)cglEnableError { return mCglEnableErr; }
 
 - (void)renderFrame {
     [mCtx makeCurrentContext];
@@ -144,9 +154,16 @@
     NSRect rightRect = NSMakeRect(cb.size.width / 2, 0, cb.size.width / 2, cb.size.height);
 
     mView1 = [[StressView alloc] initWithFrame:leftRect colorR:0.9 colorG:0.2 colorB:0.2];
-    [mView1 setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    /* Yovb8 (PR review): autoresizing distributes the superview's delta only
+     * over the flexible parts, proportionally to their ORIGINAL size. With
+     * only WidthSizable set on BOTH halves, each view absorbed the whole
+     * width delta and the two views overlapped after any horizontal resize.
+     * Give the left view a flexible right margin and the right view a
+     * flexible left margin (400/400 each initially), so each half takes
+     * exactly half of the delta and they keep tiling. */
+    [mView1 setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable | NSViewMaxXMargin];
     mView2 = [[StressView alloc] initWithFrame:rightRect colorR:0.2 colorG:0.9 colorB:0.2];
-    [mView2 setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [mView2 setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable | NSViewMinXMargin];
 
     [contentView addSubview:mView1];
     [contentView addSubview:mView2];
@@ -182,11 +199,19 @@
         if (tbi.denom == 0) mach_timebase_info(&tbi);
         uint64_t now = mach_absolute_time();
         double elapsed = (double)(now - mStartTime) * tbi.numer / tbi.denom / 1e9;
-        fprintf(stderr, "stress: %d frames in %.1fs (%.1f fps), ctx1=%d ctx2=%d frames, win=%dx%d\n",
+        fprintf(stderr, "stress: %d frames in %.1fs (%.1f fps), ctx1=%d ctx2=%d frames, win=%dx%d, cglEnable=%d/%d\n",
                 mTotalFrames, elapsed, mTotalFrames / elapsed,
                 [mView1 frameCount], [mView2 frameCount],
                 (int)[[mWin contentView] bounds].size.width,
-                (int)[[mWin contentView] bounds].size.height);
+                (int)[[mWin contentView] bounds].size.height,
+                [mView1 cglEnableError], [mView2 cglEnableError]);
+        /* Yovb4: a nonzero CGLEnable result is a FAILED check, say so loudly. */
+        if ([mView1 cglEnableError] != (int)kCGLNoError ||
+            [mView2 cglEnableError] != (int)kCGLNoError) {
+            fprintf(stderr, "stress: FAIL — CGLEnable did not return kCGLNoError "
+                    "(ctx1=%d ctx2=%d)\n",
+                    [mView1 cglEnableError], [mView2 cglEnableError]);
+        }
     }
 }
 
