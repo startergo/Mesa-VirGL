@@ -1,9 +1,29 @@
 /*
- * Copyright 2026 startergo.  Derived from virgl_vtest_winsys.h (Red Hat, 2014).
+ * Copyright 2014, 2015 Red Hat.
+ * Copyright 2026 startergo.
  *
- * virgl_iokit_winsys — IOKit-backed virgl winsys for macOS 10.6 guest
- * under UTM.  Replaces vtest's Unix-socket transport with IOConnectCallMethod
- * against the VMQemuVGA kext's VMVirtIOGPUUserClient (selectors 0x6000-0x6009).
+ * Derived from virgl_vtest_winsys.h: the IOKit winsys replaces vtest's
+ * Unix-socket transport with IOConnectCallMethod against the VMQemuVGA
+ * kext's VMVirtIOGPUUserClient (selectors 0x6000-0x6009).
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * on the rights to use, copy, modify, merge, publish, distribute, sub
+ * license, and/or sell copies of the Software, and to permit persons to whom
+ * the Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHOR(S) AND/OR THEIR SUPPLIERS BE LIABLE FOR ANY CLAIM,
+ * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 #ifndef VIRGL_IOKIT_WINSYS_H
 #define VIRGL_IOKIT_WINSYS_H
@@ -42,7 +62,10 @@ struct virgl_hw_res {
    uint32_t res_handle;           /* from kext createResource3DEx scalar output */
    int num_cs_references;
 
-   void *ptr;                     /* align_malloc'd backing (vtest model) */
+   void *ptr;                     /* bk_alloc() backing (mmap by default;
+                                     align_malloc only under
+                                     VIRGL_IOKIT_HEAPBACK=1); release with
+                                     bk_free(), never free()/align_free() */
    uint32_t size;
 
    uint32_t format;
