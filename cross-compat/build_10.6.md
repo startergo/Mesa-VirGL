@@ -48,7 +48,7 @@ marked as such so nobody later assumes it's safe under threading.
 | File | Purpose |
 |------|---------|
 | `mesa-cross-10.6.txt` | Meson cross file: SDK, libcxx, llvm-ar, all `-D` defines |
-| `clock_gettime_compat.c` | Shims: `clock_gettime` (gettimeofday), `strndup`, `strnlen`, `open_memstream` (tmpfile) |
+| `clock_gettime_compat.c` | Shims: `clock_gettime` (gettimeofday), `strndup`, `strnlen`, `open_memstream` (built on `funopen()`, not tmpfile — see the file header: "GNU/BSD open_memstream built on funopen()") |
 | `math_compat.h` | 36 missing C99 math declarations (llrint, llround, trunc, etc.) — force-included via `cpp_args` |
 | `compat-headers/string.h` | Wrapper adding `strndup` / `strnlen` declarations via `#include_next` |
 | `compat-headers/xf86drm.h` | DRM stubs (all `abort()`). Source: fork CI workflow, commits `1577651647d` and `8681e0ec7d9` |

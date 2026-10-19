@@ -105,10 +105,20 @@ CROSS_FILE_TEMPLATE="$CROSS_FILE"
 CROSS_FILE="$BUILD_DIR/mesa-cross-10.6.interpolated.txt"
 mkdir -p "$BUILD_DIR"
 echo "==> interpolating @SOURCE_ROOT@ -> $(pwd)"
-sed "s|@SOURCE_ROOT@|$(pwd)|g" "$CROSS_FILE_TEMPLATE" > "$CROSS_FILE"
+# PRRT_kwDOPZhcm86uEfc3: python3, not sed — a checkout path containing
+# |, \ or & would break the s||| replacement (& in a sed replacement
+# re-inserts the whole match; | is the delimiter; \ escapes).
+SOURCE_ROOT="$(pwd)"
+python3 - "$CROSS_FILE_TEMPLATE" "$CROSS_FILE" "$SOURCE_ROOT" <<'PY'
+import sys
+with open(sys.argv[1]) as f:
+    data = f.read()
+with open(sys.argv[2], "w") as f:
+    f.write(data.replace("@SOURCE_ROOT@", sys.argv[3]))
+PY
 
-if ! grep -q "$(pwd)" "$CROSS_FILE"; then
-    echo "ERROR: interpolation did not substitute $(pwd) into $CROSS_FILE"
+if ! grep -qF "$SOURCE_ROOT" "$CROSS_FILE"; then
+    echo "ERROR: interpolation did not substitute $SOURCE_ROOT into $CROSS_FILE"
     echo "       template was $CROSS_FILE_TEMPLATE"
     exit 1
 fi
@@ -121,7 +131,13 @@ if [ "$CLEAN" = "1" ] && [ -f "$BUILD_DIR/build.ninja" ]; then
     echo "==> removing $BUILD_DIR (clean reconfigure)"
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
-    sed "s|@SOURCE_ROOT@|$(pwd)|g" "$CROSS_FILE_TEMPLATE" > "$CROSS_FILE"
+    python3 - "$CROSS_FILE_TEMPLATE" "$CROSS_FILE" "$SOURCE_ROOT" <<'PY'
+import sys
+with open(sys.argv[1]) as f:
+    data = f.read()
+with open(sys.argv[2], "w") as f:
+    f.write(data.replace("@SOURCE_ROOT@", sys.argv[3]))
+PY
 fi
 
 if [ ! -f "$BUILD_DIR/build.ninja" ]; then
@@ -157,15 +173,32 @@ fi
 # the stale August archive, silently reverting the change in the artifact.
 echo "==> ninja -C $BUILD_DIR -j$JOBS -k 0"
 set +e
-ninja -C "$BUILD_DIR" -j"$JOBS" -k 0
+NINJA_LOG="$BUILD_DIR/ninja-build.log"
+ninja -C "$BUILD_DIR" -j"$JOBS" -k 0 >"$NINJA_LOG" 2>&1
 NINJA_RC=$?
+tail -40 "$NINJA_LOG"
 set -e
 
 OSMESA="$BUILD_DIR/src/gallium/targets/osmesa/libOSMesa.8.dylib"
 
 if [ "$NINJA_RC" -ne 0 ]; then
     # Verify the failure is only the OSMesa link, not a compilation error.
-    # All four virgl archives must exist (built before the link step).
+    # PRRT_kwDOPZhcm86uEfcT: check the FAILED EDGES ninja actually logged
+    # — a reused build directory keeps old archives on disk while an
+    # UNRELATED compile step fails, and archive existence alone cannot
+    # tell those apart. Every failed edge must be the OSMesa target.
+    FAILED_TARGETS="$(grep '^FAILED: ' "$NINJA_LOG" | sed 's/^FAILED: *//' | sort -u)"
+    if [ -z "$FAILED_TARGETS" ]; then
+        fail "ninja failed (rc=$NINJA_RC) but logged no FAILED: edges — unrecognized failure, see $NINJA_LOG"
+    fi
+    BAD_TARGETS="$(echo "$FAILED_TARGETS" | grep -v "^$BUILD_DIR/src/gallium/targets/osmesa/" || true)"
+    if [ -n "$BAD_TARGETS" ]; then
+        echo "ERROR: ninja failed outside the expected OSMesa link target:"
+        echo "$BAD_TARGETS"
+        fail "real compilation error (see $NINJA_LOG) — not the expected OSMesa link failure"
+    fi
+    # Second belt: all four virgl archives must exist (built before the
+    # link step).
     for a in libvirgl.a libvirgliokit.a libvirglvtest.a libvirglcommon.a; do
         found=$(find "$BUILD_DIR/src/gallium" -name "$a" 2>/dev/null | head -1)
         [ -n "$found" ] || fail "ninja failed and $a is missing — real compilation error, not the expected OSMesa link failure"

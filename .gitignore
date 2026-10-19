@@ -26,3 +26,8 @@ cgl-shim/substitute/OpenGL.framework/
 
 # Local development ledger (not published)
 /LEDGER.md
+
+# PRRT_kwDOPZhcm86uEfbO: Apple proprietary binary extracted by
+# cgl-shim/substitute/prepare_real_opengl.sh — never commit it.
+cgl-shim/substitute/libOpenGL_real_x86_64/
+cgl-shim/substitute/libOpenGL_real_x86_64
