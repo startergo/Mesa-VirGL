@@ -77,6 +77,23 @@ for tool in meson ninja bison flex; do
 done
 python3 -c 'import mako' 2>/dev/null || fail "python3 mako module not installed"
 
+# -------- reject a build dir that IS or CONTAINS the source root (Yovbb) --
+# --clean does `rm -rf "$BUILD_DIR"` as soon as it finds build.ninja there
+# (see the configure section), so `--build-dir .` — or any parent of the
+# checkout — would recursively delete the source tree. Check BEFORE anything
+# creates or removes a directory.
+SRC_ROOT="$PWD"                      # line 42 already proved this is the root
+ABS_BUILD="$BUILD_DIR"
+case "$ABS_BUILD" in /*) ;; *) ABS_BUILD="$SRC_ROOT/$ABS_BUILD" ;; esac
+ABS_BUILD="$(cd "$ABS_BUILD" 2>/dev/null && pwd || printf '%s' "$ABS_BUILD")"
+if [ "$ABS_BUILD" = "$SRC_ROOT" ]; then
+    fail "--build-dir '$BUILD_DIR' is the repo root — --clean would delete the checkout. Use a separate directory (default: build-106)."
+fi
+case "$SRC_ROOT" in
+    "$ABS_BUILD"/*)
+        fail "--build-dir '$BUILD_DIR' contains the repo root — --clean would delete the checkout. Use a directory INSIDE the checkout." ;;
+esac
+
 # -------------------------------------------------- cross-file interpolation
 # The tracked cross file is a TEMPLATE — it carries @SOURCE_ROOT@ placeholders
 # that must be substituted with the actual checkout path before meson sees it.
