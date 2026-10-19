@@ -104,13 +104,16 @@ shim_CGLFlushDrawable(CGLContextObj ctx)
 {
     struct shim_ctx *s = shim_lookup(ctx);
     if (s) {
-        /* The actual presentation is done in NSOpenGLContext -flushBuffer's
-         * swizzle (cgl_shim.mm). CGLFlushDrawable arriving here is a
-         * direct CGL call — trigger the same swap+present path. */
-        glFinish();
-        /* Swap + present handled by the ObjC side via a function pointer
-         * set during shim init. For now, no-op — the -flushBuffer swizzle
-         * is the primary presentation path. */
+        /* Review PRRT_kwDOPZhcm86YKBwS: this was a bare glFinish() — the
+         * frame was never swapped or presented, so a caller using raw CGL
+         * against a shim context got a frozen window while the
+         * -flushBuffer path worked. Present through the same entry the
+         * substitute framework uses (cgl_shim_present_from_cgl in
+         * cgl_shim.mm: readback into render_buf, swap, rebind, store on
+         * the view, trigger drawRect). It takes sc->lock with trylock and
+         * drops the frame rather than blocking this thread. */
+        extern void cgl_shim_present_from_cgl(void *scv);
+        cgl_shim_present_from_cgl(s);
         return kCGLNoError;
     }
     CGLError (*real)(CGLContextObj) =
