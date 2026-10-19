@@ -500,10 +500,8 @@ static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
 
     NSView *view = (NSView *)sc->view;
 
-    /* Clear the coalescing flag, store present_buf on the view for
-     * drawRect to pick up. */
+    /* present_pending is already cleared above (review PRRT_kwDOPZhcm86YKBu-). */
     pthread_mutex_lock(&sc->lock);
-    sc->present_pending = 0;
 
     /* DIFF INSTRUMENT (2026-08-17, pre-registered entry-18 follow-up):
      * compare the presented buffer against the union of THIS frame's
@@ -592,9 +590,8 @@ extern "C" void cgl_shim_present_from_cgl(void *scv)
         substitute_cgl_tls_set((CGLContextObj)sc);
     }
     if (p_glFinish) p_glFinish();
-    if (p_glReadPixels && sc->render_buf && sc->width > 0 && sc->height > 0)
-        p_glReadPixels(0, 0, sc->width, sc->height, GL_RGBA,
-                       GL_UNSIGNED_BYTE, sc->render_buf);
+    if (sc->render_buf)
+        shim_readback(sc->width, sc->height, sc->render_buf);
 
     void *tmp = sc->render_buf;
     sc->render_buf = sc->present_buf;
@@ -618,8 +615,8 @@ extern "C" void cgl_shim_present_from_cgl(void *scv)
         [view setNeedsDisplay:YES];
         [view display];
     } else {
-        [view performSelectorOnMainThread:@selector(setNeedsDisplay:)
-                               withObject:[NSNumber numberWithBool:YES]
+        [view performSelectorOnMainThread:@selector(shim_setNeedsDisplay)
+                               withObject:nil
                             waitUntilDone:NO];
         [view performSelectorOnMainThread:@selector(display)
                                withObject:nil
