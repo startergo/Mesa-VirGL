@@ -164,12 +164,20 @@ static inline void raster_triangle(uint32_t *fb, int w, int h,
                     bitsPerPixel:32];
 
     [NSGraphicsContext saveGraphicsState];
+    /* PRRT_kwDOPZhcm86uEfZ2 (PR review): renderFrame: runs from the
+     * animation timer, not from drawRect: — there is no current
+     * NSGraphicsContext, so drawInRect: had nowhere to draw and the
+     * frame was never presented (the fps numbers measured the timer
+     * cadence, not the blit). lockFocus establishes a context targeting
+     * this view; unlockFocus flushes it. */
+    [self lockFocus];
     [rep drawInRect:bounds
            fromRect:NSZeroRect
           operation:NSCompositeCopy
            fraction:1.0f
      respectFlipped:YES
               hints:nil];
+    [self unlockFocus];
     [NSGraphicsContext restoreGraphicsState];
     [rep release];
 
