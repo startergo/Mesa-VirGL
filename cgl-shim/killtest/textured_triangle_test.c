@@ -32,8 +32,13 @@ static const GLfloat tri_data[] = {
 
 /* 4×4 RGBA texture: each texel has a distinct color so UV interpolation
  * actually produces different colors at different screen positions.
- *texel[x][y] = (x*64, y*64, 128, 255) → a simple gradient.
- * Center pixel (128,128) maps to UV ~(0.5, 0.33) → texel (2,1) = (128, 64, 128, 255) */
+ * texel[x][y] = (x*64, y*64, 200, 255) → a simple gradient with a blue
+ * offset. Blue is NOT 128 anywhere: with the old constant B=128 a red/blue
+ * channel swap was invisible at every sampled texel (R=128 at x=2). B=200
+ * makes the swap fail the check. Center pixel (128,128) maps to UV
+ * (0.5, 0.5) → texel (2,2) = (128, 128, 200, 255) (barycentric: the three
+ * UV corners (0,0),(1,0),(0.5,1) average to the centroid UV (0.5, 0.5) at
+ * the screen center). */
 static const char *vs_src =
     "attribute vec2 a_pos;\n"
     "attribute vec2 a_uv;\n"
@@ -99,7 +104,7 @@ int main(void)
             int i = (y * TEX_W + x) * 4;
             tex_data[i + 0] = (unsigned char)(x * 64);   /* R: 0, 64, 128, 192 */
             tex_data[i + 1] = (unsigned char)(y * 64);   /* G: 0, 64, 128, 192 */
-            tex_data[i + 2] = 128;                        /* B: constant */
+            tex_data[i + 2] = 200;                        /* B: constant 200, ≠ R everywhere (YKBwm) */
             tex_data[i + 3] = 255;                        /* A: opaque */
         }
     }
@@ -184,15 +189,15 @@ int main(void)
     /* --- Verify --- */
     /* Center pixel (128, 128): inside the triangle.
      * UV at screen center via barycentric: (0.5, 0.5) → texel(2,2).
-     * texel(2,2) = R=128, G=128, B=128 → RGB(128, 128, 128) */
-    failures += check_pixel(buf, W / 2, H / 2, 128, 128, 128, "center-texel(2,2)");
+     * texel(2,2) = R=128, G=128, B=200 → RGB(128, 128, 200) */
+    failures += check_pixel(buf, W / 2, H / 2, 128, 128, 200, "center-texel(2,2)");
 
     /* Corner pixel (5, 5): outside the triangle → background */
     failures += check_pixel(buf, 5, 5, 26, 26, 26, "corner-background");
 
-    /* Bottom-center (128, 40): inside the triangle near the bottom.
-     * UV ≈ (0.5, 0.0) → texel(2, 0) = RGB(128, 0, 128) */
-    failures += check_pixel(buf, W / 2, 40, 128, 0, 128, "bottom-texel(2,0)");
+    /* Upper-center (128, 40): inside the triangle near the base.
+     * UV ≈ (0.5, 0.0) → texel(2, 0) = RGB(128, 0, 200) */
+    failures += check_pixel(buf, W / 2, 40, 128, 0, 200, "bottom-texel(2,0)");
 
     if (failures == 0)
         printf("RESULT: PASS — textured triangle rendered correctly (3/3 pixels match)\n");
