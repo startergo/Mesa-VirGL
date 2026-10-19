@@ -50,7 +50,18 @@ struct virgl_transfer_queue {
     * Every PUBLIC entry takes this lock; internal helpers (add_internal,
     * perform_action, compare_and_perform_action, find_overlap when
     * called internally) run under the caller's hold — simple_mtx is
-    * NOT recursive, so only public entries lock. */
+    * NOT recursive, so only public entries lock.
+    *
+    * PRRT_kwDOPZhcm86uEfb5 (PR review) — lock BOUNDARY: this lock
+    * protects the transfer LIST (and the num_dwords bookkeeping that
+    * the list operations perform) against the handoff window above.
+    * It does NOT cover the command buffer: cbuf->cdw is written by
+    * virgl_transfer_queue_clear and concurrently by every encoder
+    * call on the same context. Concurrent use of one context from two
+    * threads at once is UNSUPPORTED — the same contract as upstream
+    * virgl (which locks nothing here at all): a context is owned by
+    * one thread at a time; handing it over requires a MakeCurrent
+    * boundary, and that boundary is what this lock makes safe. */
    simple_mtx_t lock;
 };
 

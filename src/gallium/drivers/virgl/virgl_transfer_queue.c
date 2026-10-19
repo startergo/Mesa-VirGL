@@ -333,6 +333,10 @@ int virgl_transfer_queue_clear(struct virgl_transfer_queue *queue,
    memset(&iter, 0, sizeof(iter));
    simple_mtx_lock(&queue->lock);
    if (queue->tbuf) {
+      /* PRRT_kwDOPZhcm86uEfb5: cbuf->cdw save/restore is safe only
+       * under the one-context-one-thread-at-a-time contract (see the
+       * lock BOUNDARY note in virgl_transfer_queue.h): the encoder
+       * writes the same field without this lock, by design. */
       uint32_t prior_num_dwords = cbuf->cdw;
       cbuf->cdw = 0;
 
