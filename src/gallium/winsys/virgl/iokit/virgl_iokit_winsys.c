@@ -918,8 +918,11 @@ virgl_iokit_submit_cmd(struct virgl_winsys *vws,
    if (cbuf->poisoned) {   /* F1: a handle in the blob has no FCE1 entry / no ref */
       static unsigned s_poisoned;
       s_poisoned++;
-      fprintf(stderr, "virgl_iokit: cbuf POISONED (add_res OOM) — batch DROPPED "
-              "(cdw=%u cres=%u, drop #%u)\n", cbuf->base.cdw, cbuf->cres, s_poisoned);
+      /* rung279 (PR review t3cbQ): rate-limit like the counters above —
+       * under a persistent add_res OOM every submit wrote a stderr line. */
+      if (s_poisoned <= 4 || (s_poisoned & 1023) == 0)
+         fprintf(stderr, "virgl_iokit: cbuf POISONED (add_res OOM) — batch DROPPED "
+                 "(cdw=%u cres=%u, drop #%u)\n", cbuf->base.cdw, cbuf->cres, s_poisoned);
       virgl_iokit_release_all_res(iws, cbuf);
       memset(cbuf->is_handle_added, 0, sizeof(cbuf->is_handle_added));
       cbuf->base.cdw = 0;
