@@ -116,16 +116,17 @@ static pthread_once_t tsd_once = PTHREAD_ONCE_INIT;
 static void
 tsd_keys_create(void)
 {
-   /* PRRT_kwDOPZhcm86uEfZv (PR review): same rule as the u_call_once TSD
-    * keys (fixed for PRRT_kwDOPZhcm86uAnOQ): a failed key creation must
-    * never be marked ready — pthread_once will not rerun this routine,
-    * the key variable keeps its zero init, and every later
-    * pthread_getspecific/pthread_setspecific would touch a key id this
-    * file never created. On Darwin key ids are process-global TSD
-    * slots: a foreign slot's value would be returned AS THE GL DISPATCH
-    * TABLE and calls would jump through it, and setspecific would
-    * overwrite another subsystem's per-thread state. Both failures are
-    * EAGAIN (PTHREAD_KEYS_MAX) or ENOMEM — abort at the cause. */
+   /* A failed key creation must never be marked ready: pthread_once
+    * will not rerun this routine, the key variable keeps its zero
+    * initialization, and every later pthread_getspecific/
+    * pthread_setspecific would touch a key id this file never created.
+    * On Darwin key ids are process-global small-integer TSD slots, so
+    * id 0 can be another subsystem's live key: its per-thread value
+    * would be returned as our GL dispatch table (arbitrary calls
+    * through it), and our writes would corrupt that subsystem's state.
+    * Creation fails only with the process out of TSD slots (EAGAIN,
+    * PTHREAD_KEYS_MAX) or out of memory (ENOMEM) — die at the cause
+    * before any TSD access. */
    if (pthread_key_create(&tsd_dispatch_key, NULL) != 0 ||
        pthread_key_create(&tsd_context_key, NULL) != 0) {
       fprintf(stderr, "u_current: pthread_key_create failed - GL "
