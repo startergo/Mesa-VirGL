@@ -15,10 +15,28 @@
 # - Requires appropriate guest OS and 3dfx drivers
 
 # Mesa-VirGL Library Setup - Use custom built Mesa-VirGL libraries
-MESA_VIRGL_LIB="/opt/mesa-virgl/lib"
-SPICE_LIB="/opt/homebrew/Cellar/spice-server/0.16.0/lib"
-export DYLD_LIBRARY_PATH="$MESA_VIRGL_LIB:/opt/homebrew/Cellar/qemu-3dfx/9.2.2-3dfx_26/lib:$SPICE_LIB:/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH"
-export DYLD_FALLBACK_LIBRARY_PATH="$MESA_VIRGL_LIB:/opt/homebrew/Cellar/qemu-3dfx/9.2.2-3dfx_26/lib:$SPICE_LIB:/opt/homebrew/lib:/usr/local/lib:/usr/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+# PRRT_kwDOPZhcm86uEfck: derive the Homebrew paths instead of pinning
+# one Cellar version (9.2.2-3dfx_26 disappears on the next upgrade).
+# Override anything through the environment.
+MESA_VIRGL_LIB="${MESA_VIRGL_LIB:-/opt/mesa-virgl/lib}"
+BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
+prefix_of() {  # brew --prefix <formula>, with a Cellar-newest fallback
+    local f="$1" pf
+    pf="$(brew --prefix "$f" 2>/dev/null)" && [ -n "$pf" ] && { echo "$pf"; return; }
+    if [ -d "$BREW_PREFIX/Cellar/$f" ]; then
+        ls "$BREW_PREFIX/Cellar/$f" | sort -V | tail -1 | while read -r v; do
+            echo "$BREW_PREFIX/Cellar/$f/$v"
+        done
+        return
+    fi
+    echo "$BREW_PREFIX"
+}
+QEMU_3DFX_PREFIX="$(prefix_of qemu-3dfx)"
+SPICE_PREFIX="$(prefix_of spice-server)"
+QEMU_3DFX_LIB="${QEMU_3DFX_LIB:-$QEMU_3DFX_PREFIX/lib}"
+SPICE_LIB="${SPICE_LIB:-$SPICE_PREFIX/lib}"
+export DYLD_LIBRARY_PATH="$MESA_VIRGL_LIB:$QEMU_3DFX_LIB:$SPICE_LIB:$BREW_PREFIX/lib:/usr/local/lib:$DYLD_LIBRARY_PATH"
+export DYLD_FALLBACK_LIBRARY_PATH="$MESA_VIRGL_LIB:$QEMU_3DFX_LIB:$SPICE_LIB:$BREW_PREFIX/lib:/usr/local/lib:/usr/lib:$DYLD_FALLBACK_LIBRARY_PATH"
 
 # Mesa-VirGL Environment Variables
 export PKG_CONFIG_PATH="$MESA_VIRGL_LIB/pkgconfig:$PKG_CONFIG_PATH"
@@ -51,8 +69,7 @@ else
 fi
 
 # Check and create missing symlinks if needed
-QEMU_3DFX_LIB="/opt/homebrew/Cellar/qemu-3dfx/9.2.2-3dfx_26/lib"
-MESA_VIRGL_LIB="/opt/mesa-virgl/lib"
+# QEMU_3DFX_LIB / MESA_VIRGL_LIB resolved above (uEfck)
 
 # Verify Mesa-VirGL libraries are installed
 echo "Checking Mesa-VirGL libraries..."
@@ -68,6 +85,11 @@ else
 fi
 
 echo ""
+# PRRT_kwDOPZhcm86uEfbk: the speculative guest-configuration notes
+# (originally ~540 echo lines) printed on EVERY launch. They are kept
+# in full but only shown when VERBOSE_NOTES=1 is set; normal launches
+# print just the status output.
+if [ "${VERBOSE_NOTES:-0}" = "1" ]; then
 echo "=== Guest VM OpenGL Configuration ==="
 echo "To optimize OpenGL within macOS constraints, run these commands inside the VM:"
 echo ""
@@ -653,6 +675,8 @@ echo ""
 #     echo "✗ libSDL2.dylib missing!"
 # fi
 
+fi
+
 # Target architecture selection
 ARCH="${1:-aarch64}"  # Default to aarch64 if no argument provided
 INSTALL_MODE="${1:-}"
@@ -799,8 +823,8 @@ case "$ARCH" in
         CPU_TYPE="-cpu cortex-a72"
         # 3dfx support is built into QEMU 3dfx - no additional devices needed
         THREED_FX=""  # 3dfx support is integrated into the QEMU binary itself
-        EFI_CODE="-drive if=pflash,format=raw,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd,readonly=on"
-        EFI_VARS="-drive if=pflash,format=raw,file=/opt/homebrew/share/qemu/edk2-arm-vars.fd,discard=on"
+        EFI_CODE="-drive if=pflash,format=raw,file=${QEMU_SHARE_DIR:-$BREW_PREFIX/share/qemu}/edk2-aarch64-code.fd,readonly=on"
+        EFI_VARS="-drive if=pflash,format=raw,file=${QEMU_SHARE_DIR:-$BREW_PREFIX/share/qemu}/edk2-arm-vars.fd,discard=on"
         BOOT_OPTS="-boot menu=on,order=c,splash-time=3000"  # Auto-boot from disk with 3 second timeout
         echo "Starting QEMU aarch64 with VirtIO GPU OpenGL (hardware acceleration)..."
         echo "3dfx support: Built into QEMU 3dfx binary (hardware acceleration enabled)"
@@ -917,8 +941,22 @@ fi
 AUDIO="-audiodev coreaudio,id=audio0 -device intel-hda -device hda-duplex,audiodev=audio0"
 USB="-device qemu-xhci -device usb-kbd -device virtio-mouse-pci"  # Add VirtIO mouse for better integration
 SERIAL=""  # virtio-serial-pci will be added with clipboard configuration to avoid duplication
-MONITOR="-monitor telnet:127.0.0.1:4444,server,nowait"  # Monitor via telnet to avoid conflicts
-NETWORK="-netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0,mq=on,vectors=10"  # Enhanced networking with multiqueue
+# PRRT_kwDOPZhcm86uEfcu: the monitor is OFF by default — a loopback TCP
+# port is reachable by every local user. Opt in with USE_MONITOR=1; it
+# then binds a 0600 Unix socket in $TMPDIR (owner-only).
+MONITOR=""
+if [ "${USE_MONITOR:-0}" = "1" ]; then
+    MON_SOCK="$TMPDIR/qemu-mon-$$.sock"
+    MONITOR="-monitor unix:$MON_SOCK,server,nowait"
+    echo "QEMU monitor: unix socket $MON_SOCK (mode 600)"
+fi
+# PRRT_kwDOPZhcm86uEfcz: guest SSH forwards from LOOPBACK only by
+# default (hostfwd=tcp:: binds every interface — the guest's sshd would
+# be reachable from the network). SSH_BIND_ALL=1 restores the old open
+# binding.
+SSH_BIND_ADDR="127.0.0.1"
+[ "${SSH_BIND_ALL:-0}" = "1" ] && SSH_BIND_ADDR=""
+NETWORK="-netdev user,id=net0,hostfwd=tcp:${SSH_BIND_ADDR}:2222-:22 -device virtio-net-pci,netdev=net0,mq=on,vectors=10"  # multiqueue
 
 # Alternative audio configurations for better compatibility
 if [ "$ARCH" = "i386" ]; then
@@ -950,23 +988,18 @@ if [ "$USE_VNC" != "1" ]; then
     # Window scaling and resolution handling - Aggressive scaling to eliminate black bars
     export SDL_VIDEO_WINDOW_RESIZABLE=1
     export SDL_VIDEO_CENTERED=1
-    export SDL_HINT_RENDER_SCALE_QUALITY=1  # Linear scaling
-    export SDL_HINT_VIDEO_WINDOW_SHARE_PIXEL_FORMAT=1
-    export SDL_HINT_RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing for scaling
-    export SDL_HINT_VIDEO_ALLOW_SCREENSAVER=1
-    export SDL_HINT_VIDEO_HIGHDPI_DISABLED=0  # Enable high DPI support
-    export SDL_HINT_RENDER_DRIVER=opengl  # Force OpenGL renderer for scaling
-    export SDL_HINT_VIDEO_WINDOW_SCALE_MODE=1  # Enable automatic window scaling
-    export SDL_HINT_RENDER_SCALE_POLICY=0  # Stretch to fill (ignore aspect ratio)
-    export SDL_HINT_VIDEO_ASPECT_RATIO_MODE=0  # Disable aspect ratio preservation
+    export RENDER_SCALE_QUALITY=1  # Linear scaling
+    export VIDEO_WINDOW_SHARE_PIXEL_FORMAT=1
+    export RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing for scaling
+    export VIDEO_ALLOW_SCREENSAVER=1
+    export VIDEO_HIGHDPI_DISABLED=0  # Enable high DPI support
+    export RENDER_DRIVER=opengl  # Force OpenGL renderer for scaling
+    export RENDER_SCALE_POLICY=0  # Stretch to fill (ignore aspect ratio)
     
     # Additional scaling fixes - Force window to fill completely
-    export SDL_HINT_VIDEO_WINDOW_SCALE=1.0  # Set explicit scale factor
-    export SDL_HINT_RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing with stretch
-    export SDL_HINT_RENDER_SCALE_MODE=1  # Linear scaling for smooth resize
-    export SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0  # Don't minimize on focus loss
-    export SDL_HINT_VIDEO_WINDOW_FORCE_SCALE=1  # Force scaling to match window size
-    export SDL_HINT_RENDER_VSYNC=0  # Disable VSync to allow flexible scaling
+    export RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing with stretch
+    export VIDEO_MINIMIZE_ON_FOCUS_LOSS=0  # Don't minimize on focus loss
+    export RENDER_VSYNC=0  # Disable VSync to allow flexible scaling
     
     # macOS-specific optimizations - Force full window usage
     export SDL_VIDEO_MAC_FULLSCREEN_SPACES=1
@@ -979,6 +1012,11 @@ if [ "$USE_VNC" != "1" ]; then
     export SDL_RENDER_DRIVER=opengl
     export SDL_RENDER_OPENGL_SHADERS=1
     export SDL_RENDER_VSYNC=0  # Disable VSync for maximum performance
+# PRRT_kwDOPZhcm86uEfbd: SDL reads env vars named like the hint itself —
+# SDL_RENDER_DRIVER, not SDL_HINT_RENDER_DRIVER. Names that are not SDL
+# hints at all (SDL_VIDEO_WINDOW_SCALE_MODE, SDL_VIDEO_ASPECT_RATIO_MODE,
+# SDL_VIDEO_WINDOW_SCALE, SDL_RENDER_SCALE_MODE, SDL_VIDEO_WINDOW_FORCE_SCALE,
+# SDL_RENDER_DIRECT3D_THREADSAFE) were dropped instead of renamed.
     export SDL_RENDER_SCALE_QUALITY=1  # Linear filtering
     
     # VirtGL performance optimizations - Force OpenGL 4.0 Compatibility Profile with Mesa-VirGL
@@ -1049,8 +1087,7 @@ if [ "$USE_VNC" != "1" ]; then
     # Performance optimizations - Enhanced
     export SDL_FRAMEBUFFER_ACCELERATION=1
     export SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR=0
-    export SDL_HINT_RENDER_BATCHING=1  # Enable render batching
-    export SDL_HINT_RENDER_DIRECT3D_THREADSAFE=1  # Thread safety
+    export RENDER_BATCHING=1  # Enable render batching
     
     echo "Display: SDL with maximum hardware acceleration capability"
     echo "OpenGL: Optimized with enhanced SDL and Mesa hints for VirtGL acceleration"

@@ -3,12 +3,18 @@
  * The vl subsystem (src/gallium/auxiliary/vl/) is not compiled when
  * video-codecs=[] — video decode is irrelevant for a Snow Leopard 3D
  * rendering use case. virgl_video.c references these five functions;
- * they are unreachable at runtime (no app will call the video codec
- * path through virgl on this target) but must resolve at link time.
+ * they must resolve at link time.
  *
- * All abort() — per the project's fail-loud pattern. If video support
- * is ever needed, compile src/gallium/auxiliary/vl/ properly and
- * delete this file.
+ * PRRT_kwDOPZhcm86uEfbx (PR review): these are NOT all unreachable.
+ * virgl registers vl_video_buffer_is_format_supported as the screen's
+ * is_video_format_supported (virgl_screen.c:1193) — a capability
+ * PROBE. A video frontend (VA-API/VDPAU style) probing the screen
+ * would have killed the process through the old abort(). That query
+ * now returns false (no video support — the honest answer); the four
+ * operation stubs keep abort() per the fail-loud pattern (they only
+ * run if someone drives the codec path despite the probe saying no).
+ * If video support is ever needed, compile
+ * src/gallium/auxiliary/vl/ properly and delete this file.
  *
  * Signatures match src/gallium/auxiliary/vl/vl_video_buffer.h exactly
  * (return types, parameter types, and parameter order). The real types
@@ -65,5 +71,9 @@ vl_video_buffer_is_format_supported(struct pipe_screen *screen,
                                     int format,
                                     int profile,
                                     int entrypoint) {
-    __builtin_abort();
+    /* PRRT_kwDOPZhcm86uEfbx: capability query — answer it instead of
+     * killing the process (registered as virgl's screen
+     * is_video_format_supported; see the header comment). */
+    (void)screen; (void)format; (void)profile; (void)entrypoint;
+    return false;
 }
