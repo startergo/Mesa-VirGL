@@ -17,7 +17,14 @@ var gl = gl2 || c.getContext("webgl") || c.getContext("experimental-webgl");
 if (!gl) {
     log("webgl1: FAILED — no context at all");
 } else {
-    log("webgl1: OK version " + gl.getParameter(gl.VERSION));
+    /* PRRT_kwDOPZhcm86uEfc9: say WHICH context is being reported —
+     * when webgl2 succeeded, gl is the webgl2 context, and the old
+     * unconditional "webgl1: OK" line reported webgl2's version under
+     * a webgl1 label. */
+    if (gl2)
+        log("webgl1: not re-tested (webgl2 context in use)");
+    else
+        log("webgl1: OK version " + gl.getParameter(gl.VERSION));
     log("renderer: " + gl.getParameter(gl.RENDERER));
     log("max_samples: " + gl.getParameter(gl.SAMPLES));
     gl.clearColor(0.2, 0.6, 1.0, 1.0);
