@@ -461,7 +461,21 @@ extern "C" void cgl_shim_diff_at_present(const void *buf, int w, int h);
 static void shim_present(NSOpenGLContext *nsc, uint32_t genAtEnqueue)
 {
     struct shim_ctx *sc = get_shim_ctx(nsc);
-    if (!sc || !sc->present_buf || !sc->view) return;
+    if (!sc) return;
+
+    /* Clear the coalescing flag FIRST, on every path (review
+     * PRRT_kwDOPZhcm86YKBu-): shim_flushBuffer only enqueues a present
+     * while !present_pending, so a present that returns before the old
+     * "present_pending = 0" line (line ~490, after all the guards below)
+     * left the flag stuck at 1 and presentation for this context froze
+     * forever — no further present was ever enqueued. Every early return
+     * below is a deliberate frame drop; the next -flushBuffer must still
+     * be able to enqueue. */
+    pthread_mutex_lock(&sc->lock);
+    sc->present_pending = 0;
+    pthread_mutex_unlock(&sc->lock);
+
+    if (!sc->present_buf || !sc->view) return;
 
     /* THE ABORT FIX (2026-10-06): if clearDrawable (or teardown)
      * bumped the generation between enqueue and run, this sc's
