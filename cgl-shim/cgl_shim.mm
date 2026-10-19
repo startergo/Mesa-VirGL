@@ -907,11 +907,18 @@ static void swizzle_method(Class cls, SEL originalSel, SEL shimSel);
     if (shim_register(sc) != 0) {
         fprintf(stderr, "cgl_shim: shim registry full (%d) — context %p left "
                 "on Apple GL (not shimmed)\n", MAX_SHIM_CONTEXTS, (void *)self);
+        /* t7gy_ (PR review): initWithFormat bound sc into OSMesa and the
+         * substitute TLS above (shim_osmesa_make_current(sc) +
+         * substitute_cgl_tls_set(sc)) WITHOUT going through
+         * -makeCurrentContext, so get_current_ctx() is NOT a witness for the
+         * bound state — a TLS check here would skip both unbinds and free
+         * sc while OSMesa still has it current on this thread. Clear both
+         * unconditionally, then the TLS slot only if it points at self. */
         if (get_current_ctx() == self) {
             set_current_ctx(nil);
-            shim_osmesa_make_current(NULL);
-            substitute_cgl_tls_set(NULL);
         }
+        shim_osmesa_make_current(NULL);
+        substitute_cgl_tls_set(NULL);
         free_buffers(sc);
         OSMesaDestroyContext(sc->osmesa_ctx);
         pthread_mutex_destroy(&sc->cgl_lock);
