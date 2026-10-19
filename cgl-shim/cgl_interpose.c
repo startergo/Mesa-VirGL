@@ -400,18 +400,19 @@ static void diag_glViewport(GLint a, GLint b, GLsizei c, GLsizei d) {
 
         /* Probe: call p_glViewport (Mesa's entry stub) and check state before
          * and after via p_glGetIntegerv. If state updates, the path works
-         * for this call. If not, _mesa_Viewport isn't taking effect. */
+         * for this call. If not, _mesa_Viewport isn't taking effect.
+         * No p_glGetError() here: glGetError CLEARS the pending error, so a
+         * probe would eat the application's error state. */
         {
             GLint vp_before[4] = {-1, -1, -1, -1};
             p_glGetIntegerv(GL_VIEWPORT, vp_before);
             p_glViewport(a, b, c, d);
             GLint vp_after[4] = {-1, -1, -1, -1};
             p_glGetIntegerv(GL_VIEWPORT, vp_after);
-            GLenum err_after = p_glGetError();
             fprintf(stderr, "cgl_shim:               p_glViewport: "
-                    "before=(%d,%d,%d,%d) after=(%d,%d,%d,%d) glError=0x%x\n",
+                    "before=(%d,%d,%d,%d) after=(%d,%d,%d,%d)\n",
                     vp_before[0], vp_before[1], vp_before[2], vp_before[3],
-                    vp_after[0], vp_after[1], vp_after[2], vp_after[3], err_after);
+                    vp_after[0], vp_after[1], vp_after[2], vp_after[3]);
         }
 
         /* Check MaxViewport dims correctly — returns 2 values */
