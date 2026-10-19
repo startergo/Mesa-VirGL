@@ -174,6 +174,14 @@ extern void glUniform4f(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
  * glUniform* calls pass through here BEFORE any engine
  * transformation — log every 4f upload's first vec4. */
 void   (*p_glUniform4fv)(GLint, GLsizei, const GLfloat*);
+/* PRRT_kwDOPZhcm86uEfZY: the scalar glUniformNf interposers forward to
+ * Mesa the same way glUniform4fv does — without these the scalar calls
+ * fell through to the system GL (RTLD_NEXT) and uniform values set on a
+ * shim context were dropped. */
+void   (*p_glUniform1f)(GLint, GLfloat);
+void   (*p_glUniform2f)(GLint, GLfloat, GLfloat);
+void   (*p_glUniform3f)(GLint, GLfloat, GLfloat, GLfloat);
+void   (*p_glUniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 void   (*p_glClear)(GLbitfield);
 void   (*p_glClearColor)(GLclampf, GLclampf, GLclampf, GLclampf);
 void   (*p_glColor3f)(GLfloat, GLfloat, GLfloat);
@@ -210,6 +218,10 @@ static void gl_interpose_init(void)
         (void (*)(int, int, int, int))dlsym(g_mesa, "cgl_shim_set_host_present_rect");
     GL_DLSYM(glBegin);
     GL_DLSYM(glUniform4fv);
+    GL_DLSYM(glUniform1f);
+    GL_DLSYM(glUniform2f);
+    GL_DLSYM(glUniform3f);
+    GL_DLSYM(glUniform4f);
     GL_DLSYM(glClear);
     GL_DLSYM(glClearColor);
     GL_DLSYM(glColor3f);
@@ -310,23 +322,30 @@ static void ep_log128(const char* m)
 }
 static void ip_glUniform1f(GLint loc, GLfloat x)
 { int v_ok=1; GLfloat v[1]={x}; ULOG128(1,"1f");
-  if (OSMesaGetCurrentContext() && p_glUniform4fv) {}
+  if (OSMesaGetCurrentContext() && p_glUniform1f) {
+      p_glUniform1f(loc, x); return; }
   static void (*o)(GLint, GLfloat);
   if (!o) o = dlsym(RTLD_NEXT, "glUniform1f");
   if (o) o(loc, x); }
 static void ip_glUniform2f(GLint loc, GLfloat x, GLfloat y)
 { int v_ok=1; GLfloat v[2]={x,y}; ULOG128(2,"2f");
+  if (OSMesaGetCurrentContext() && p_glUniform2f) {
+      p_glUniform2f(loc, x, y); return; }
   static void (*o)(GLint, GLfloat, GLfloat);
   if (!o) o = dlsym(RTLD_NEXT, "glUniform2f");
   if (o) o(loc, x, y); }
 static void ip_glUniform3f(GLint loc, GLfloat x, GLfloat y, GLfloat z)
 { int v_ok=1; GLfloat v[3]={x,y,z}; ULOG128(3,"3f");
+  if (OSMesaGetCurrentContext() && p_glUniform3f) {
+      p_glUniform3f(loc, x, y, z); return; }
   static void (*o)(GLint, GLfloat, GLfloat, GLfloat);
   if (!o) o = dlsym(RTLD_NEXT, "glUniform3f");
   if (o) o(loc, x, y, z); }
 static void ip_glUniform4f(GLint loc, GLfloat x, GLfloat y,
                            GLfloat z, GLfloat w)
 { int v_ok=1; GLfloat v[4]={x,y,z,w}; ULOG128(4,"4f");
+  if (OSMesaGetCurrentContext() && p_glUniform4f) {
+      p_glUniform4f(loc, x, y, z, w); return; }
   static void (*o)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
   if (!o) o = dlsym(RTLD_NEXT, "glUniform4f");
   if (o) o(loc, x, y, z, w); }
