@@ -29,7 +29,8 @@
     float mPhase;
     float mR, mG, mB;
     int mFrameCount;
-    int mCglEnableErr;   /* Yovb4: CGLEnable result, reported at exit */
+    int mCglEnableErr;   /* Yovb4: CGLEnable result; printed at init and in the
+                          * 30-frame report, FAIL line when nonzero */
 }
 - (id)initWithFrame:(NSRect)frame colorR:(float)r colorG:(float)g colorB:(float)b;
 - (int)frameCount;
