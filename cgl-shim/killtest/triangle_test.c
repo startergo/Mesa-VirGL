@@ -188,7 +188,7 @@ int main(void)
      *   Upper-center (W/2, 40): NDC y ≈ +0.69, between the apex (0, 0.8)
      *   and the base (-0.8) — inside the triangle → TRI color. (Pixel
      *   (W/2, H-5) would be NDC y ≈ -0.969, BELOW the base edge at -0.8:
-     *   outside. It is not sampled. Label corrected — review YKBwf.)
+     *   outside. It is not sampled.)
      */
     failures += check_pixel(buf, W / 2, H / 2,         TRI_R, TRI_G, TRI_B, "center-inside");
     failures += check_pixel(buf, 5, 5,                  BG_R,  BG_G,  BG_B,  "corner-outside");
