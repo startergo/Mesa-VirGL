@@ -992,14 +992,18 @@ if [ "$USE_VNC" != "1" ]; then
     export VIDEO_WINDOW_SHARE_PIXEL_FORMAT=1
     export RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing for scaling
     export VIDEO_ALLOW_SCREENSAVER=1
-    export VIDEO_HIGHDPI_DISABLED=0  # Enable high DPI support
-    export RENDER_DRIVER=opengl  # Force OpenGL renderer for scaling
-    export RENDER_SCALE_POLICY=0  # Stretch to fill (ignore aspect ratio)
-    
+    export SDL_VIDEO_HIGHDPI_DISABLED=0  # Enable high DPI support
+    export SDL_RENDER_DRIVER=opengl  # Force OpenGL renderer for scaling
+    export SDL_RENDER_SCALE_POLICY=0  # Stretch to fill (ignore aspect ratio)
+
     # Additional scaling fixes - Force window to fill completely
-    export RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing with stretch
-    export VIDEO_MINIMIZE_ON_FOCUS_LOSS=0  # Don't minimize on focus loss
-    export RENDER_VSYNC=0  # Disable VSync to allow flexible scaling
+    # PRRT_kwDOPZhcm86uGoKf: SDL reads env vars named like the hint
+    # itself — always SDL_<HINT> (SDL_HINT_RENDER_LOGICAL_SIZE_MODE is
+    # the C macro, "SDL_RENDER_LOGICAL_SIZE_MODE" the variable); the
+    # prefix-less names in this block were no-ops.
+    export SDL_RENDER_LOGICAL_SIZE_MODE=1  # Use logical sizing with stretch
+    export SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0  # Don't minimize on focus loss
+    export SDL_RENDER_VSYNC=0  # Disable VSync to allow flexible scaling
     
     # macOS-specific optimizations - Force full window usage
     export SDL_VIDEO_MAC_FULLSCREEN_SPACES=1
@@ -1092,7 +1096,7 @@ if [ "$USE_VNC" != "1" ]; then
     echo "Display: SDL with maximum hardware acceleration capability"
     echo "OpenGL: Optimized with enhanced SDL and Mesa hints for VirtGL acceleration"
     echo "Performance: OpenGL 4.0 Compatibility Profile configuration (Parallels-style)"
-    echo "Mesa Config: GL 4.0 Compatibility, glthread enabled, error checking disabled"
+    echo "Mesa Config: GL 4.0 Compatibility, glthread disabled (single-threaded GL dispatch), error checking disabled"
 fi
 
 # SPICE/Clipboard support - VDAgent for bidirectional text clipboard (SPICE only for vdagent, never for server/monitor)
@@ -1248,7 +1252,7 @@ echo ""
 echo "Performance Notes:"
 echo "  - Config targets OpenGL 4.0 Compatibility Profile (Parallels-optimized)"
 echo "  - VirtGL with blob=true, enhanced renderer with optimized transfer queue"
-echo "  - Mesa GL 4.0 Compatibility override with glthread optimization"
+echo "  - Mesa GL 4.0 Compatibility override, single-threaded GL dispatch (glthread disabled)"
 echo "  - Enhanced SDL configuration with multisampling"
 echo "  - 4GB RAM, 6 cores (3 cores, 2 threads each)"
 echo "  - Advanced VirGL optimizations: no readback cache, 64-size transfer queue"
