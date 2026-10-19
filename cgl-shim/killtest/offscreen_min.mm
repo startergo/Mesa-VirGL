@@ -39,7 +39,11 @@ int main(void) {
     GLubyte p[4] = {170, 170, 170, 170};
     glReadPixels(200, 150, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
     fprintf(stderr, "read(200,150): %u,%u,%u,%u\n", p[0], p[1], p[2], p[3]);
-    /* Geometry map: offset-dependence vs size-dependence of the failure. */
+    /* Geometry map: offset-dependence vs size-dependence of the failure.
+     * PRRT_kwDOPZhcm86uEfa2 (PR review): the probe buffer must hold the
+     * LARGEST probe read (64x64 = 16 KiB) — glReadPixels writes w*h*4
+     * bytes; the old GLubyte q[4] smashed ~1.6-16 KiB of stack. Only
+     * the requested corner pixel (first of the box read) is printed. */
     {
         struct { int x, y, w, h; } probes[] = {
             {0,0,1,1}, {1,0,1,1}, {0,1,1,1}, {10,0,1,1}, {0,10,1,1},
@@ -47,7 +51,12 @@ int main(void) {
             {200,150,2,2}, {0,0,64,64},
         };
         for (unsigned i = 0; i < sizeof(probes)/sizeof(probes[0]); i++) {
-            GLubyte q[4] = {170,170,170,170};
+            /* PRRT_kwDOPZhcm86uEfa2: glReadPixels writes w*h*4 bytes —
+             * the old q[4] overflowed the stack for every probe bigger
+             * than 1x1 (400x1 = 1.6 KB, 64x64 = 16 KB). Size the
+             * buffer for the largest probe; only the requested corner
+             * pixel (the first pixel of the box read) is printed. */
+            GLubyte q[64 * 64 * 4];
             glReadPixels(probes[i].x, probes[i].y, probes[i].w, probes[i].h,
                          GL_RGBA, GL_UNSIGNED_BYTE, q);
             /* For multi-pixel boxes sample the requested pixel. */

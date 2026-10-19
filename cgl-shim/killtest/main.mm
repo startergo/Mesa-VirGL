@@ -131,6 +131,22 @@
     glEnd();
     glFinish();  // force softpipe to complete
 
+    /* PRRT_kwDOPZhcm86uEfcd (PR review): the OSMesa buffer is
+     * OSMESA_BGRA (B,G,R,A byte order — deliberate, this tests the
+     * same layout the stub reads back), but NSBitmapImageRep has no
+     * BGRA layout: handed the raw bytes it shows red and blue
+     * swapped. Convert BGRA→RGBA in place before building the rep —
+     * OSMesa rewrites the buffer next frame, so in-place is safe. */
+    {
+        unsigned char *px = (unsigned char *)mFramebuffer;
+        size_t n = (size_t)mFbWidth * (size_t)mFbHeight;
+        for (size_t i = 0; i < n; i++) {
+            unsigned char b = px[i * 4 + 0];
+            px[i * 4 + 0] = px[i * 4 + 2];
+            px[i * 4 + 2] = b;
+        }
+    }
+
     // 2. CPU blit: copy the OSMesa BGRA buffer into the view's backing
     //    store via NSBitmapImageRep + composite. This is the exact path
     //    the swizzle would take for CGLFlushDrawable.

@@ -60,6 +60,38 @@ static int check_clear(OSMesaContext ctx, const char *name,
     CHECK(p0, "first");
     CHECK(pLast, "last");
 
+    /* PRRT_kwDOPZhcm86uEfbH (PR review): a clear must paint EVERY
+     * pixel. The old first/last-only check missed anything in between
+     * (partial clears, tiled damage, row-stride faults). Scan the
+     * whole buffer; report the first bad pixel with its index and
+     * coordinates. */
+    {
+        int bad = -1;
+        for (int i = 0; i < W * H; i++) {
+            unsigned char *px = buf + (size_t)i * 4;
+            int dB = abs((int)px[0] - exp_B);
+            int dG = abs((int)px[1] - exp_G);
+            int dR = abs((int)px[2] - exp_R);
+            int dA = abs((int)px[3] - 255);
+            if (dB > tol || dG > tol || dR > tol || dA > tol) {
+                fprintf(stderr, "FAIL [%s/scan]: pixel %d (x=%d,y=%d) "
+                        "B=%d G=%d R=%d A=%d  expected B=%d G=%d R=%d "
+                        "A=255\n",
+                        name, i, i % W, i / W,
+                        px[0], px[1], px[2], px[3], exp_B, exp_G, exp_R);
+                ok = 0;
+                bad = i;
+                break;
+            }
+        }
+        if (ok)
+            fprintf(stdout, "SCAN [%s]: all %d pixels match\n", name,
+                    W * H);
+        else if (bad >= 0)
+            fprintf(stderr, "SCAN [%s]: first mismatch at pixel %d of "
+                    "%d\n", name, bad, W * H);
+    }
+
     if (ok) {
         fprintf(stdout, "PASS [%s]: first=BGR(%d,%d,%d) last=BGR(%d,%d,%d) "
                         "expected RGB(%d,%d,%d)\n",

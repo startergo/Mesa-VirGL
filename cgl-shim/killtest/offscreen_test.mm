@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>   /* sleep() — PRRT_kwDOPZhcm86uEfcN (PR review) */
 
 #import <Cocoa/Cocoa.h>
 #import <OpenGL/gl.h>
