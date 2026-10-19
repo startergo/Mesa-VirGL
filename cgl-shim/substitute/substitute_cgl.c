@@ -136,12 +136,20 @@ static void substitute_init(void)
 
 /* Forward a CGL call to the real OpenGL. Lazy dlsym on first call.
  * Logs every call so we can see which forwards Gecko actually exercises —
- * observed rather than predicted. Same technique as the XUL symbol census. */
-static int g_cgl_fwd_log = 1; /* set to 0 to suppress after the survey */
+ * observed rather than predicted. Same technique as the XUL symbol census.
+ * PRRT_kwDOPZhcm86uEfdu (PR review): OFF by default (the survey is done);
+ * opt in with SHIM_CGL_FWD_LOG=1, like the other instruments. */
+static int g_cgl_fwd_log = -1;  /* resolved once from the environment */
+static int cgl_fwd_log_on(void)
+{
+    if (g_cgl_fwd_log < 0)
+        g_cgl_fwd_log = getenv("SHIM_CGL_FWD_LOG") ? 1 : 0;
+    return g_cgl_fwd_log;
+}
 #define CGL_FORWARD(name, rettype, params, args) \
 rettype name params { \
     static rettype (*real_fn) params; \
-    if (g_cgl_fwd_log) fprintf(stderr, "CGL_FWD: %s\n", #name); \
+    if (cgl_fwd_log_on()) fprintf(stderr, "CGL_FWD: %s\n", #name); \
     if (!real_fn && g_real_gl) real_fn = (rettype (*)params)dlsym(g_real_gl, #name); \
     if (real_fn) return real_fn args; \
     return (rettype)0; \
@@ -318,11 +326,18 @@ void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose,
 
 /* RUNG 128e3: the scalar family the app actually calls — same
  * shape as the existing exports, forwarding via walk_mesa_fn,
- * first-24-calls logged to the stub log (the (B) uniform table). */
+ * first-24-calls logged to the stub log (the (B) uniform table).
+ * PRRT_kwDOPZhcm86uEfdx (PR review): opt-in only, same gate as the
+ * rest of rung 128 (VMGLD_R128E) — no /var/log writes in production
+ * processes that did not ask for the instrument. */
 static int s_128e3 = 0;
+static int s_u3log_on = -1;
 static void u3log(const char* fn, GLint loc, int n,
                   const float* v)
 {
+    if (s_u3log_on < 0)
+        s_u3log_on = getenv("VMGLD_R128E") ? 1 : 0;
+    if (!s_u3log_on) return;
     if (s_128e3 >= 24) return;
     s_128e3++;
     FILE* f = fopen("/var/log/vm_gld_stub.log", "a");
@@ -1193,7 +1208,6 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
         IOReturn kr = IOSurfaceLock(surf, lock_opts, NULL);
         void *base = IOSurfaceGetBaseAddress(surf);
         size_t bpr = IOSurfaceGetBytesPerRow(surf);
-        GLenum glerr = GL_NO_ERROR;
         if (kr == kIOReturnSuccess) {
         if (base && width > 0 && height > 0) {
             size_t bpp = 4;
@@ -1285,7 +1299,12 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
                            width, height, 0, format, type, base);
             p_glPixelStorei(GL_UNPACK_ROW_LENGTH, save_rowlen);
             p_glPixelStorei(GL_UNPACK_ALIGNMENT, save_align);
-            glerr = p_glGetError();
+            /* PRRT_kwDOPZhcm86uEfcC (PR review): no glGetError here.
+             * GL error state is global and read-destructive: checking
+             * "did our own upload fail" consumes the application's
+             * pending error (and any earlier one) — the app would
+             * never see it. The upload was issued under a valid lock
+             * and surface; the return below is based on that alone. */
         }
         /* PRRT_kwDOPZhcm86uEfcI: the lock must be released whenever it
          * was taken — including the declined-upload paths (null base,
@@ -1304,12 +1323,14 @@ CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format,
             if (s_iosf_log < 5) s_iosf_log++;
             fprintf(stderr, "substitute_cgl: IOSurface2D #%ld ctx=%p "
                     "target=0x%x fmt=0x%x type=0x%x %ldx%ld bpr=%lu "
-                    "glErr=0x%x lock=0x%x\n",
+                    "lock=0x%x\n",
                     s_iosf_calls, (void *)ctx, target, format, type,
                     (long)width, (long)height, (unsigned long)bpr,
-                    glerr, kr);
+                    kr);
         }
-        return (glerr == GL_NO_ERROR) ? kCGLNoError : kCGLBadContext;
+        /* uEfcC: return reflects the IOSurface path only; GL errors
+         * stay with the GL error state where they belong. */
+        return (kr == kIOReturnSuccess) ? kCGLNoError : kCGLBadContext;
     }
     static CGLError (*real)(CGLContextObj, GLenum, GLenum, GLsizei, GLsizei,
                             GLenum, GLenum, void *, GLuint);
