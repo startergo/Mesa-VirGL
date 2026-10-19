@@ -150,9 +150,12 @@
     }
 
     /* YSMPC (PR review): the viewport was set once at init from the initial
-     * frame, so resizing the window stretched the initial-size viewport
-     * into the new surface (wrong aspect, clipped content). Follow the
-     * view's live bounds; glViewport only when they actually change. */
+     * frame, so resizing the window kept the initial-size viewport while
+     * the surface grew — clipped content. Follow the view's live bounds;
+     * glViewport only when they actually change. (The projection below is a
+     * square 2×2 glOrtho, so on a non-square window the triangle is still
+     * stretched by the aspect — unchanged, and now only because of the
+     * projection, not the viewport.) */
     {
         NSRect b = [self bounds];
         static CGFloat s_lastW = -1.0, s_lastH = -1.0;
@@ -207,8 +210,12 @@
     /* YSMO9 (PR review): the repeating timer retains this view, so
      * dealloc (the only place that invalidated it) could not run while the
      * timer was live — the view and its GL context leaked after the window
-     * closed. The delegate calls this from windowWillClose. */
+     * closed. The delegate calls this from windowWillClose.
+     * t8dme (PR review): clear mTimer as well — after invalidate the run
+     * loop drops it, so a later -dealloc must not message the stale
+     * pointer. */
     [mTimer invalidate];
+    mTimer = nil;
 }
 
 - (void)dealloc {
