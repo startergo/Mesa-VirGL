@@ -6,7 +6,7 @@
  *
  * Replaces vtest's Unix-socket transport with IOConnectCallMethod against
  * the VMQemuVGA kext's VMVirtIOGPUUserClient.  The kext selectors are
- * 0x6000-0x6009 (see FB/VMVirtIOGPU.cpp externalMethod switch).
+ * 0x6000-0x600F (see FB/VMVirtIOGPU.cpp externalMethod switch).
  *
  * Transport is proven end-to-end via:
  *   - probeTransport3D (kext-internal, LEDGER.md:202)
@@ -476,18 +476,12 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
                                NULL, NULL, NULL, NULL);
       if (kr != KERN_SUCCESS) {
          fprintf(stderr, "virgl_iokit: 0x6003 attachBackingUser FAIL 0x%x\n", kr);
-         /*
-          * the 3D path already census_register()ed this res — take it
-          * out of the registry BEFORE freeing it, or the entry stays
-          * alive with a dangling pointer for the next census flush
-          * (use-after-free) and the slot is never reclaimed. */
-         census_unregister(res);
-         /* Best-effort cleanup: unref the resource we just created */
-         uint64_t unref_in[1] = { res->res_handle };
-         IOConnectCallMethod(iws->connect, IOKIT_RESOURCE_UNREF,
-                             unref_in, 1, NULL, 0, NULL, NULL, NULL, NULL);
-         bk_free(res->ptr, size);
-         FREE(res);
+         /* the 3D path already census_register()ed this res — the
+          * destroy helper takes it out of the registry before
+          * freeing (dangling registry entry = census-flush UAF),
+          * unrefs at the kext and frees backing+res. Single teardown
+          * path for every failure. */
+         virgl_iokit_hw_res_destroy(iws, res);
          return NULL;
       }
    }
@@ -512,13 +506,8 @@ virgl_iokit_resource_create(struct virgl_winsys *vws,
          /* Fatal: without the ctx attach, any later command referencing
           * this handle (SET_FRAMEBUFFER_STATE on a surface built on it,
           * or a draw binding it) hits the kext's illegal-resource path.
-          * Same cleanup as the 0x6003 failure above. */
-         census_unregister(res);
-         uint64_t unref_in[1] = { res->res_handle };
-         IOConnectCallMethod(iws->connect, IOKIT_RESOURCE_UNREF,
-                             unref_in, 1, NULL, 0, NULL, NULL, NULL, NULL);
-         bk_free(res->ptr, size);
-         FREE(res);
+          * Same single teardown path as the 0x6003 failure above. */
+         virgl_iokit_hw_res_destroy(iws, res);
          return NULL;
       }
    }

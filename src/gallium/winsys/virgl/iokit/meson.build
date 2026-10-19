@@ -3,7 +3,7 @@
 
 # virgl_iokit_winsys — IOKit-backed virgl winsys for macOS 10.6 guest.
 # Mirrors libvirglvtest's structure; replaces socket calls with IOConnectCallMethod
-# against the VMQemuVGA kext.  See FB/VMVirtIOGPU.cpp selectors 0x6000-0x6009.
+# against the VMQemuVGA kext.  See FB/VMVirtIOGPU.cpp selectors 0x6000-0x600F.
 
 # IOKit framework — IOConnectCallMethod, IOServiceOpen, etc.
 # Declared here so the dependency propagates through any non-force-load
